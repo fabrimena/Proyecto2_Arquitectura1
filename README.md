@@ -45,7 +45,7 @@ img/        diagrama de bloques
 ## Simulación
 
 ```bash
-make sim                  # compila y ejecuta los 21 testbenches y muestra un resumen
+make sim                  # compila y ejecuta los 22 testbenches y muestra un resumen
 make tb_alu               # un solo testbench
 make waves TB=tb_alu      # abre su .vcd en GTKWave
 make list                 # lista los testbenches
