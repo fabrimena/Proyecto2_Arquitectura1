@@ -51,7 +51,7 @@ sudo apt install iverilog gtkwave make python3
 Resultado actual:
 
 ```
-Resumen: 21 PASS, 0 FAIL, 0 NO-COMPILA, 0 SIN-CHEQUEO
+Resumen: 22 PASS, 0 FAIL, 0 NO-COMPILA, 0 SIN-CHEQUEO
 ```
 
 Cada testbench deja en `build/<tb>/` el ejecutable (`sim.vvp`), `compile.log`, `sim.log` y su `.vcd`.
@@ -407,6 +407,7 @@ Todos son autoverificables:
 | `tb_crypto_unit` | Excepciones sin efectos, `vcr` correcta e incorrecta, el vector conocido HOLA2026 → `03D44466 D685AFAF` ronda por ronda, 500 rondas aleatorias contra la referencia, `camcon` y ESTADO escrito en WB |
 | `tb_pipeline_cripto` | Cifrado y descifrado de 4 bloques contra la referencia, las 4 unidades en el mismo bundle, excepciones (bundle y 2 siguientes anulados, salto a `TRAP_VECTOR`) y que ningún registro ni palabra de memoria contenga la llave |
 | `tb_top` | Programa cargado desde un `.mem` y 4 bundles distintos en IF, ID, EX y WB en el mismo ciclo |
+| `tb_pipeline_stall` | Proyecto 2: el mismo programa en `top` sin stalls y con 1 y 4 ciclos de stall por acceso (`MEM_MODE = 1`). Mismo estado final (registros, memoria, bóveda y ESTADO), las mismas escrituras en el mismo orden (`camcon` rota una sola vez), N ciclos más por acceso y el PC y los registros de segmentación quietos en cada stall. Interfaces en [`memory-interfaces.md`](memory-interfaces.md) |
 | `tb_fetch`, `tb_dispatch`, `tb_decoder_alu` | El bundle sin esperar un flanco, la separación de los 4 slots y las 18 instrucciones ALU con sus campos |
 | `tb_pipeline_if_id`, `tb_pipeline_id_ex`, `tb_pipeline_ex_wb` | Captura en el flanco, `flush`, prioridad del reset y 300 ciclos aleatorios |
 
