@@ -66,13 +66,31 @@
            trap_count cuenta las excepciones (sólo para observación; el ISA
            no define cómo leerlos).
 
+ Proyecto 2, memoria de datos y congelamiento (docs/memory-interfaces.md):
+     Entre el núcleo y DMEM se engancha la jerarquía de memoria según
+     MEM_MODE. Con el valor por defecto (0) la conexión es directa y el
+     procesador es el mismo del proyecto 1.
+     Si la memoria no resuelve un acceso en el ciclo, cache_stall = 1 y se
+     detiene core_clk, el reloj de todos los registros del núcleo (PC, IF/ID,
+     ID/EX, EX/WB, banco, LSU, BRU, CRIPTO y bóveda): el bundle completo
+     queda congelado y al terminar sigue igual, con más ciclos. DMEM y lo que
+     se agregue para la jerarquía siguen con clk.
+
 ================================================================================
 */
 
 `include "isa_defs.sv"
 
 
-module top(
+module top #(
+
+    // Memoria de datos:
+    //   0  conexión directa con DMEM, como en el proyecto 1 (por defecto)
+    //   1  modelo de stalls (rtl/mem_stall_model.sv): cada acceso de la LSU
+    //      tarda STALL_CYCLES ciclos más, para probar el congelamiento
+    parameter int MEM_MODE     = 0,
+    parameter int STALL_CYCLES = 3
+) (
 
     input  logic         clk,
     input  logic         reset,
@@ -226,6 +244,28 @@ logic [4:0][4:0]  wb_waddr;
 logic [4:0][31:0] wb_wdata;
 logic             wb_conflict;
 
+// Memoria de datos y congelamiento (proyecto 2)
+logic        cache_stall;       // el acceso a memoria de EX no termina en este ciclo
+logic        core_en = 1'b1;    // cache_stall negado, tomado con clk en 0
+logic        core_clk;          // reloj del núcleo: clk sin los ciclos de stall
+
+
+// =============================================================================
+// Reloj del núcleo
+//
+// core_en se toma mientras clk está en 0 (latch), así que un cambio de
+// cache_stall con clk en 1 no produce flancos falsos en core_clk. Con
+// cache_stall = 0 (MEM_MODE = 0), core_clk es igual a clk.
+// =============================================================================
+
+always @(*) begin
+
+    if (!clk)
+        core_en = !cache_stall;
+end
+
+assign core_clk = clk & core_en;
+
 
 // =============================================================================
 // PC + Memoria de instrucciones
@@ -237,7 +277,7 @@ instruction_memory IMEM(
 );
 
 pc_branch PC_BRANCH (
-    .clk(clk),
+    .clk(core_clk),
     .reset(reset),
     .branch_flush(redirect),
     .target_pc(redirect_pc),
@@ -264,7 +304,7 @@ fetch FETCH (
 // =============================================================================
 
 pipeline_if_id IF_ID (
-    .clk(clk),
+    .clk(core_clk),
     .reset(reset),
     .pc_in(fetch_pc),
     .bundle_in(fetch_bundle),
@@ -394,7 +434,7 @@ assign crypto_rs_a_data = reg_rdata[6];
 assign crypto_rs_b_data = reg_rdata[7];
 
 regfile REGFILE (
-    .clk(clk),
+    .clk(core_clk),
     .reset(reset),
     .raddr(reg_raddr),
     .rdata(reg_rdata),
@@ -409,7 +449,7 @@ regfile REGFILE (
 // =============================================================================
 
 pipeline_id_ex ID_EX (
-    .clk(clk),
+    .clk(core_clk),
     .reset(reset),
     .flush(redirect),              // salto tomado o excepción en EX: anula el bundle de ID
 
@@ -517,7 +557,7 @@ alu ALU (
 // =============================================================================
 
 lsu LSU (
-    .clk(clk),
+    .clk(core_clk),
     .reset(reset),
     .valid_in(id_ex_valid && ex_lsu_valid && !crypto_fault),   // sólo si el slot 1 trae una instrucción LSU
     .lsu_op(ex_lsu_op),
@@ -535,19 +575,95 @@ lsu LSU (
     .wb_data(lsu_data_d)
 );
 
+// La LSU no tiene salida de lectura porque la memoria del proyecto 1 lee en
+// todos los ciclos. La jerarquía de memoria sí necesita saber cuándo el slot 1
+// trae una carga válida (mismas condiciones que valid_in de la LSU).
+logic mem_re;
+
+assign mem_re = id_ex_valid && ex_lsu_valid && !crypto_fault &&
+                (ex_lsu_op == OP_CARGAI || ex_lsu_op == OP_CARGABAI);
+
+
+// -----------------------------------------------------------------------------
+// Enganche de la memoria de datos (MEM_MODE). DMEM se queda aquí como el
+// almacenamiento de 64 KB, así los testbenches y las herramientas siguen
+// leyendo DUT.DMEM.mem.
+// -----------------------------------------------------------------------------
+
+logic        dmem_we;
+logic [3:0]  dmem_be;
+logic [31:0] dmem_addr;
+logic [31:0] dmem_wdata;
+logic [31:0] dmem_rdata;
+logic        dmem_we_b;
+logic [31:0] dmem_addr_b;
+logic [31:0] dmem_wdata_b;
+logic [31:0] dmem_rdata_b;
+
+generate
+
+    if (MEM_MODE == 1) begin : g_mem_stall
+
+        mem_stall_model #(.STALL_CYCLES(STALL_CYCLES)) STALL_MODEL (
+            .clk(clk),
+            .reset(reset),
+
+            .re(mem_re),
+            .we(mem_we),
+            .be(mem_be),
+            .addr(mem_addr),
+            .wdata(mem_wdata),
+            .rdata(mem_rdata),
+
+            .we_b(crypto_mem_we),
+            .addr_b(crypto_mem_addr),
+            .wdata_b(crypto_mem_wdata),
+            .rdata_b(crypto_mem_rdata),
+
+            .stall(cache_stall),
+
+            .m_we(dmem_we),
+            .m_be(dmem_be),
+            .m_addr(dmem_addr),
+            .m_wdata(dmem_wdata),
+            .m_rdata(dmem_rdata),
+            .m_we_b(dmem_we_b),
+            .m_addr_b(dmem_addr_b),
+            .m_wdata_b(dmem_wdata_b),
+            .m_rdata_b(dmem_rdata_b)
+        );
+    end
+    else begin : g_mem_directa
+
+        // Proyecto 1: la LSU y la cripto van directo a DMEM, sin stalls
+        assign cache_stall = 1'b0;
+
+        assign dmem_we      = mem_we;
+        assign dmem_be      = mem_be;
+        assign dmem_addr    = mem_addr;
+        assign dmem_wdata   = mem_wdata;
+        assign mem_rdata    = dmem_rdata;
+
+        assign dmem_we_b    = crypto_mem_we;
+        assign dmem_addr_b  = crypto_mem_addr;
+        assign dmem_wdata_b = crypto_mem_wdata;
+        assign crypto_mem_rdata = dmem_rdata_b;
+    end
+endgenerate
+
 memory #(.SIZE_WORDS(DMEM_BYTES / 4)) DMEM (
     .clk(clk),
-    .we(mem_we),
-    .be(mem_be),
-    .addr(mem_addr),
-    .wdata(mem_wdata),
-    .rdata(mem_rdata),
+    .we(dmem_we),
+    .be(dmem_be),
+    .addr(dmem_addr),
+    .wdata(dmem_wdata),
+    .rdata(dmem_rdata),
 
     // Puerto B: unidad criptográfica (vcr, camcon)
-    .we_b(crypto_mem_we),
-    .addr_b(crypto_mem_addr),
-    .wdata_b(crypto_mem_wdata),
-    .rdata_b(crypto_mem_rdata)
+    .we_b(dmem_we_b),
+    .addr_b(dmem_addr_b),
+    .wdata_b(dmem_wdata_b),
+    .rdata_b(dmem_rdata_b)
 );
 
 
@@ -561,7 +677,7 @@ memory #(.SIZE_WORDS(DMEM_BYTES / 4)) DMEM (
 assign ex_pc = ex_pc_from_id_ex;
 
 bru BRU (
-    .clk(clk),
+    .clk(core_clk),
     .reset(reset),
     .rf1_data(ex_bru_operand_a),
     .rf2_data(ex_bru_operand_b),
@@ -587,7 +703,7 @@ assign branch_flush = bru_branch_flush;
 // =============================================================================
 
 crypto_unit CRYPTO (
-    .clk(clk),
+    .clk(core_clk),
     .reset(reset),
     .valid_in(id_ex_valid && ex_crypto_valid),
     .fault_in(ex_crypto_fault),
@@ -627,7 +743,7 @@ assign redirect_pc = crypto_fault ? TRAP_VECTOR : bru_target_pc;
 logic [31:0] trap_pc;
 logic [31:0] trap_count;
 
-always @(posedge clk) begin
+always @(posedge core_clk) begin
 
     if (reset) begin
 
@@ -653,7 +769,7 @@ logic [4:0]  ex_wb_rd;
 logic [31:0] ex_wb_alu_result;
 
 pipeline_ex_wb EX_WB (
-    .clk(clk),
+    .clk(core_clk),
     .reset(reset),
     .result_in(alu_result),
     .rd_in(ex_alu_rd),
