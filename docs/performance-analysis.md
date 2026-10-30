@@ -304,3 +304,111 @@ y `build/perf_block_c/{before,after}/results.json`. La comparación se registra 
 `build/perf_block_c/before/sha256.json` y
 `build/perf_block_c/after/comparison.json`. La evidencia local en `build/` está
 ignorada por Git; los resultados no demuestran integración con el procesador.
+
+## Issue #7, D1: clasificación de operaciones por bundle
+
+`rtl/perf_slot_mask.sv` recibe `bundle_in[127:0]` y produce
+`non_nop_mask[3:0]` mediante lógica combinacional, sin reloj, reset ni registros.
+El bit 0 corresponde a ALU, el 1 a LSU, el 2 a BRU y el 3 a CRIPTO.
+No se conecta todavía al procesador ni a los contadores.
+
+Se comparan exactamente los campos tipo `[31:25]` e ID `[24:21]` de cada
+instrucción con las constantes de `rtl/isa_defs.sv`, respetando su slot fijo:
+
+| Slot | Tipo | IDs definidos | Operaciones |
+|:---|:---|:---|:---:|
+| ALU | REG | 5, 6, 8–15 | 10 |
+| ALU | IMM | 0–7 | 8 |
+| LSU | LSU | 0, 1, 8, 9 | 4 |
+| BRU | COND | 1, 2, 4, 8 | 4 |
+| BRU | JUMP | 0, 1 | 2 |
+| CRIPTO | CRYPTO | 0–5 | 6 |
+
+Son las 34 instrucciones de la green card de `docs/isa.md`. Los IDs no listados,
+tipos de otra unidad y tipos desconocidos se excluyen. `0x00000000` es el NOP
+canónico; cualquier palabra con `TYPE_NOP` tampoco representa una operación
+reconocida, aunque tenga bits bajos activos. Los prefijos X/Z no coinciden con
+ninguna entrada de los `case` exactos; no se usan `casex` ni `casez`.
+
+El destino `x0` no elimina una instrucción reconocida. Loads, stores, saltos
+condicionales/incondicionales y operaciones sin escritura general se reconocen
+por su codificación, no por `wb_we`. Una operación cripto aporta un solo bit.
+Las pseudoinstrucciones se reconocen por la instrucción real a la que se expanden.
+
+### Diferencia entre reconocimiento ISA y fallback de la ALU
+
+Se revisaron los cuatro decodificadores antes de implementar D1. En
+`decoder_alu.sv`, los IDs REG 0–4 y 7, e IMM 8–15, no tienen operación definida,
+pero el decoder conserva `ALU_ADD` junto con los campos de operandos y destino.
+En particular, una palabra reservada con destino distinto de `x0` puede producir
+efectos en el procesador actual. No debe describirse como un NOP de hardware.
+
+El clasificador **excluye esas codificaciones según el contrato de la ISA**.
+Esta diferencia se reportó antes de implementar y se documenta explícitamente:
+la máscara no demuestra ausencia de efectos arquitecturales para un programa
+con codificaciones fuera de la ISA. El testbench observa el decoder original y
+comprueba tanto su fallback como la exclusión de las métricas. No se corrige ni
+modifica el decoder en D1.
+
+En LSU y CRIPTO, los IDs reservados dejan `valid = 0`; los saltos JUMP reservados
+dejan `is_jump = 0`. Para COND, el decoder activa `is_branch` para cualquier ID
+del tipo, pero la BRU solo implementa las cuatro condiciones de la ISA; el resto
+no toma el salto. D1 reconoce únicamente esas cuatro, no todo `is_branch`.
+
+### Alcance y contrato para etapas posteriores
+
+Esta es una máscara de operaciones reconocidas, no un validador completo de
+instrucciones ni una señal de finalización. No comprueba restricciones de
+operandos, bits RSV, pares de registros, alineación ni permisos AUTH/INIT; esas
+validaciones no se deducen de los bits de salida. El programa debe respetar el
+contrato del ensamblador/compilador. Variar los 21 bits de operandos no cambia la
+clasificación de un prefijo reconocido.
+
+Una operación cripto reconocida puede provocar una excepción; la etapa posterior
+deberá excluir el bundle anulado. Asimismo, una burbuja y un bundle NOP pueden
+tener máscara cero y se distinguirán por la validez transportada en D2. D1 no
+transporta metadatos, resuelve flush, detecta stalls ni modifica la ISA o latencias.
+
+### Pruebas de D1
+
+`tb/tb_perf_slot_mask.sv` usa las utilidades autoverificables existentes. Las
+34 palabras fijas proceden de las referencias de `tests/test_assembler.py` y
+`tests/test_isa.py`; cada una se prueba en los cuatro slots. Se ejercitan las
+16 combinaciones de slots activos, transiciones a NOP y destinos ALU `x0`.
+
+Un barrido de los 128 tipos por los 16 IDs comprueba los cuatro slots, con los
+21 bits bajos en cero y en uno, usando bitmaps numéricos independientes de las
+constantes del DUT. Esto incluye todos los IDs reservados y tipos incorrectos.
+Se agregan mezclas de válidas/reservadas, instrucciones en unidades equivocadas,
+NOP no canónico, tipo desconocido y prefijos X/Z. No se necesita flanco de reloj
+para obtener la salida; el testbench solo espera propagación combinacional.
+
+### Evidencia de validación de D1
+
+Rama: `feat/7-integracion-metricas`, creada exactamente desde
+`feat/7-contadores-stalls` en `f0f0171ef5182bc9613dc428c25399905f138169`,
+con los bloques A–C y sin incorporar la rama de Fabricio. El árbol y el índice
+estaban limpios antes de comenzar. Se ejecutó la línea base antes de modificar
+código, y después se ejecutaron los siguientes comandos:
+
+| Comando | Antes de D1 | Después de D1 | Salida antes/después |
+|:---|:---|:---|:---:|
+| `make tb_perf_slot_mask` | No existía | PASS, 4299 verificaciones | — / 0 |
+| `make tb_perf_counters` | PASS, 292 verificaciones | PASS, 292 verificaciones | 0 / 0 |
+| `make sim` | 22 PASS | 23 PASS | 0 / 0 |
+| `make test-assembler` | 44 pruebas OK | 44 pruebas OK | 0 / 0 |
+| `make test-programs` | 14 pruebas OK | 14 pruebas OK | 0 / 0 |
+| `make archivo` | PASS, 7 verificaciones RTL | PASS, 7 verificaciones RTL | 0 / 0 |
+
+Ambas ejecuciones de `make sim` reportaron cero FAIL, NO-COMPILA y SIN-CHEQUEO.
+No se observaron fallos. Los 53 archivos de evidencia previa comparados (logs,
+imágenes de memoria y binarios, incluyendo los logs del monitor A–C) son
+idénticos byte a byte. El flujo de archivos conserva 989 ciclos de cifrado y
+989 de descifrado y recupera los 386 bytes originales.
+
+Logs y comandos con códigos de salida: `build/perf_d1/{before,after}/*.log`
+y `build/perf_d1/{before,after}/results.json`. Los hashes previos se registran en
+`build/perf_d1/before/sha256.json` y el resultado de comparación en
+`build/perf_d1/after/comparison.json`. El testbench nuevo también deja ondas en
+`build/tb_perf_slot_mask/tb_perf_slot_mask.vcd`. Esta evidencia local está ignorada
+por Git. D1 no valida la integración al pipeline, que sigue pendiente.
