@@ -101,3 +101,97 @@ Evidencia posterior: `build/tb_perf_counters/sim.log`,
 `build/perf_block_a/after/results.json` y
 `build/perf_block_a/after/comparison.json`. Estas pruebas no validan integración
 con el pipeline ni cachés: esas implementaciones todavía no forman parte del bloque A.
+
+## Issue #7, bloque B: bundles, instrucciones e IPC
+
+El mismo módulo incorpora dos contadores unsigned de 64 bits. La semántica de
+`cycle_count`, reset y habilitación del bloque A se conserva.
+
+| Señal nueva | Sentido | Semántica |
+|:---|:---|:---|
+| `bundle_complete` | Entrada | Un evento de finalización por cada flanco positivo en que vale 1 |
+| `non_nop_mask[3:0]` | Entrada | Operaciones válidas no NOP del bundle que finaliza; bits 0/1/2/3 = ALU/LSU/BRU/CRIPTO |
+| `bundle_count[63:0]` | Salida | Bundles completados dentro de la ventana |
+| `instruction_count[63:0]` | Salida | Operaciones completadas dentro de la ventana |
+
+Reset pone los tres contadores en cero, incluso con habilitación y evento activos.
+Con `measure_enable = 0` todos conservan su valor y los eventos se ignoran: no se
+encolan para contarlos al reanudar. Con habilitación activa se cuenta cada ciclo;
+solo si también está activo `bundle_complete` se suma un bundle y la cantidad de
+bits activos de `non_nop_mask` a instrucciones. Sin evento, la máscara no afecta
+los contadores. Un evento con máscara `0000` suma un bundle y cero instrucciones.
+Los tres contadores desbordan módulo 2^64.
+
+No se detectan flancos de `bundle_complete`: mantenerlo activo durante tres
+flancos habilitados representa tres bundles consecutivos. El productor debe
+presentar el evento y la máscara del mismo bundle, estables antes del flanco.
+Un pulso que no coincide con el flanco positivo no cuenta. Se aplica la misma
+inclusión/exclusión de límites de ventana descrita para el bloque A.
+
+### IPC fuera del RTL
+
+Después de muestrear los contadores, el reporte calcula:
+
+`IPC = instruction_count / cycle_count`
+
+La división usa números reales y no división entera. Una ventana con cero ciclos
+produce **N/D** (no disponible); no se divide por cero ni se reporta como IPC cero.
+Con ciclos positivos y cero instrucciones, IPC es cero. No hay divisor ni señal
+IPC en el módulo sintetizable: el cálculo y las comprobaciones están en el
+testbench. Ejemplos comprobados: 4/1 = 4, 4/4 = 1, 4/5 = 0.8 y 10/6 ≈ 1.666667.
+El reporte debe delimitar las ventanas para evitar desbordamientos; después de un
+desbordamiento los acumulados ya no representan los totales de esa ventana.
+
+### Contrato para la integración futura
+
+Los eventos no se deducen de escrituras al banco de registros. Una operación
+válida que escribe `x0`, un store o un salto cuentan mediante su bit; una operación
+cripto que escribe dos registros sigue representando una instrucción. El productor
+debe clasificar las operaciones no NOP y alinear los metadatos con la finalización.
+
+Durante un congelamiento deberá desactivar `bundle_complete`; no alcanza con
+mantener la máscara estable. Los bundles descartados, las burbujas y los bundles
+anulados por excepción no deben producir eventos. Los NOPs válidos sí pueden
+producir eventos con máscara cero. El módulo no identifica ninguno de estos casos
+por sí mismo, ni determina cuándo termina el programa. La integración, el drenado
+del pipeline y la generación de eventos corresponden al bloque D; la contabilidad
+de stalls corresponde al bloque C. No se modificó `top.sv`.
+
+### Pruebas del bloque B
+
+Las 21 comprobaciones originales del bloque A se conservan y ejecutan primero.
+Se agregan casos con 0, 1, 2, 3 y 4 operaciones, cada slot individual, ausencia de
+evento, eventos consecutivos, pausa y reanudación, reset simultáneo con eventos,
+acumulación, pulsos entre flancos, acarreo y desbordamiento de los contadores nuevos.
+El IPC se verifica con valores conocidos y con ventanas de cero ciclos. Los
+valores esperados de acumulación se indican explícitamente en el testbench.
+
+### Evidencia de validación del bloque B
+
+Base: `feat/7-contadores-base`, commit del bloque A
+`65bcaecef46cf1623d3e9a252e55aad41afd12f7`, sin cambios locales iniciales.
+Se ejecutaron las cuatro regresiones antes y después de modificar el código.
+
+| Comando | Antes del bloque B | Después del bloque B | Salida antes/después |
+|:---|:---|:---|:---:|
+| `make sim` | 22 PASS | 22 PASS | 0 / 0 |
+| `make test-assembler` | 44 pruebas OK | 44 pruebas OK | 0 / 0 |
+| `make test-programs` | 14 pruebas OK | 14 pruebas OK | 0 / 0 |
+| `make archivo` | PASS, 7 verificaciones RTL | PASS, 7 verificaciones RTL | 0 / 0 |
+
+Ambas ejecuciones de `make sim` reportaron cero FAIL, NO-COMPILA y SIN-CHEQUEO.
+El testbench ampliado, ejecutado también con `make tb_perf_counters`, terminó
+con código 0 y **111 verificaciones correctas**, incluidas las 21 originales.
+
+Los 51 archivos de evidencia del Proyecto I comparados (logs, imágenes de memoria
+y binarios, excluyendo el testbench de métricas ampliado) son idénticos byte a
+byte antes y después. `make archivo` conservó 989 ciclos para cifrar y 989 para
+descifrar, y recuperó los 386 bytes originales. No se observaron fallos nuevos.
+
+Evidencia local ignorada por Git:
+
+- `build/perf_block_b/before/{sim,test-assembler,test-programs,archivo}.log`.
+- `build/perf_block_b/after/{sim,test-assembler,test-programs,archivo}.log`.
+- `build/perf_block_b/{before,after}/results.json` (comandos y códigos de salida).
+- `build/perf_block_b/before/sha256.json` y `build/perf_block_b/after/comparison.json`.
+- `build/tb_perf_counters/sim.log` y `build/tb_perf_counters/tb_perf_counters.vcd`.
