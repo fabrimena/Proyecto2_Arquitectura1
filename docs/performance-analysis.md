@@ -195,3 +195,112 @@ Evidencia local ignorada por Git:
 - `build/perf_block_b/{before,after}/results.json` (comandos y códigos de salida).
 - `build/perf_block_b/before/sha256.json` y `build/perf_block_b/after/comparison.json`.
 - `build/tb_perf_counters/sim.log` y `build/tb_perf_counters/tb_perf_counters.vcd`.
+
+## Issue #7, bloque C: ciclos perdidos por memoria y saltos
+
+El módulo independiente agrega indicadores explícitos de ciclos perdidos y dos
+contadores unsigned de 64 bits. No se conecta al procesador en este bloque.
+
+| Señal nueva | Sentido | Semántica en el flanco positivo de `clk` |
+|:---|:---|:---|
+| `memory_stall` | Entrada | El núcleo está globalmente detenido por memoria en este ciclo |
+| `branch_recovery` | Entrada | Este ciclo corresponde a recuperación de un salto tomado |
+| `memory_stall_count[63:0]` | Salida | Ciclos atribuidos a espera de memoria dentro de la ventana |
+| `branch_penalty_count[63:0]` | Salida | Ciclos atribuidos a recuperación de salto dentro de la ventana |
+
+### Regla de atribución
+
+Con reset inactivo y medición habilitada, cada flanco suma uno a `cycle_count`.
+Si `memory_stall = 1`, suma uno únicamente a `memory_stall_count`. En caso
+contrario, si `branch_recovery = 1`, suma uno a `branch_penalty_count`. Si ambas
+entradas están en cero, no incrementa ninguna categoría de penalización.
+
+**La memoria tiene prioridad cuando coinciden las causas.** El ciclo se cuenta
+una sola vez entre las categorías. Esta es una convención de medición aprobada
+para el monitor, pendiente de contrastar con el comportamiento real del pipeline
+durante el bloque D. No representa un cambio al control del procesador.
+
+`branch_recovery` no es el evento de salto ni se conecta directamente a un pulso
+de `branch_flush`: el generador externo debe indicar cada ciclo realmente perdido.
+Dos ciclos activos producen dos ciclos de penalización; uno produce uno. El módulo
+no multiplica eventos por dos ni mantiene una recuperación pendiente. Cuando
+ambas causas coinciden, tampoco difiere ni reencola una penalización de salto:
+solo cuenta una recuperación posterior si el generador la indica en ese ciclo.
+Un salto no tomado no activa recuperación.
+
+No hay entrada de excepción ni se deducen saltos desde un redirect genérico. Las
+excepciones criptográficas deben excluirse de `branch_recovery` en el generador
+externo. La comprobación unitaria de este contrato usa recuperación inactiva para
+el caso de excepción; no verifica todavía la clasificación de señales reales.
+
+### Reset, ventana y finalizaciones
+
+El reset síncrono prioritario pone los cinco contadores en cero, incluso con
+medición deshabilitada y ambas penalizaciones activas. Deshabilitar la medición
+conserva los cinco valores; los ciclos y eventos fuera de la ventana se ignoran.
+Todos los contadores desbordan módulo 2^64. Las entradas se muestrean en el flanco
+positivo y deben estar estables alrededor de él; los pulsos entre flancos no cuentan.
+
+Los ciclos totales continúan aumentando durante memoria y recuperación de salto.
+El bloque C agrega una protección a la finalización del bloque B:
+`bundle_complete && !memory_stall`. Mientras el núcleo está congelado por memoria
+no incrementan bundles ni instrucciones, aunque el evento permanezca activo.
+Con `memory_stall = 0`, el comportamiento de los bloques A y B se conserva.
+
+La recuperación de salto no bloquea por sí sola una finalización: un bundle
+anterior puede completar mientras IF/ID se recuperan. El generador debe entregar
+eventos válidos para ese caso. Sigue siendo responsable de alinear la máscara,
+excluir burbujas y bundles anulados, distinguir saltos de excepciones y no volver
+a presentar el mismo bundle después de reanudar. El monitor no reconoce PCs ni
+identidades de bundles, ni valida que la máscara represente instrucciones reales.
+La protección por memoria supone el congelamiento global acordado; si cambiara
+esa arquitectura habría que revisar el contrato.
+
+Antes de cualquier desbordamiento, los incrementos mutuamente excluyentes y el
+reset común garantizan:
+
+`memory_stall_count + branch_penalty_count <= cycle_count`
+
+El testbench verifica la desigualdad con una suma extendida a 65 bits después de
+cada paso funcional del bloque C. Como en los bloques anteriores, las ventanas
+deben limitarse para evitar desbordamientos: después de ellos los acumulados ya
+no representan los totales históricos ni se garantiza esa desigualdad.
+
+### Pruebas del bloque C
+
+Se conservan y ejecutan primero las 111 comprobaciones anteriores (incluidas las
+21 originales del bloque A). Se agregan cero, uno y cuatro ciclos consecutivos
+de memoria, recuperación de dos ciclos, salto no tomado, coincidencias, reset
+durante stall, pausa/reanudación, ausencia de duplicados con evento sostenido,
+excepción sin recuperación de salto, límites de ventana y muestreo. También se
+comprueban finalizaciones durante recuperación, acarreo hacia el bit 32 y
+desbordamiento de los dos contadores nuevos mediante precargas de simulación.
+
+### Evidencia de validación del bloque C
+
+Rama: `feat/7-contadores-stalls`, creada desde `feat/7-contadores-base` en
+`3c85f5e938e3d277c9f168d0c4a38e38a87203f0` (bloque B, precedido por el bloque A).
+El árbol de trabajo estaba limpio antes del cambio. Se ejecutaron los cinco
+comandos antes y después de implementar el bloque C:
+
+| Comando | Antes | Después | Salida antes/después |
+|:---|:---|:---|:---:|
+| `make tb_perf_counters` | 111 verificaciones PASS | 292 verificaciones PASS | 0 / 0 |
+| `make sim` | 22 PASS | 22 PASS | 0 / 0 |
+| `make test-assembler` | 44 pruebas OK | 44 pruebas OK | 0 / 0 |
+| `make test-programs` | 14 pruebas OK | 14 pruebas OK | 0 / 0 |
+| `make archivo` | PASS, 7 verificaciones RTL | PASS, 7 verificaciones RTL | 0 / 0 |
+
+Ambas ejecuciones de `make sim` reportaron 0 FAIL, 0 NO-COMPILA y 0 SIN-CHEQUEO.
+Las 111 verificaciones previas se conservan y pasan. Los 51 archivos de evidencia
+del Proyecto I comparados (logs, memorias y binarios, excluyendo el testbench de
+métricas ampliado) son idénticos byte a byte. El flujo de archivos conserva los
+989 ciclos de cifrado y 989 de descifrado, y recupera los 386 bytes originales.
+No se observaron fallos nuevos.
+
+Los logs y códigos de salida están en
+`build/perf_block_c/{before,after}/{tb_perf_counters,sim,test-assembler,test-programs,archivo}.log`
+y `build/perf_block_c/{before,after}/results.json`. La comparación se registra en
+`build/perf_block_c/before/sha256.json` y
+`build/perf_block_c/after/comparison.json`. La evidencia local en `build/` está
+ignorada por Git; los resultados no demuestran integración con el procesador.
