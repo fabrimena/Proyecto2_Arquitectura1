@@ -412,3 +412,173 @@ y `build/perf_d1/{before,after}/results.json`. Los hashes previos se registran e
 `build/perf_d1/after/comparison.json`. El testbench nuevo también deja ondas en
 `build/tb_perf_slot_mask/tb_perf_slot_mask.vcd`. Esta evidencia local está ignorada
 por Git. D1 no valida la integración al pipeline, que sigue pendiente.
+
+## Issue #7, D2: metadatos ID → EX → WB
+
+`rtl/perf_pipeline_monitor.sv` observa un pipeline abstracto en orden. Recibe la
+validez y máscara de ID, y mantiene registros auxiliares para EX y WB. No se
+instancia en `top.sv`, no altera datos ni control del núcleo y no agrega una etapa
+MEM o latencia al procesador. No utiliza PC para identificar finalizaciones.
+
+### Fuentes y adaptación al proyecto
+
+Se consultaron las **Notas de Clase de Arquitectura de Computadores I**, del
+Dr.-Ing. Jeferson González Gómez, versión del **27 de octubre de 2026**, archivo
+externo `notas_de_clase_arqui1_v0.4.pdf`. La numeración siguiente es la impresa
+(el PDF tiene ocho páginas preliminares):
+
+| Fuente | Principio respaldado | Aplicación y límites en D2 |
+|:---|:---|:---|
+| Notas §3.1.2, pp. 50–53 | Registros síncronos transportan datos y control; capturan en el mismo flanco y conservan valores entre flancos | Se transporta máscara y validez en paralelo, usando las cuatro etapas reales IF/ID/EX/WB; no se copia el ejemplo de cinco etapas |
+| Notas §3.2.3, pp. 61–62 | Un salto resuelto más tarde obliga a descartar más trabajo joven; el ejemplo distingue ID de EX | Se transporta la causa del vaciado de las dos posiciones jóvenes con resolución en EX; no se calcula una penalización automática |
+| Notas §3.2.4, pp. 62–66 | El compilador puede insertar NOPs para calendarización estática | NOP válido no equivale a bundle inválido ni aporta instrucciones útiles |
+| Notas §5.1, pp. 89–93 | Slots ligados a unidades funcionales, paquetes en orden y calendarización estática | Una máscara representa los cuatro slots del mismo bundle y avanza conjuntamente |
+| Notas §6.3.4, pp. 122–123 | El modelo bloqueante congela el pipeline; se contrasta con cachés no bloqueantes | `advance = 0` congela todos los metadatos; no se implementa hit-under-miss ni ejecución fuera de orden |
+| Enunciado Proyecto II §3.1.1 y §5.1, pp. 3 y 9 | Avance conjunto del bundle, stall global por miss y distinción entre bundles completados y operaciones no NOP | Interfaz abstracta de avance y evento único de finalización con su máscara |
+
+Son decisiones particulares de este proyecto: usar EX para memoria y resolución
+de saltos, cuatro slots ALU/LSU/BRU/CRIPTO, N+3, efectos de store/bóveda en EX y
+resultados de registros/ESTADO en WB. Se revisaron `top.sv`, IF/ID, ID/EX, EX/WB,
+BRU y CRIPTO para definir la alineación. La finalización común al consumir WB es
+una convención de observación; no retrasa efectos ni añade un retiro al datapath.
+La prioridad de excepción sobre salto proviene del RTL actual, no de una regla
+nueva del monitor. La prueba de D2 todavía no demuestra el enganche al núcleo.
+
+### Interfaz abstracta
+
+| Señal | Sentido | Contrato |
+|:---|:---|:---|
+| `clk`, `reset` | Entradas | Reloj general y reset síncrono prioritario, también con `advance = 0` |
+| `advance` | Entrada | El núcleo completo avanza en este flanco; debe estar estable antes de él |
+| `id_valid`, `id_non_nop_mask[3:0]` | Entradas | Bundle que ocupa ID antes del flanco; la máscara procede de D1 |
+| `ex_branch_taken` | Entrada | Salto tomado del bundle actualmente en EX, no la mera presencia de BRU |
+| `ex_exception` | Entrada | Excepción del bundle actualmente en EX, ya determinada por el control |
+| `ex_valid`, `ex_non_nop_mask`, `ex_cancel_cause` | Salidas | Metadatos registrados de EX |
+| `wb_valid`, `wb_non_nop_mask`, `wb_cancel_cause` | Salidas | Metadatos registrados de WB |
+| `bundle_complete` | Salida | Nivel consumible en el flanco: `!reset && advance && wb_valid` |
+
+Las causas de anulación son códigos internos de observación de dos bits:
+0 = ninguna, 1 = salto tomado, 2 = excepción. No son opcodes de la ISA.
+Toda posición anulada tiene validez cero y máscara cero. Una burbuja inicial o
+entrada inválida sin redirect tiene causa cero; una posición descartada conserva
+la causa de su descarte. Un NOP válido tiene validez uno, máscara cero y puede
+finalizar. Una entrada inválida, incluso con máscara distinta de cero, no cuenta.
+
+### Flancos y temporización
+
+Los metadatos se actualizan solo en `posedge clk`: primero reset y, en su ausencia,
+solo si `advance = 1`. Sin cancelaciones, para un bundle A que ya está en ID:
+
+| Instante | ID antes del flanco | EX después de NBA | WB después de NBA | Bundle consumido en el flanco |
+|:---|:---|:---|:---|:---|
+| E0 | A | A | vacío | ninguno |
+| E1 | B | B | A | ninguno |
+| E2 | C | C | B | A |
+| E3 | inválido | inválido | C | B |
+| E4 | inválido | inválido | inválido | C |
+
+```text
+ID(A) ──E0──> EX(A) ──E1──> WB(A) ──E2──> finalización de A
+```
+
+En E2 los contadores muestrean el WB anterior al flanco (A); las asignaciones no
+bloqueantes del monitor ponen B en WB después. Registrar un pulso adicional de
+finalización después de E2 introduciría otro ciclo de desfase, por lo que no se
+hace. Después de NBA, `bundle_complete` describe la elegibilidad del nuevo WB
+para el siguiente flanco; no significa que ese bundle se contó en el flanco recién
+ocurrido. El testbench verifica ambas fases y los contadores efectivamente consumidos.
+
+El cableado abstracto al contador usa `bundle_complete` y `wb_non_nop_mask`.
+El testbench conecta `memory_stall = !advance` para representar exclusivamente
+sus congelamientos sintéticos, y fija `branch_recovery = 0`. No incorpora nombres
+de Fabricio ni una conexión real a memoria. La ventana de medición solo habilita
+los contadores: los metadatos deben seguir avanzando aunque la medición esté
+deshabilitada, para no reproducir eventos viejos al reanudarla.
+
+### Congelamiento y reanudación
+
+Con `advance = 0` se mantienen EX, WB y la causa pendiente de IF/ID, y
+`bundle_complete = 0`. No se desplaza ni crea una marca y no se reemplaza una
+retención por una burbuja. Al reanudarse se consume el WB pendiente una vez.
+Finalizaciones consecutivas pueden mantener el nivel activo: cada flanco
+consume un bundle diferente. No se comparan PCs ni máscaras para deduplicar.
+
+Los controles de EX solo se aceptan en un flanco de avance y para un EX válido.
+El productor debe conservar la condición pendiente durante un congelamiento si
+el núcleo la aceptará al reanudar. Un pulso que desaparece antes de un flanco
+habilitado no se encola: este es un contrato síncrono, no una interfaz asíncrona.
+
+### Saltos, excepciones y marcas de anulación
+
+Un salto tomado aceptado conserva el bundle de EX al pasar a WB y anula el que
+estaba en ID. Se guarda una causa auxiliar que identifica el hueco de IF/ID que
+el mismo redirect produjo; en el próximo avance esa segunda posición se anula
+al pasar por ID. Esta causa es metadato de IF/ID, no una nueva etapa de ejecución.
+El productor debe respetar la secuencia real de ID: tras el flush aparece el
+hueco de IF/ID antes de que el destino alcance ID. El monitor no almacena la
+instrucción original descartada en IF. Las marcas describen posiciones vaciadas,
+que incluso podrían estar ya inválidas, no identidades de bundles útiles perdidos.
+
+Un salto no tomado no activa `ex_branch_taken` y no crea esas marcas. Si hay
+excepción y salto simultáneos, gana la excepción: se anula el bundle actual de
+EX y también las dos posiciones jóvenes, todas con causa 2. El WB anterior puede
+finalizar en ese mismo flanco; no se lo anula con la excepción del EX siguiente.
+Los controles sobre un EX inválido se ignoran. Reset limpia todas las causas.
+
+**Transportar marcas de salto hasta WB no equivale a medir ciclos perdidos.** D2
+no produce `branch_recovery`, no suma dos por salto ni conecta la causa 1 a ese
+contador. Atribuir los ciclos reales, resolver coincidencias con memoria y
+delimitar la ventana requiere el control real y queda pendiente de D4. Las causas
+2 nunca se convierten en marcas de salto. El testbench comprueba transporte y
+prioridad de causas, no penalidades reales del procesador.
+
+### Modelo de referencia y pruebas
+
+El testbench independiente instancia D1, D2 y los contadores existentes, sin
+instanciar `top`. La referencia usa fechas de salida en número de avances
+efectivos: un bundle presentado en ID en el avance n vence en n+2. Una tabla
+registra cancelaciones por edad y sus causas; no replica los dos registros RTL
+del monitor. Cada paso compara metadatos y contadores antes del flanco y después
+de NBA, usando además totales dirigidos independientes para casos clave.
+
+Se verifican reset con/sin avance, llenado/drenado, NOP válido, máscaras de uno a
+cuatro slots, inválidos, finalizaciones consecutivas, congelamientos de 1 a 4
+ciclos, reanudación, salto tomado/no tomado, dos posiciones jóvenes anuladas,
+excepción cripto, prioridad de excepción, conservación de WB anterior, controles
+retenidos/transitorios, congelamiento de marcas, ventana de medición y 300 pasos
+pseudoaleatorios reproducibles con semilla `0xCE430102`. El contador de saltos
+permanece en cero porque no se ha validado su atribución temporal.
+
+D3 deberá contrastar estos metadatos con el procesador actual. D4 deberá confirmar
+avance/reset y controles con Fabricio e implementar la atribución real de saltos.
+D5 verificará la combinación con congelamientos del núcleo. No se realizaron
+esos enganches ni se modificaron los módulos existentes en D2.
+
+### Evidencia de validación de D2
+
+Se comenzó en `feat/7-integracion-metricas`, HEAD `cb62d86` (D1), con árbol e
+índice limpios, conservando A–C y sin incorporar Fabricio. Antes de modificar
+código se ejecutaron las seis regresiones existentes; todas terminaron con 0.
+
+| Comando | Antes de D2 | Después de D2 | Salida antes/después |
+|:---|:---|:---|:---:|
+| `make tb_perf_pipeline_monitor` | No existía | PASS, 9981 verificaciones | — / 0 |
+| `make tb_perf_slot_mask` | PASS, 4299 verificaciones | PASS, 4299 verificaciones | 0 / 0 |
+| `make tb_perf_counters` | PASS, 292 verificaciones | PASS, 292 verificaciones | 0 / 0 |
+| `make sim` | 23 PASS | 24 PASS | 0 / 0 |
+| `make test-assembler` | 44 pruebas OK | 44 pruebas OK | 0 / 0 |
+| `make test-programs` | 14 pruebas OK | 14 pruebas OK | 0 / 0 |
+| `make archivo` | PASS, 7 verificaciones RTL | PASS, 7 verificaciones RTL | 0 / 0 |
+
+Ambas ejecuciones de `make sim` reportaron 0 FAIL, 0 NO-COMPILA y 0 SIN-CHEQUEO.
+No se observaron fallos. Los 55 archivos previos comparados (logs, memorias y
+binarios, incluyendo D1 y A–C) son idénticos byte a byte. El flujo de archivos
+conserva 989 ciclos de cifrado, 989 de descifrado y los 386 bytes originales.
+
+La evidencia local está en `build/perf_d2/{before,after}/*.log`, los comandos y
+códigos de salida en `build/perf_d2/{before,after}/results.json`, los hashes en
+`build/perf_d2/before/sha256.json` y la comparación en
+`build/perf_d2/after/comparison.json`. Las ondas del nuevo testbench están en
+`build/tb_perf_pipeline_monitor/tb_perf_pipeline_monitor.vcd`. Estos artefactos
+están ignorados por Git. Los resultados de D2 no validan los ciclos reales de
+penalización por saltos ni la temporización del enganche con Fabricio.
