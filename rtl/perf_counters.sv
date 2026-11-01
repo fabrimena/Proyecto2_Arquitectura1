@@ -1,4 +1,4 @@
-// Bloques A y B del issue #7: ciclos y trabajo completado en una ventana.
+// Bloques A, B y C del issue #7: trabajo y penalizaciones en una ventana.
 // Usar clk sin detener cuando se integre al procesador.
 module perf_counters (
     input  logic        clk,
@@ -6,9 +6,13 @@ module perf_counters (
     input  logic        measure_enable,
     input  logic        bundle_complete,
     input  logic [3:0]  non_nop_mask,
+    input  logic        memory_stall,
+    input  logic        branch_recovery,
     output logic [63:0] cycle_count,
     output logic [63:0] bundle_count,
-    output logic [63:0] instruction_count
+    output logic [63:0] instruction_count,
+    output logic [63:0] memory_stall_count,
+    output logic [63:0] branch_penalty_count
 );
 
 // Un bit por slot: ALU, LSU, BRU y CRIPTO, desde el bit 0 al 3.
@@ -24,15 +28,24 @@ always @(posedge clk) begin
         cycle_count <= 64'd0;
         bundle_count <= 64'd0;
         instruction_count <= 64'd0;
+        memory_stall_count <= 64'd0;
+        branch_penalty_count <= 64'd0;
     end
     else if (measure_enable) begin
         cycle_count <= cycle_count + 64'd1;
         // Cada flanco con evento es una finalización distinta, incluso si
         // bundle_complete está activo en varios ciclos consecutivos.
-        if (bundle_complete) begin
+        // El congelamiento global por memoria impide completar otro bundle.
+        if (bundle_complete && !memory_stall) begin
             bundle_count <= bundle_count + 64'd1;
             instruction_count <= instruction_count + {61'd0, completed_ops};
         end
+        // Convención de medición: memoria tiene prioridad en coincidencias.
+        // branch_recovery describe un ciclo perdido, no un evento de salto.
+        if (memory_stall)
+            memory_stall_count <= memory_stall_count + 64'd1;
+        else if (branch_recovery)
+            branch_penalty_count <= branch_penalty_count + 64'd1;
     end
 end
 

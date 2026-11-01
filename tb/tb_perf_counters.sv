@@ -9,15 +9,21 @@ logic reset = 1;
 logic measure_enable = 0;
 logic bundle_complete = 0;
 logic [3:0] non_nop_mask = 0;
+logic memory_stall = 0;
+logic branch_recovery = 0;
 logic [63:0] cycle_count;
 logic [63:0] bundle_count;
 logic [63:0] instruction_count;
+logic [63:0] memory_stall_count;
+logic [63:0] branch_penalty_count;
 
 perf_counters DUT (
     .clk(clk), .reset(reset), .measure_enable(measure_enable),
     .bundle_complete(bundle_complete), .non_nop_mask(non_nop_mask),
+    .memory_stall(memory_stall), .branch_recovery(branch_recovery),
     .cycle_count(cycle_count), .bundle_count(bundle_count),
-    .instruction_count(instruction_count)
+    .instruction_count(instruction_count),
+    .memory_stall_count(memory_stall_count), .branch_penalty_count(branch_penalty_count)
 );
 
 always #5 clk = ~clk;
@@ -75,6 +81,42 @@ task automatic expect_ipc(input bit expected_valid, input real expected);
     end
     else
         $display("    IPC=N/D (ventana con cero ciclos)");
+endtask
+
+task automatic expect_penalties(input logic [63:0] memory_cycles,
+                                input logic [63:0] branch_cycles);
+    check_true("ciclos atribuidos a memoria (64 bits)", memory_stall_count === memory_cycles);
+    check_true("ciclos atribuidos a saltos (64 bits)", branch_penalty_count === branch_cycles);
+    if (memory_stall_count !== memory_cycles || branch_penalty_count !== branch_cycles)
+        $display("    memoria=%016h esperado=%016h saltos=%016h esperado=%016h",
+                 memory_stall_count, memory_cycles, branch_penalty_count, branch_cycles);
+endtask
+
+task automatic expect_penalty_bound();
+    // Suma de 65 bits: evita que el propio chequeo oculte un desbordamiento.
+    check_true("penalizaciones no superan ciclos totales",
+               ({1'b0, memory_stall_count} + {1'b0, branch_penalty_count}) <=
+               {1'b0, cycle_count});
+endtask
+
+task automatic tick_penalty(input logic rst, input logic enabled,
+                            input logic mem_wait, input logic recovery, input logic done,
+                            input logic [63:0] cycles, input logic [63:0] bundles,
+                            input logic [63:0] instructions, input logic [63:0] memory_cycles,
+                            input logic [63:0] branch_cycles);
+    @(negedge clk);
+    reset = rst;
+    measure_enable = enabled;
+    memory_stall = mem_wait;
+    branch_recovery = recovery;
+    bundle_complete = done;
+    non_nop_mask = 4'b1111;
+    @(posedge clk);
+    #1;
+    expect_count("ciclos totales con penalizaciones", cycles);
+    expect_work(bundles, instructions);
+    expect_penalties(memory_cycles, branch_cycles);
+    expect_penalty_bound();
 endtask
 
 initial begin
@@ -213,6 +255,110 @@ initial begin
     @(posedge clk);
     #1;
     expect_work(0, 3);
+
+    check_true("bloques A y B: 111 comprobaciones anteriores sin fallos",
+               tb_checks == 111 && tb_errors == 0);
+    expect_penalties(0, 0);
+
+    tb_section("Bloque C: cero, uno y cuatro ciclos consecutivos de stall");
+    tick_penalty(1, 1, 1, 1, 1, 0, 0, 0, 0, 0);
+    tick_penalty(0, 1, 0, 0, 1, 1, 1, 4, 0, 0);
+    tick_penalty(0, 1, 1, 0, 1, 2, 1, 4, 1, 0);
+    tick_penalty(0, 1, 0, 0, 1, 3, 2, 8, 1, 0);
+    // El evento permanece activo intencionalmente: memoria bloquea duplicados.
+    tick_penalty(0, 1, 1, 0, 1, 4, 2, 8, 2, 0);
+    tick_penalty(0, 1, 1, 0, 1, 5, 2, 8, 3, 0);
+    tick_penalty(0, 1, 1, 0, 1, 6, 2, 8, 4, 0);
+    tick_penalty(0, 1, 1, 0, 1, 7, 2, 8, 5, 0);
+    tick_penalty(0, 1, 0, 0, 1, 8, 3, 12, 5, 0);
+
+    tb_section("Recuperación de dos ciclos y salto no tomado");
+    tick_penalty(0, 1, 0, 1, 0, 9, 3, 12, 5, 1);
+    tick_penalty(0, 1, 0, 1, 0, 10, 3, 12, 5, 2);
+    // Un salto no tomado no genera branch_recovery.
+    tick_penalty(0, 1, 0, 0, 1, 11, 4, 16, 5, 2);
+
+    tb_section("Coincidencia: atribución exclusiva a memoria");
+    tick_penalty(0, 1, 1, 1, 1, 12, 4, 16, 6, 2);
+    tick_penalty(0, 1, 1, 1, 1, 13, 4, 16, 7, 2);
+    // Solo se cuenta el ciclo de recuperación que efectivamente se indica.
+    tick_penalty(0, 1, 0, 1, 0, 14, 4, 16, 7, 3);
+    tick_penalty(0, 1, 0, 0, 1, 15, 5, 20, 7, 3);
+    // Recuperación de IF/ID puede coincidir con finalización de un bundle anterior.
+    tick_penalty(0, 1, 0, 1, 1, 16, 6, 24, 7, 4);
+
+    tb_section("Excepción: el generador externo no la marca como recuperación de salto");
+    // No se conecta redirect ni crypto_fault a branch_recovery. Esta prueba
+    // valida el contrato del monitor; no implementa un clasificador del pipeline.
+    tick_penalty(0, 1, 0, 0, 0, 17, 6, 24, 7, 4);
+
+    tb_section("Pausa conserva todos los contadores e ignora penalizaciones");
+    tick_penalty(0, 0, 1, 1, 1, 17, 6, 24, 7, 4);
+    tick_penalty(0, 0, 1, 1, 1, 17, 6, 24, 7, 4);
+    tick_penalty(0, 0, 0, 0, 0, 17, 6, 24, 7, 4);
+    tick_penalty(0, 1, 0, 0, 1, 18, 7, 28, 7, 4);
+    expect_ipc(1, 28.0 / 18.0);
+
+    tb_section("Reset durante stall, incluso con medición deshabilitada");
+    tick_penalty(1, 1, 1, 1, 1, 0, 0, 0, 0, 0);
+    tick_penalty(0, 1, 1, 0, 1, 1, 0, 0, 1, 0);
+    tick_penalty(1, 0, 1, 1, 1, 0, 0, 0, 0, 0);
+    tick_penalty(0, 1, 0, 0, 1, 1, 1, 4, 0, 0);
+
+    tb_section("Indicadores entre flancos no producen ciclos perdidos");
+    @(negedge clk);
+    bundle_complete = 0;
+    memory_stall = 1;
+    branch_recovery = 1;
+    #1;
+    expect_penalties(0, 0);
+    memory_stall = 0;
+    branch_recovery = 0;
+    @(posedge clk);
+    #1;
+    expect_count("flanco sin penalización muestreada", 2);
+    expect_work(1, 4);
+    expect_penalties(0, 0);
+    expect_penalty_bound();
+
+    tb_section("Contadores de penalizaciones: acarreo hacia el bit 32");
+    @(negedge clk);
+    DUT.cycle_count = 64'h0000_0001_0000_0000;
+    DUT.memory_stall_count = 64'h0000_0000_FFFF_FFFF;
+    memory_stall = 1;
+    branch_recovery = 1;
+    @(posedge clk);
+    #1;
+    expect_penalties(64'h0000_0001_0000_0000, 0);
+    expect_penalty_bound();
+    @(negedge clk);
+    DUT.cycle_count = 64'h0000_0001_0000_0000;
+    DUT.memory_stall_count = 0;
+    DUT.branch_penalty_count = 64'h0000_0000_FFFF_FFFF;
+    memory_stall = 0;
+    @(posedge clk);
+    #1;
+    expect_penalties(0, 64'h0000_0001_0000_0000);
+    expect_penalty_bound();
+
+    tb_section("Desbordamiento módulo 2^64 de las penalizaciones");
+    @(negedge clk);
+    DUT.cycle_count = 64'hFFFF_FFFF_FFFF_FFFF;
+    DUT.memory_stall_count = 64'hFFFF_FFFF_FFFF_FFFF;
+    DUT.branch_penalty_count = 0;
+    memory_stall = 1;
+    @(posedge clk);
+    #1;
+    expect_count("desbordamiento de ciclos totales", 0);
+    expect_penalties(0, 0);
+    @(negedge clk);
+    DUT.cycle_count = 64'hFFFF_FFFF_FFFF_FFFF;
+    DUT.branch_penalty_count = 64'hFFFF_FFFF_FFFF_FFFF;
+    memory_stall = 0;
+    @(posedge clk);
+    #1;
+    expect_count("desbordamiento de ciclos totales", 0);
+    expect_penalties(0, 0);
 
     tb_finish("tb_perf_counters");
 end
