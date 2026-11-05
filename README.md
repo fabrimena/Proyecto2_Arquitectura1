@@ -30,8 +30,10 @@ En Windows, Icarus Verilog se instala con `winget install Icarus.Verilog`.
 ## Estructura
 
 ```
-rtl/        procesador en SystemVerilog: top.sv, etapas, unidades, banco de registros, memorias
-            e isa_defs.sv (códigos del ISA y parámetros)
+rtl/        procesador del proyecto 1 en SystemVerilog: etapas, unidades, banco de registros,
+            memorias e isa_defs.sv (códigos del ISA y parámetros)
+rtl-p2/     módulos del proyecto 2 (caché, modelo de stalls, contadores) y top.sv, el único
+            módulo del proyecto 1 que cambió
 tb/         testbenches de make sim (uno por módulo más los del procesador completo)
 tests/      pruebas en Python y los testbenches que usan las herramientas (tests/rtl/)
 tools/      assembler.py y run_program.py: ensamblador y ejecución de programas
