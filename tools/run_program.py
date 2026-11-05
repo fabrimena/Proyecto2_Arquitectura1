@@ -189,9 +189,10 @@ def run_program(source: Path, workdir: Path, expected: dict[int, int] | None = N
     wave.unlink(missing_ok=True)
     raw_trace.unlink(missing_ok=True)
     trace_file.unlink(missing_ok=True)
-    rtl = sorted(str(p) for p in (ROOT / "rtl").glob("*.sv"))
+    # rtl/: procesador del proyecto 1; rtl-p2/: módulos del proyecto 2 (y top.sv)
+    rtl = [str(p) for d in ("rtl", "rtl-p2") for p in sorted((ROOT / d).glob("*.sv"))]
     run_logged([compiler, "-g2012", "-Wall", "-Wno-timescale",
-                "-I", str(ROOT / "rtl"), "-I", str(ROOT / "tb"),
+                "-I", str(ROOT / "rtl"), "-I", str(ROOT / "rtl-p2"), "-I", str(ROOT / "tb"),
                 "-s", "tb_assembled_program", "-o", str(binary), *rtl,
                 str(ROOT / "tests/rtl/tb_assembled_program.sv")],
                ROOT, compile_log, 30)

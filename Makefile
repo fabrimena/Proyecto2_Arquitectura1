@@ -25,9 +25,9 @@
 #  Variables útiles:
 #    PLUSARGS="+verbose +seed=7"   argumentos para la simulación
 #
-#  Cada testbench se compila con todos los módulos de rtl/ y se ejecuta dentro
-#  de build/<tb>/, donde quedan el ejecutable (sim.vvp), el log (sim.log) y el
-#  archivo de ondas (.vcd). Ver docs/simulation.md.
+#  Cada testbench se compila con todos los módulos de rtl/ y rtl-p2/ y se
+#  ejecuta dentro de build/<tb>/, donde quedan el ejecutable (sim.vvp), el log
+#  (sim.log) y el archivo de ondas (.vcd). Ver docs/simulation.md.
 # ==============================================================================
 
 SHELL := /bin/bash
@@ -36,20 +36,23 @@ IVERILOG ?= iverilog
 VVP      ?= vvp
 GTKWAVE  ?= gtkwave
 
-RTL_DIR   := rtl
-TB_DIR    := tb
-BUILD_DIR := build
+# rtl/: procesador del proyecto 1. rtl-p2/: módulos nuevos del proyecto 2 y los
+# del proyecto 1 que cambiaron para él (top.sv).
+RTL_DIR    := rtl
+RTL_P2_DIR := rtl-p2
+TB_DIR     := tb
+BUILD_DIR  := build
 
-RTL_SRCS := $(sort $(wildcard $(RTL_DIR)/*.sv))
+RTL_SRCS := $(sort $(wildcard $(RTL_DIR)/*.sv)) $(sort $(wildcard $(RTL_P2_DIR)/*.sv))
 TB_SRCS  := $(sort $(wildcard $(TB_DIR)/tb_*.sv))
 TB_HDRS  := $(wildcard $(TB_DIR)/*.svh)
 TBS      := $(patsubst $(TB_DIR)/%.sv,%,$(TB_SRCS))
 
 # -g2012          SystemVerilog
-# -I              rutas para los `include (isa_defs.sv, tb_utils.svh)
+# -I              rutas para los `include (isa_defs.sv, cache_defs.sv, tb_utils.svh)
 # -Wno-timescale  sólo algunos archivos declaran `timescale e Icarus avisaría
 #                 en cada módulo que lo hereda
-IVFLAGS  ?= -g2012 -Wall -Wno-timescale -I $(RTL_DIR) -I $(TB_DIR)
+IVFLAGS  ?= -g2012 -Wall -Wno-timescale -I $(RTL_DIR) -I $(RTL_P2_DIR) -I $(TB_DIR)
 
 # -n: $stop se comporta como $finish, la simulación nunca queda esperando
 VVPFLAGS ?= -n

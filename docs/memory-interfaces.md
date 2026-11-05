@@ -7,7 +7,7 @@
 
 Cómo se conectan el núcleo del proyecto 1, la L1-D, la L2 y la memoria principal. La idea es que cada
 uno pueda hacer y probar su módulo por separado contra un modelo simple y que después todo encaje. Las
-secciones 2 a 4 ya están implementadas en `rtl/top.sv` y `rtl/mem_stall_model.sv`; las secciones 5 a 8
+secciones 2 a 4 ya están implementadas en `rtl-p2/top.sv` y `rtl-p2/mem_stall_model.sv`; las secciones 5 a 8
 son propuestas y lo marcado como pendiente se decide en grupo.
 
 ## 1. Regla de partida
@@ -85,7 +85,8 @@ module cfg; defparam tb_archivo.DUT.MEM_MODE = 1; defparam tb_archivo.DUT.STALL_
 ```
 
 ```bash
-iverilog -g2012 -I rtl -I tb -s tb_archivo -s cfg -o sim.vvp rtl/*.sv tests/rtl/tb_archivo.sv cfg.sv
+iverilog -g2012 -I rtl -I rtl-p2 -I tb -s tb_archivo -s cfg -o sim.vvp rtl/*.sv rtl-p2/*.sv \
+    tests/rtl/tb_archivo.sv cfg.sv
 ```
 
 ## 4. Congelamiento del núcleo (`core_clk`)
