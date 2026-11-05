@@ -34,9 +34,10 @@ def main():
         mem.write_text(program.memory_text(), encoding='ascii')
         listing.write_text(program.listing_text(), encoding='utf-8')
         binary.write_bytes(program.binary())
+        rtl = [str(p) for d in ('rtl', 'rtl-p2') for p in sorted((ROOT/d).glob('*.sv'))]
         run_logged([tool('IVERILOG', 'iverilog'), '-g2012', '-I', str(ROOT/'rtl'),
-                    '-s', 'tb_ce1108_program', '-o', str(executable),
-                    *map(str, sorted((ROOT/'rtl').glob('*.sv'))),
+                    '-I', str(ROOT/'rtl-p2'), '-s', 'tb_ce1108_program', '-o', str(executable),
+                    *rtl,
                     str(ROOT/'tests/rtl/tb_ce1108_program.sv')], ROOT, compile_log, 30)
         output = run_logged([tool('VVP', 'vvp'), '-n', str(executable),
                             f'+MEM={mem}', f'+BUNDLES={len(program.bundles)}'], work, sim_log, 10)

@@ -2,7 +2,7 @@
 
 ## Issue #7, bloque A: contador de ciclos
 
-`rtl/perf_counters.sv` es un módulo independiente, todavía sin conexión al
+`rtl-p2/perf_counters.sv` es un módulo independiente, todavía sin conexión al
 procesador. Este bloque solo mide ciclos; los demás eventos del issue #7 quedan
 para bloques posteriores. No cambia la ISA, el pipeline ni las memorias.
 
@@ -307,7 +307,7 @@ ignorada por Git; los resultados no demuestran integración con el procesador.
 
 ## Issue #7, D1: clasificación de operaciones por bundle
 
-`rtl/perf_slot_mask.sv` recibe `bundle_in[127:0]` y produce
+`rtl-p2/perf_slot_mask.sv` recibe `bundle_in[127:0]` y produce
 `non_nop_mask[3:0]` mediante lógica combinacional, sin reloj, reset ni registros.
 El bit 0 corresponde a ALU, el 1 a LSU, el 2 a BRU y el 3 a CRIPTO.
 No se conecta todavía al procesador ni a los contadores.
@@ -371,7 +371,7 @@ transporta metadatos, resuelve flush, detecta stalls ni modifica la ISA o latenc
 
 ### Pruebas de D1
 
-`tb/tb_perf_slot_mask.sv` usa las utilidades autoverificables existentes. Las
+`tb-p2/tb_perf_slot_mask.sv` usa las utilidades autoverificables existentes. Las
 34 palabras fijas proceden de las referencias de `tests/test_assembler.py` y
 `tests/test_isa.py`; cada una se prueba en los cuatro slots. Se ejercitan las
 16 combinaciones de slots activos, transiciones a NOP y destinos ALU `x0`.
@@ -415,7 +415,7 @@ por Git. D1 no valida la integración al pipeline, que sigue pendiente.
 
 ## Issue #7, D2: metadatos ID → EX → WB
 
-`rtl/perf_pipeline_monitor.sv` observa un pipeline abstracto en orden. Recibe la
+`rtl-p2/perf_pipeline_monitor.sv` observa un pipeline abstracto en orden. Recibe la
 validez y máscara de ID, y mantiene registros auxiliares para EX y WB. No se
 instancia en `top.sv`, no altera datos ni control del núcleo y no agrega una etapa
 MEM o latencia al procesador. No utiliza PC para identificar finalizaciones.

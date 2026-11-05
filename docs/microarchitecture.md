@@ -92,5 +92,5 @@ el ciclo 5 entra a IF el bundle destino. `tb_top` comprueba los 4 bundles a la v
 | ID | `rtl/dispatch.sv`, `rtl/decoder_alu.sv`, `rtl/decoder_lsu.sv`, `rtl/decoder_bru.sv`, `rtl/decoder_crypto.sv`, `rtl/regfile.sv`, `rtl/pipeline_id_ex.sv` |
 | EX | `rtl/alu.sv`, `rtl/lsu.sv`, `rtl/memory.sv`, `rtl/bru.sv`, `rtl/crypto_unit.sv`, `rtl/key_vault.sv` |
 | WB | `rtl/pipeline_ex_wb.sv`, `rtl/wb.sv` |
-| Integración | `rtl/top.sv` (conexiones, flush y excepción) y `rtl/isa_defs.sv` (códigos y parámetros) |
+| Integración | `rtl-p2/top.sv` (conexiones, flush y excepción) y `rtl/isa_defs.sv` (códigos y parámetros) |
 | Pruebas | Un testbench por módulo en `tb/` (`pc_branch` e `instruction_memory` se prueban dentro de `top`) más `tb_top`, `tb_pipeline_integracion` y `tb_pipeline_cripto` sobre el procesador completo ([simulation.md](simulation.md), sección 13) |

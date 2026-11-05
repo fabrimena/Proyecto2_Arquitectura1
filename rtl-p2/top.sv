@@ -86,7 +86,7 @@ module top #(
 
     // Memoria de datos:
     //   0  conexión directa con DMEM, como en el proyecto 1 (por defecto)
-    //   1  modelo de stalls (rtl/mem_stall_model.sv): cada acceso de la LSU
+    //   1  modelo de stalls (rtl-p2/mem_stall_model.sv): cada acceso de la LSU
     //      tarda STALL_CYCLES ciclos más, para probar el congelamiento
     parameter int MEM_MODE     = 0,
     parameter int STALL_CYCLES = 3

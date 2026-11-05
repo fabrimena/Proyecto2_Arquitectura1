@@ -37,7 +37,7 @@ sudo apt install iverilog gtkwave make python3
 
 | Comando | Qué hace |
 |:---|:---|
-| `make sim` | Compila y ejecuta todos los `tb/tb_*.sv` y muestra un resumen |
+| `make sim` | Compila y ejecuta todos los `tb/tb_*.sv` y `tb-p2/tb_*.sv` y muestra un resumen |
 | `make tb_alu` | Ejecuta un solo testbench (recompila solo si cambió algo) |
 | `make waves TB=tb_alu` | Abre su `.vcd` en GTKWave |
 | `make archivo [ARCHIVO=ruta]` | Cifra y descifra un archivo en el procesador (sección 3) |
@@ -93,25 +93,28 @@ bytes con L y R en *little-endian*, como el código de referencia del enunciado.
 ## 4. Flujo de compilación
 
 ```bash
-iverilog -g2012 -Wall -Wno-timescale -I rtl -I tb -s tb_x -o build/tb_x/sim.vvp rtl/*.sv tb/tb_x.sv
+iverilog -g2012 -Wall -Wno-timescale -I rtl -I rtl-p2 -I tb -I tb-p2 -s tb_x -o build/tb_x/sim.vvp \
+    rtl/*.sv rtl-p2/*.sv tb/tb_x.sv
 cd build/tb_x && vvp -n sim.vvp
 ```
 
-- Todo `rtl/` se compila con cada testbench, así que un módulo o un testbench nuevo no requiere tocar
-  el Makefile. `-s tb_x` fija el módulo superior.
-- `-I rtl -I tb` resuelve los `` `include `` de `isa_defs.sv` y `tb_utils.svh`, que tienen guardas
-  `` `ifndef ``.
+- `rtl/` (procesador del proyecto 1) y `rtl-p2/` (módulos del proyecto 2 y `top.sv`) se compilan
+  completos con cada testbench, así que un módulo o un testbench nuevo no requiere tocar el
+  Makefile. `-s tb_x` fija el módulo superior. Un testbench de `tb-p2/` se compila igual, con
+  `tb-p2/tb_x.sv` al final.
+- `-I rtl -I rtl-p2 -I tb -I tb-p2` resuelve los `` `include `` de `isa_defs.sv`, `cache_defs.sv` y
+  `tb_utils.svh`, que tienen guardas `` `ifndef ``.
 - `-Wno-timescale`: el RTL no usa retardos; solo los testbenches declaran `` `timescale 1ns/1ps ``.
 - `vvp` corre dentro de `build/tb_x/`, donde queda el `.vcd`; `-n` hace que `$stop` termine la
   simulación.
 
 ## 5. Formato estándar de testbench
 
-Cada `tb/tb_<modulo>.sv` tiene `` `timescale 1ns/1ps ``, un encabezado con los casos que cubre,
-`` `include "tb_utils.svh" `` y `$dumpfile`/`$dumpvars`. El estímulo cambia en el flanco de bajada y
-el diseño captura en el de subida, para evitar carreras. Cada resultado se verifica con `check` o
-`check_true`, los vectores aleatorios usan `$random(seed)` (`+seed=N`) y el testbench termina con
-`tb_finish`.
+Cada `tb/tb_<modulo>.sv` y `tb-p2/tb_<modulo>.sv` tiene `` `timescale 1ns/1ps ``, un encabezado con
+los casos que cubre, `` `include "tb_utils.svh" `` y `$dumpfile`/`$dumpvars`. El estímulo cambia en
+el flanco de bajada y el diseño captura en el de subida, para evitar carreras. Cada resultado se
+verifica con `check` o `check_true`, los vectores aleatorios usan `$random(seed)` (`+seed=N`) y el
+testbench termina con `tb_finish`.
 
 | Utilidad de `tb/tb_utils.svh` | Qué hace |
 |:---|:---|
