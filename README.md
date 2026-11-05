@@ -34,7 +34,8 @@ rtl/        procesador del proyecto 1 en SystemVerilog: etapas, unidades, banco 
             memorias e isa_defs.sv (códigos del ISA y parámetros)
 rtl-p2/     módulos del proyecto 2 (caché, modelo de stalls, contadores) y top.sv, el único
             módulo del proyecto 1 que cambió
-tb/         testbenches de make sim (uno por módulo más los del procesador completo)
+tb/         testbenches del proyecto 1 (uno por módulo más los del procesador completo)
+tb-p2/      testbenches del proyecto 2; make sim ejecuta los de tb/ y los de tb-p2/
 tests/      pruebas en Python y los testbenches que usan las herramientas (tests/rtl/)
 tools/      assembler.py y run_program.py: ensamblador y ejecución de programas
             load_file.py y extract_data.py: carga y extracción de archivos en la memoria
