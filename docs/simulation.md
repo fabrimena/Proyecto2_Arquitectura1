@@ -93,14 +93,16 @@ bytes con L y R en *little-endian*, como el código de referencia del enunciado.
 ## 4. Flujo de compilación
 
 ```bash
-iverilog -g2012 -Wall -Wno-timescale -I rtl -I tb -s tb_x -o build/tb_x/sim.vvp rtl/*.sv tb/tb_x.sv
+iverilog -g2012 -Wall -Wno-timescale -I rtl -I rtl-p2 -I tb -s tb_x -o build/tb_x/sim.vvp \
+    rtl/*.sv rtl-p2/*.sv tb/tb_x.sv
 cd build/tb_x && vvp -n sim.vvp
 ```
 
-- Todo `rtl/` se compila con cada testbench, así que un módulo o un testbench nuevo no requiere tocar
-  el Makefile. `-s tb_x` fija el módulo superior.
-- `-I rtl -I tb` resuelve los `` `include `` de `isa_defs.sv` y `tb_utils.svh`, que tienen guardas
-  `` `ifndef ``.
+- `rtl/` (procesador del proyecto 1) y `rtl-p2/` (módulos del proyecto 2 y `top.sv`) se compilan
+  completos con cada testbench, así que un módulo o un testbench nuevo no requiere tocar el
+  Makefile. `-s tb_x` fija el módulo superior.
+- `-I rtl -I rtl-p2 -I tb` resuelve los `` `include `` de `isa_defs.sv`, `cache_defs.sv` y
+  `tb_utils.svh`, que tienen guardas `` `ifndef ``.
 - `-Wno-timescale`: el RTL no usa retardos; solo los testbenches declaran `` `timescale 1ns/1ps ``.
 - `vvp` corre dentro de `build/tb_x/`, donde queda el `.vcd`; `-n` hace que `$stop` termine la
   simulación.
