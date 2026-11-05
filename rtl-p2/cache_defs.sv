@@ -20,7 +20,7 @@
       reemplazo, riesgo RAW del write buffer) y la política de inclusión
       L1/L2 elegida por el grupo (NINE).
    4. Formato de una entrada del write buffer y de las solicitudes a L2.
-   5. Las 4 etapas del acceso segmentado a caché según el libro.
+   5. Las etapas del acceso segmentado a caché (notas de clase 6.3.1).
 
  Nota de compatibilidad con Icarus Verilog 12:
    Igual que isa_defs.sv, este archivo solo declara localparam (nada de
@@ -41,7 +41,7 @@
 //   Asociatividad ....... 2 vías (2-way set associative)
 //   Tamaño de línea ..... 32 bytes = 8 palabras de 32 bits
 //
-// De ahí salen, con las fórmulas del libro (sección 6.2.1 y 6.2.2):
+// De ahí salen, con las fórmulas de las notas de clase (sección 6.2.1 y 6.2.2):
 //
 //   Número de bloques   NB = Tcaché / Tbloque = 4096 / 32  = 128 bloques
 //   Número de conjuntos NS = NB / n           = 128 / 2    =  64 conjuntos
@@ -67,7 +67,7 @@ localparam int LINE_MASK_W    = LINE_BYTES;                    // 32 bits
 
 
 // ============================================================================
-// 2. División de la dirección (figura 6.2 del libro)
+// 2. División de la dirección (notas de clase, figura 6.2)
 // ============================================================================
 //
 // La memoria de datos (rtl/memory.sv) es de 64 KB y SOLO mira los 16 bits
@@ -128,21 +128,37 @@ localparam int TAG_MSB      = PADDR_W - 1;                     // 15
 // código (lo pide la tarea de José y la comparación de la iteración 5).
 //
 // --- Política de escritura (qué pasa cuando un store ACIERTA) ---------------
+// (Notas de clase, sección 6.2.3)
 //   WRITE_THROUGH: el store escribe en la L1-D y ADEMÁS se manda al write
 //                  buffer hacia L2 de inmediato. L2 siempre está al día.
 //   WRITE_BACK   : el store escribe solo en la L1-D y marca la línea como
 //                  "sucia" (dirty). L2 se actualiza hasta que esa línea se
-//                  desaloja. Menos tráfico, pero hay que vaciar la caché al
-//                  final de la simulación (tarea compartida con Alejandro).
+//                  desaloja.
+//
+// DECISIÓN DEL GRUPO: la L1-D es WRITE-THROUGH (no es un parámetro).
+//   - La L1-D queda SIEMPRE LIMPIA: nunca tiene un dato que la L2 no tenga
+//     (o que no esté ya en camino dentro del write buffer). Por eso no
+//     necesita bit "sucio" (dirty) ni mandar líneas a L2 al desalojarlas:
+//     una línea que sale de la L1-D simplemente se descarta.
+//   - El VACIADO se simplifica: para que la L2 tenga todo, basta con esperar
+//     a que el write buffer quede vacío. No hay que recorrer la L1-D
+//     buscando líneas sucias.
+//   - El costo de write-through (cada store va a la L2, notas 6.2.3) lo
+//     esconde el write buffer obligatorio: el store se deja en el buffer en
+//     1 ciclo y el núcleo sigue (notas 6.3.5, figura 6.12).
+// La L2 sí es write-back (enunciado 3.2.3, Alejandro).
 localparam logic WP_WRITE_THROUGH = 1'b0;
 localparam logic WP_WRITE_BACK    = 1'b1;
+localparam logic L1D_WRITE_POLICY = WP_WRITE_THROUGH;   // fija, decisión del grupo
 
 // --- Política de asignación (qué pasa cuando un store FALLA) ----------------
+// (Notas de clase, sección 6.2.3)
 //   NO_WRITE_ALLOC: el store no trae la línea; se manda directo al write
 //                   buffer. Combinación típica con write-through.
 //   WRITE_ALLOC   : primero se trae la línea desde L2 (como si fuera un load)
-//                   y luego se escribe en ella. Combinación típica con
-//                   write-back.
+//                   y luego se escribe en ella (y, por ser write-through,
+//                   también se manda al write buffer).
+// Se deja configurable para comparar en la iteración 5.
 localparam logic AP_NO_WRITE_ALLOC = 1'b0;
 localparam logic AP_WRITE_ALLOC    = 1'b1;
 
@@ -167,33 +183,37 @@ localparam logic [1:0] RP_RANDOM = 2'd2;
 localparam logic RAW_STALL   = 1'b0;
 localparam logic RAW_FORWARD = 1'b1;
 
-// --- Política de inclusión L1-D / L2 (enunciado 3.2.4, libro 6.2.4) --------
-// DECISIÓN DEL GRUPO: NINE (Not Inclusive, Not Exclusive).
+// --- Política de inclusión L1-D / L2 (enunciado 3.2.4, notas 6.2.4) --------
+// DECISIÓN DEL GRUPO: NINE (Not Inclusive, Not Exclusive), con L1-D
+// write-through.
 //
 //   NINE significa que NO se impone ninguna relación entre lo que hay en
 //   L1-D y lo que hay en L2: una línea puede estar en los dos niveles, solo
-//   en uno, o en ninguno, según cómo se vayan dando los accesos.
+//   en uno, o en ninguno, según cómo se vayan dando los accesos (notas,
+//   figura 6.6, tercer caso).
 //
 //   ¿Qué implica para la L1-D?
 //     - Cuando L2 desaloja una línea, NO le avisa a la L1-D. No hace falta
-//       "invalidación hacia atrás" (backward invalidation): la copia en L1-D
-//       sigue siendo válida y se puede seguir usando.
-//     - Cuando la L1-D desaloja una línea limpia, simplemente la descarta.
-//       Si está sucia (write-back), la manda a L2 por el write buffer, igual
-//       que en cualquier otra política.
+//       "invalidación hacia atrás" (backward invalidation, notas figura 6.7):
+//       la copia en L1-D sigue siendo válida y se puede seguir usando.
+//     - Cuando la L1-D desaloja una línea, simplemente la DESCARTA. Como es
+//       write-through, la línea siempre está limpia: todo lo que se escribió
+//       en ella ya está en la L2 o esperando en el write buffer.
 //     - Por lo tanto, la L1-D no necesita ninguna entrada de invalidación
 //       desde L2, ni el contador de invalidaciones hacia atrás de la
 //       sección 5.2 (ese contador solo es obligatorio con política inclusiva).
 //
 //   ¿Por qué NINE y no inclusiva?
 //     La ventaja clásica de la inclusión (consultar solo L2 para saber si
-//     algún núcleo tiene una línea) solo sirve con varios núcleos. Este
-//     procesador tiene UN solo núcleo, así que esa ventaja no aplica, y NINE
-//     es la opción más simple de implementar y verificar.
+//     algún núcleo tiene una línea, notas 6.2.4) solo sirve con varios
+//     núcleos. Este procesador tiene UN solo núcleo, así que esa ventaja no
+//     aplica, y NINE es la opción más simple de implementar y verificar.
 //
 //   ¿Hay riesgo de datos viejos?
-//     No. Con un solo núcleo, toda escritura pasa primero por la L1-D, así
-//     que la copia de la L1-D es siempre la más nueva. Lo único que hay que
+//     No. Con un solo núcleo, toda escritura pasa primero por la L1-D y de
+//     ahí al write buffer, en orden. Si un miss pide a la L2 una línea que
+//     todavía tiene escrituras en el buffer, el riesgo RAW en memoria se
+//     resuelve con RAW_FORWARD o RAW_STALL (arriba). Lo único que hay que
 //     cuidar es que la unidad cripto (puerto B: vcr, camcon) también pase por
 //     la caché, para que no escriba la RAM "por detrás" (tarea de Fabricio).
 localparam logic [1:0] INCL_INCLUSIVE = 2'd0;
@@ -201,10 +221,10 @@ localparam logic [1:0] INCL_NINE      = 2'd1;
 localparam logic [1:0] INCL_EXCLUSIVE = 2'd2;   // opcional, no se usa
 localparam logic [1:0] L1L2_INCLUSION_POLICY = INCL_NINE;
 
-// Valores por defecto propuestos (se discuten con el grupo, iteración 3):
-//   write-back + write-allocate + LRU + forwarding, write buffer de 4 entradas.
-localparam logic       L1D_DEFAULT_WRITE_POLICY = WP_WRITE_BACK;
-localparam logic       L1D_DEFAULT_ALLOC_POLICY = AP_WRITE_ALLOC;
+// Valores por defecto de los parámetros que sí son configurables:
+//   no-write-allocate (lo típico con write-through) + LRU + forwarding,
+//   write buffer de 4 entradas.
+localparam logic       L1D_DEFAULT_ALLOC_POLICY = AP_NO_WRITE_ALLOC;
 localparam logic [1:0] L1D_DEFAULT_REPL_POLICY  = RP_LRU;
 localparam logic       L1D_DEFAULT_RAW_POLICY   = RAW_FORWARD;
 
@@ -218,22 +238,26 @@ localparam int WB_DEPTH_MAX     = 8;
 // 4. Formato de una entrada del write buffer y de las solicitudes a L2
 // ============================================================================
 //
-// Para que el MISMO write buffer sirva con write-through y con write-back,
-// cada entrada guarda una línea completa más una máscara de bytes:
+// Con write-through, cada store (guardap o guardab) ocupa una entrada del
+// write buffer. Para que la entrada tenga el mismo formato que el bus hacia
+// la L2 (l2_wline + l2_be, docs/memory-interfaces.md sección 5), se guarda
+// en formato de línea con una máscara de bytes:
 //
 //   +--------------------+----------------------+-------------------------+
 //   | dirección de línea | máscara (32 bits)    | datos de la línea (256) |
-//   |   (16 bits)        | 1 = ese byte se      |                         |
-//   |                    |     escribe en L2    |                         |
+//   | (11 bits, [15:5])  | 1 = ese byte se      | (solo cuentan los bytes |
+//   |                    |     escribe en L2    |  marcados en la máscara)|
 //   +--------------------+----------------------+-------------------------+
 //
-//   - Write-through: cada store ocupa una entrada con solo 1 a 4 bits de la
-//     máscara en 1 (los bytes que tocó el store, guardab o guardap).
-//   - Write-back: una línea sucia desalojada ocupa una entrada con TODA la
-//     máscara en 1 (se escriben los 32 bytes).
+//   - guardap: 4 bits de la máscara en 1 (la palabra completa).
+//   - guardab: 1 bit de la máscara en 1 (el byte que tocó el store).
 //
-// Así L2 recibe siempre el mismo tipo de solicitud ("escribe estos bytes de
-// esta línea") y el forwarding RAW es igual en ambos casos.
+// Así la L2 recibe siempre "escribe estos bytes de esta línea", y el
+// forwarding RAW (notas 6.3.5, figura 6.13) solo tiene que poner encima de
+// la línea que llega de la L2 los bytes marcados de cada entrada.
+
+// Ancho de la dirección de línea: 16 - 5 = 11 bits (addr[15:5]).
+localparam int LINE_ADDR_W = PADDR_W - BLOCK_OFF_W;
 
 // Tipos de solicitud que la L1-D (o su write buffer) le hace a L2.
 // Protocolo valid/ready: la solicitud se considera aceptada en el ciclo en
@@ -244,10 +268,10 @@ localparam logic L2_REQ_WRITE_MASK = 1'b1;   // escribir los bytes marcados
 
 
 // ============================================================================
-// 5. Acceso segmentado a caché (libro, sección 6.3.1, figura 6.8)
+// 5. Acceso segmentado a caché (notas de clase, sección 6.3.1, figura 6.8)
 // ============================================================================
 //
-// El libro divide un acceso a caché en 4 etapas:
+// Las notas dividen un acceso a caché en 4 etapas:
 //
 //   Etapa 1  Cálculo de dirección   -> dirección efectiva = base + offset
 //   Etapa 2  Desambiguación         -> separar etiqueta / índice / palabra
@@ -262,17 +286,31 @@ localparam logic L2_REQ_WRITE_MASK = 1'b1;   // escribir los bytes marcados
 // etapa EX del procesador como lógica combinacional, separadas y
 // etiquetadas en el código, y la etapa 3 usa ACCESO PARALELO (etiquetas y
 // datos de las 2 vías se leen a la vez y un multiplexor elige la vía que
-// acertó), que es la variante del libro con menor latencia (figura 6.9).
+// acertó), que es la variante de las notas con menor latencia (figura 6.9:
+// paralelo frente a serie).
 //
-// La segmentación con registros entre etapas se usa en el camino del MISS
-// (solicitud a L2, espera, llenado de la línea, reintento), que es donde el
-// enunciado permite ciclos extra. Estos son los estados de ese camino:
-localparam logic [2:0] L1D_ST_IDLE      = 3'd0;  // atendiendo hits normalmente
-localparam logic [2:0] L1D_ST_EVICT     = 3'd1;  // mandar la línea sucia al write buffer
-localparam logic [2:0] L1D_ST_REQ       = 3'd2;  // pedir la línea a L2 (valid/ready)
-localparam logic [2:0] L1D_ST_WAIT      = 3'd3;  // esperar la respuesta de L2
-localparam logic [2:0] L1D_ST_FILL      = 3'd4;  // escribir la línea nueva en la vía elegida
-localparam logic [2:0] L1D_ST_RAW_WAIT  = 3'd5;  // (solo RAW_STALL) esperar que drene el buffer
+// El camino del MISS sí se segmenta (pipeline interno de la caché, mejora
+// opcional del enunciado 3.3). Ahí el enunciado permite ciclos extra. Sus
+// etapas se pasan el trabajo con handshake valid/ready y, como la L1-D es
+// write-through, ninguna tiene que sacar líneas sucias:
+//
+//   M1 Asignación  registra el miss en un MSHR (Miss Status Holding
+//                  Register, notas 6.3.4): qué vía se va a reemplazar. La
+//                  línea que había ahí se descarta (siempre está limpia).
+//   M2 Solicitud   pide la línea a la L2.  valid = no hay riesgo RAW que
+//                  obligue a esperar,  ready = el bus hacia la L2 está libre.
+//   M3 Llenado     llega la línea de la L2: se corrige con los bytes que
+//                  siguen en el write buffer (forwarding), se escribe en la
+//                  vía elegida y, en ese mismo ciclo, el dato sale al núcleo.
+//
+// En paralelo, sin detener al núcleo:
+//   D1 Drenado     la entrada más vieja del write buffer se escribe en la L2
+//                  cuando el bus está libre y M2 no lo necesita (las lecturas
+//                  tienen prioridad: el núcleo las está esperando).
+//
+// La caché es bloqueante (una sola petición de miss a la vez, 1 MSHR): el
+// núcleo VLIW se congela en cada miss (enunciado 3.3), así que no puede
+// llegar otro acceso mientras se atiende uno.
 
 
 `endif
