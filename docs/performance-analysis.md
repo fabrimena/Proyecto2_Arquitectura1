@@ -371,7 +371,7 @@ transporta metadatos, resuelve flush, detecta stalls ni modifica la ISA o latenc
 
 ### Pruebas de D1
 
-`tb/tb_perf_slot_mask.sv` usa las utilidades autoverificables existentes. Las
+`tb-p2/tb_perf_slot_mask.sv` usa las utilidades autoverificables existentes. Las
 34 palabras fijas proceden de las referencias de `tests/test_assembler.py` y
 `tests/test_isa.py`; cada una se prueba en los cuatro slots. Se ejercitan las
 16 combinaciones de slots activos, transiciones a NOP y destinos ALU `x0`.
