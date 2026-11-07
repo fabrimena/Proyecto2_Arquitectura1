@@ -58,20 +58,24 @@
    mismo que el puerto A más los bits D.
 
  Puerto de escritura: una línea completa por ciclo
-   Con wr_en = 1 se escriben, en el flanco positivo, la etiqueta, la línea y
-   el bit D de la vía wr_way del conjunto wr_set, y esa casilla queda válida
-   (V = 1). Sirve para todas las escrituras de la L1-D:
+   Con wr_en = 1 se escriben, en el flanco positivo, la etiqueta, la línea,
+   el bit D y el bit V (wr_valid) de la vía wr_way del conjunto wr_set.
+   Sirve para todas las escrituras de la L1-D:
      - llenado: entra la línea nueva (D = 0, o D = l2_rdirty con exclusiva,
        o D = 1 si trae stores mezclados con write-back);
      - store que acierta: la misma línea con los bytes nuevos (D = 1 con
        write-back, D = 0 con write-through);
-     - vaciado: la misma línea con D = 0, después de mandarla a la L2.
+     - vaciado con NINE: la misma línea con D = 0, después de mandarla a la
+       L2 (sigue válida y limpia);
+     - vaciado con la política exclusiva: V = 0. La línea se MUEVE a la L2;
+       si siguiera válida en la L1-D estaría en los dos niveles a la vez
+       (notas 6.2.4: L1 ∩ L2 = ∅).
    l1d_cache.sv se encarga de que en un ciclo haya una sola escritura (si un
    llenado y un store coinciden, el store espera un ciclo).
 
- Compatibilidad: los puertos nuevos (rdb_*, wr_dirty) tienen valor por
- defecto en 0, como el puerto B de rtl/memory.sv, así que un módulo que no
- los conecte funciona igual que antes (sin bits sucios).
+ Compatibilidad: los puertos nuevos tienen valor por defecto, como el puerto
+ B de rtl/memory.sv (rdb_set y wr_dirty en 0, wr_valid en 1), así que un
+ módulo que no los conecte funciona igual que antes.
 
  Reset: borra los bits V y D (la caché arranca vacía y limpia). Las
  etiquetas y los datos no necesitan borrarse, porque con V = 0 nadie los
@@ -109,14 +113,15 @@ module l1d_arrays (
     output logic [L1D_WAYS*LINE_W-1:0]        rdb_line,
 
     // ------------------------------------------------------------------
-    // Escritura de una vía completa (flanco positivo); la deja válida
+    // Escritura de una vía completa (flanco positivo)
     // ------------------------------------------------------------------
     input  logic                              wr_en,
     input  logic [L1D_INDEX_W-1:0]            wr_set,
     input  logic                              wr_way,
     input  logic [L1D_TAG_W-1:0]              wr_tag,
     input  logic [LINE_W-1:0]                 wr_line,
-    input  logic                              wr_dirty = 1'b0
+    input  logic                              wr_dirty = 1'b0,
+    input  logic                              wr_valid = 1'b1    // 0 = invalidar la casilla
 );
 
 
@@ -168,7 +173,7 @@ generate
             end
             else if (wr_en && wr_way == WAY_ID) begin
 
-                valid_bits[wr_set] <= 1'b1;
+                valid_bits[wr_set] <= wr_valid;
                 dirty_bits[wr_set] <= wr_dirty;
                 tag_mem[wr_set]    <= wr_tag;
                 data_mem[wr_set]   <= wr_line;
