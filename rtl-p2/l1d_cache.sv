@@ -27,6 +27,9 @@
    REPL_POLICY   RP_LRU, RP_FIFO o RP_RANDOM
    RAW_POLICY    RAW_FORWARD o RAW_STALL (con exclusiva siempre se espera)
    WB_DEPTH      entradas del write buffer, 2 a 8
+   N_MSHR        MSHR para stores que fallan, 1 a 4 (D8). Solo se usan con
+                 write-back + write-allocate y N_MSHR >= 2; N_MSHR = 1 es la
+                 caché bloqueante (para comparar)
    L2_BUS_V2     1 = bus versión 2 (l2_gnt / l2_rvalid); 0 = bus anterior
                  (l2_ready)
  Combinaciones válidas: write-through + NINE, write-back + NINE y
@@ -34,11 +37,11 @@
 
  TEMPORAL: mientras tb-p2/tb_perf_cache_l1d_k1a.sv (Javier) siga con el bus
  anterior y sin pasar WRITE_POLICY ni INCL_POLICY, los valores por defecto
- son los de la versión anterior: write-through + NINE + bus anterior (alias
- L1D_WRITE_POLICY y L1L2_INCLUSION_POLICY de cache_defs.sv). Cuando Javier lo
- actualice, otro commit pone por defecto write-back + exclusiva + bus
- versión 2 (L1D_DEFAULT_WRITE_POLICY, L1D_DEFAULT_INCL_POLICY) y borra los
- alias.
+ son los de la versión anterior: write-through + NINE + bus anterior + 1 MSHR
+ (alias L1D_WRITE_POLICY y L1L2_INCLUSION_POLICY de cache_defs.sv). Cuando
+ Javier lo actualice, otro commit pone por defecto write-back + exclusiva +
+ bus versión 2 + L1D_N_MSHR_DEFAULT (L1D_DEFAULT_WRITE_POLICY,
+ L1D_DEFAULT_INCL_POLICY) y borra los alias.
 
 
  ==============================================================================
@@ -119,17 +122,37 @@
  B) Camino del MISS: etapas desacopladas con handshake (enunciado 3.3):
 
       M1 Asignación  el miss queda registrado (MSHR, notas 6.3.4) hasta que
-                     llega su línea. Esta versión es bloqueante (1 MSHR): el
-                     núcleo espera. Los MSHR non-blocking para stores (D8)
-                     van en el commit siguiente.
-      M2 Solicitud   pide la línea.  valid = sin riesgo RAW que obligue a
-                     esperar y, con write-back, con un lugar libre en el
-                     write buffer para la víctima;  ready = l2_gnt.
+                     llega su línea.
+                       - Load que falla: el núcleo espera (caché bloqueante
+                         para cargas, D8).
+                       - Store que falla, con MSHR (N_MSHR >= 2): ocupa un
+                         MSHR con su línea, sus bytes y su dato, y el núcleo
+                         SIGUE sin detenerse. Otro store a esa misma línea
+                         se mezcla en el mismo MSHR. Si todos están
+                         ocupados, el store espera.
+      M2 Solicitud   pide la línea (la del acceso, o la del MSHR más viejo).
+                     valid = sin riesgo RAW que obligue a esperar y, con
+                     write-back, con un lugar libre en el write buffer para
+                     la víctima;  ready = l2_gnt.
       M3 Llenado     llega l2_rvalid: se elige la víctima EN ESE MOMENTO
                      (D8), sale al write buffer si hace falta, la línea
                      nueva (corregida con el write buffer si hay forwarding)
-                     se escribe en su vía y el dato sale al núcleo en ese
-                     mismo ciclo (bypass).
+                     se escribe en su vía. Si era el miss del acceso, el
+                     dato sale al núcleo en ese mismo ciclo (bypass). Si era
+                     un MSHR, se le ponen encima los bytes de sus stores y
+                     la línea queda sucia.
+
+    Mientras haya MSHR ocupados (non-blocking, notas 6.3.4):
+      - hit under miss: un acceso que acierta en la L1-D sigue normal;
+      - un load a una línea pendiente toma la palabra del MSHR si los
+        stores ya escribieron sus 4 bytes; si no, espera a que llegue la
+        línea (y entonces acierta);
+      - un load que falla en otra línea espera a que se vacíen los MSHR y
+        luego sigue el camino bloqueante;
+      - las líneas de los MSHR se piden y se llenan en orden, una lectura a
+        la L2 a la vez. En el ciclo de un llenado los stores esperan uno:
+        hay un solo puerto de escritura en los arreglos;
+      - el vaciado empieza cuando ya no hay MSHR ocupados.
 
     En paralelo:
       D1 Drenado     la cabeza del write buffer se escribe en la L2 cuando el
@@ -147,7 +170,8 @@
    miss en L1-D, hit en L2 ................ 8 (aunque la víctima esté sucia)
    miss en L1-D y en L2 ................... 8 + Tmem (lo agrega la L2)
    store que falla con no-write-allocate .. 0
-   (más la espera del bus o de un lugar en el write buffer)
+   store que falla con un MSHR libre ...... 0 (la línea llega por detrás)
+   (más la espera del bus, de un lugar en el write buffer o de un MSHR)
 
 ================================================================================
 */
@@ -167,6 +191,7 @@ module l1d_cache #(
     parameter logic [1:0] REPL_POLICY  = L1D_DEFAULT_REPL_POLICY,
     parameter logic       RAW_POLICY   = L1D_DEFAULT_RAW_POLICY,
     parameter int         WB_DEPTH     = WB_DEPTH_DEFAULT,
+    parameter int         N_MSHR       = 1,        // TEMPORAL: bloqueante por defecto
     parameter bit         L2_BUS_V2    = 1'b0      // TEMPORAL: bus anterior por defecto
 ) (
 
@@ -223,7 +248,13 @@ module l1d_cache #(
     output logic          ev_l2_write,      // inicio de una escritura (drenado) a la L2
     output logic          ev_fill,          // llegó una línea de la L2 (con exclusiva: un movimiento)
     output logic          ev_victim_dirty,  // víctima sucia al write buffer
-    output logic          ev_victim_clean   // víctima limpia al write buffer (solo exclusiva)
+    output logic          ev_victim_clean,  // víctima limpia al write buffer (solo exclusiva)
+    // MSHR (D8)
+    output logic          ev_mshr_alloc,      // store que falló y ocupó un MSHR sin detener al núcleo
+    output logic          ev_mshr_merge,      // store que falló y se mezcló en un MSHR ya ocupado
+    output logic          ev_mshr_load,       // load servido desde un MSHR (sin stall)
+    output logic          ev_hit_under_miss,  // acierto en la L1-D mientras hay MSHR ocupados
+    output logic          ev_mshr_full_stall  // ciclo con stall porque todos los MSHR están ocupados
 );
 
 
@@ -236,8 +267,15 @@ localparam logic IS_EXCL    = (INCL_POLICY  == INCL_EXCLUSIVE);
 localparam logic IS_WALLOC  = (ALLOC_POLICY == AP_WRITE_ALLOC);
 // Forwarding solo con NINE: con exclusiva siempre se espera (D7)
 localparam logic USE_FWD    = (RAW_POLICY == RAW_FORWARD) && !IS_EXCL;
+// MSHR para stores: solo tiene sentido si el store que falla trae la línea
+// (write-allocate) y puede quedarse en la L1-D sucio (write-back)
+localparam logic MSHR_ON    = IS_WB && IS_WALLOC && (N_MSHR >= 2);
 
 initial begin
+
+    if (N_MSHR < L1D_N_MSHR_MIN || N_MSHR > L1D_N_MSHR_MAX)
+        $fatal(1, "l1d_cache: N_MSHR = %0d fuera de rango (%0d a %0d)",
+               N_MSHR, L1D_N_MSHR_MIN, L1D_N_MSHR_MAX);
 
     if (INCL_POLICY != INCL_NINE && INCL_POLICY != INCL_EXCLUSIVE)
         $fatal(1, "l1d_cache: solo se implementan NINE y exclusiva (cache_defs.sv)");
@@ -293,15 +331,28 @@ logic [L1D_WAYS-1:0]           rd_valid;
 logic [L1D_WAYS*L1D_TAG_W-1:0] rd_tag;
 logic [L1D_WAYS*LINE_W-1:0]    rd_line;
 
-// Puerto B: la víctima del llenado (mismo conjunto que el acceso, porque la
-// caché es bloqueante) o la casilla que revisa el vaciado
+// La línea que se pide (o se llena) en la L2: la del MSHR más viejo si hay
+// alguno ocupado; si no, la del acceso (miss bloqueante). Ver M1 y M2.
+logic                   mshr_any;           // hay MSHR ocupados
+logic [LINE_ADDR_W-1:0] m_head_line;        // línea del MSHR más viejo
+logic [LINE_ADDR_W-1:0] rq_line;            // línea de la lectura a la L2
+logic [L1D_INDEX_W-1:0] rq_set;             // su conjunto
+logic [L1D_TAG_W-1:0]   rq_tag;             // su etiqueta
+
+assign rq_line = mshr_any ? m_head_line : a_line;
+assign rq_set  = rq_line[L1D_INDEX_W-1:0];
+assign rq_tag  = rq_line[LINE_ADDR_W-1:L1D_INDEX_W];
+
+// Puerto B: la víctima del llenado (conjunto de rq_line, que con MSHR puede
+// ser distinto del que está usando el núcleo en el puerto A) o la casilla
+// que revisa el vaciado
 logic [L1D_INDEX_W-1:0]        rdb_set;
 logic [L1D_WAYS-1:0]           rdb_valid;
 logic [L1D_WAYS-1:0]           rdb_dirty;
 logic [L1D_WAYS*L1D_TAG_W-1:0] rdb_tag;
 logic [L1D_WAYS*LINE_W-1:0]    rdb_line;
 
-assign rdb_set = flush_scanning ? scan_set : a_index;
+assign rdb_set = flush_scanning ? scan_set : rq_set;
 
 // Puerto de escritura (se arma en "Escritura de los arreglos")
 logic                   arr_we;
@@ -360,14 +411,17 @@ assign hit_line = hit_way ? line1 : line0;          // multiplexor de vía
 // E4. Entrega del resultado (multiplexor de palabra, notas figura 6.4)
 // ============================================================================
 
-logic              fill_now;        // M3: llega la línea de la L2 en este ciclo
+logic              fill_now;        // M3: llega una línea de la L2 en este ciclo
+logic              blk_fill;        // ... y es la del acceso (miss bloqueante)
 logic [LINE_W-1:0] fill_line;       // esa línea, ya corregida (forwarding)
-logic              acc_present;     // la línea del acceso está disponible
+logic              mshr_ld_hit;     // load servido desde un MSHR (ver M1)
+logic [31:0]       m_ld_word;       // la palabra que da el MSHR
+logic              acc_present;     // el dato del acceso está disponible
 logic [LINE_W-1:0] acc_line;
 
-assign acc_present = hit || fill_now;
+assign acc_present = hit || blk_fill || mshr_ld_hit;
 assign acc_line    = hit ? hit_line : fill_line;
-assign rdata       = acc_line[a_word*32 +: 32];
+assign rdata       = mshr_ld_hit ? m_ld_word : acc_line[a_word*32 +: 32];
 
 
 // ============================================================================
@@ -379,6 +433,7 @@ assign rdata       = acc_line[a_word*32 +: 32];
 
 logic [LINE_MASK_W-1:0] st_mask;
 logic [LINE_W-1:0]      st_data;
+logic [LINE_W-1:0]      st_bits;    // st_mask con 8 bits por byte (para los MSHR)
 logic [LINE_W-1:0]      st_line;
 
 assign st_mask = {{(LINE_MASK_W-4){1'b0}}, be} << (a_word * 4);
@@ -388,9 +443,11 @@ integer sb;
 always @(*) begin
 
     st_line = acc_line;
-    for (sb = 0; sb < LINE_BYTES; sb++)
+    for (sb = 0; sb < LINE_BYTES; sb++) begin
+        st_bits[8*sb +: 8] = {8{st_mask[sb]}};
         if (st_mask[sb])
             st_line[8*sb +: 8] = st_data[8*sb +: 8];
+    end
 end
 
 
@@ -430,7 +487,7 @@ l1d_write_buffer #(.DEPTH(WB_DEPTH)) WBUF (
     .full(wb_full),
     .empty(wb_empty),
     .count(),
-    .fwd_line_addr(a_line),             // la línea que pide el acceso actual
+    .fwd_line_addr(rq_line),            // la línea que se pide a la L2
     .fwd_base_line(l2_rline),           // tal como llega de la L2
     .fwd_hit(wb_fwd_hit),
     .fwd_mask(),
@@ -438,17 +495,91 @@ l1d_write_buffer #(.DEPTH(WB_DEPTH)) WBUF (
 );
 
 
-// ============================================================================
-// ¿Este acceso necesita traer su línea de la L2?
-// ============================================================================
-//   - un load que falla, siempre;
-//   - un store que falla, solo con write-allocate.
-
 logic acc_eval;         // el acceso se atiende en este ciclo (no hay vaciado)
-logic need_fill;
 
 assign acc_eval  = acc && !flush_active;
-assign need_fill = acc_eval && !hit && (re || IS_WALLOC);
+
+
+// ============================================================================
+// M1. Asignación: los MSHR para stores (notas 6.3.4; D8)
+// ============================================================================
+//
+// Cada MSHR guarda una línea que falló por un store y que todavía no llega:
+//   m_line  dirección de la línea (etiqueta + conjunto)
+//   m_mask  qué bytes ya escribieron los stores (1 bit por byte)
+//   m_data  esos bytes, en su posición dentro de la línea
+// Forman una cola en orden de llegada: el MSHR 0 es el más viejo, es el que
+// se pide a la L2 y el que se llena primero. m_count dice cuántos están
+// ocupados. Al llenarse el 0, los demás bajan un lugar.
+//
+//           MSHR 0 (más viejo)   MSHR 1          ...   MSHR N_MSHR-1
+//         +-------------------+---------------+-----+---------------+
+//         | línea|bytes|datos | línea|bytes|..|     |               |
+//         +-------------------+---------------+-----+---------------+
+//
+// Una misma línea nunca ocupa dos MSHR: el store se mezcla en el que ya la
+// tiene. Con MSHR_ON = 0 nunca se ocupa ninguno (m_count se queda en 0) y la
+// caché es la bloqueante de siempre.
+//
+// (Se guardan como vectores "aplanados", igual que el write buffer, porque
+//  Icarus Verilog maneja mal los arreglos de structs.)
+
+localparam int MC_W = $clog2(N_MSHR + 1);           // ancho de m_count
+localparam int MI_W = (N_MSHR > 1) ? $clog2(N_MSHR) : 1;   // ancho de un índice
+
+logic [N_MSHR*LINE_ADDR_W-1:0] m_line;
+logic [N_MSHR*LINE_MASK_W-1:0] m_mask;
+logic [N_MSHR*LINE_W-1:0]      m_data;
+logic [MC_W-1:0]               m_count;
+
+logic                   m_free;         // queda algún MSHR libre
+logic                   m_match;        // la línea del acceso ya tiene un MSHR
+logic [MI_W-1:0]        m_idx;          // cuál
+logic [LINE_MASK_W-1:0] m_sel_mask;     // bytes de ese MSHR
+logic [LINE_W-1:0]      m_sel_data;
+logic [LINE_MASK_W-1:0] m_head_mask;    // bytes del MSHR más viejo
+logic [LINE_W-1:0]      m_head_data;
+
+assign mshr_any    = (m_count != '0);
+assign m_free      = (m_count < N_MSHR);
+assign m_head_line = m_line[0 +: LINE_ADDR_W];
+assign m_head_mask = m_mask[0 +: LINE_MASK_W];
+assign m_head_data = m_data[0 +: LINE_W];
+
+// Búsqueda de la línea del acceso en los MSHR ocupados (comparadores en
+// paralelo, como las etiquetas de una caché asociativa)
+integer mj;
+always @(*) begin
+
+    m_match = 1'b0;
+    m_idx   = '0;
+    for (mj = 0; mj < N_MSHR; mj++)
+        if (mj < m_count && m_line[mj*LINE_ADDR_W +: LINE_ADDR_W] == a_line) begin
+            m_match = 1'b1;
+            m_idx   = mj;
+        end
+end
+
+assign m_sel_mask = m_mask[m_idx*LINE_MASK_W +: LINE_MASK_W];
+assign m_sel_data = m_data[m_idx*LINE_W      +: LINE_W];
+
+// Load a una línea pendiente: se sirve del MSHR solo si los stores ya
+// escribieron los 4 bytes de su palabra (la LSU puede pedir cualquiera)
+assign mshr_ld_hit = MSHR_ON && acc_eval && re && !hit && m_match &&
+                     (&m_sel_mask[a_word*4 +: 4]);
+assign m_ld_word   = m_sel_data[a_word*32 +: 32];
+
+
+// ============================================================================
+// ¿Este acceso necesita traer su línea por el camino bloqueante?
+// ============================================================================
+//   - un load que falla, siempre (cuando ya no quedan MSHR ocupados: así los
+//     llenados salen en orden y la víctima de cada uno se elige bien);
+//   - un store que falla, solo con write-allocate y sin MSHR.
+
+logic need_fill;
+
+assign need_fill = acc_eval && !hit && (re || (IS_WALLOC && !MSHR_ON)) && !mshr_any;
 
 
 // ============================================================================
@@ -468,7 +599,13 @@ assign need_fill = acc_eval && !hit && (re || IS_WALLOC);
 //
 // Con write-back, M2 además espera un lugar libre en el write buffer: en M3
 // puede salir una víctima, y como no se drena mientras la lectura está
-// pendiente, ese lugar sigue libre cuando llega la línea.
+// pendiente, ese lugar sigue libre cuando llega la línea. (Con MSHR los
+// stores no van al write buffer, así que nadie más lo ocupa.)
+//
+// Qué se pide: la línea del MSHR más viejo si hay alguno (rq_line); si no,
+// la del load o store que falló. Nunca hay de los dos a la vez: un miss
+// bloqueante solo empieza con los MSHR vacíos, y mientras dura el núcleo
+// está detenido y no puede ocupar uno.
 
 logic req_busy;
 logic req_is_read;
@@ -487,7 +624,7 @@ logic accept;
 assign raw_block   = !USE_FWD && wb_fwd_hit;
 assign read_ok     = !raw_block && !(IS_WB && wb_full);
 
-assign start_read  = !req_busy && !rd_pending && need_fill && read_ok;
+assign start_read  = !req_busy && !rd_pending && (need_fill || mshr_any) && read_ok;
 assign start_drain = !req_busy && !rd_pending && !start_read && !wb_empty;
 
 assign cur_read    = req_busy ? req_is_read : start_read;
@@ -500,7 +637,7 @@ assign rsp         = L2_BUS_V2 ? l2_rvalid : (l2_ready && cur_read);
 assign l2_req      = req_busy || start_read || start_drain;
 assign accept      = l2_req && gnt;
 assign l2_we       = !cur_read;
-assign l2_addr     = cur_read ? {{(32-PADDR_W){1'b0}}, a_line,       {BLOCK_OFF_W{1'b0}}}
+assign l2_addr     = cur_read ? {{(32-PADDR_W){1'b0}}, rq_line,      {BLOCK_OFF_W{1'b0}}}
                               : {{(32-PADDR_W){1'b0}}, wb_head_line, {BLOCK_OFF_W{1'b0}}};
 assign l2_wline    = wb_head_data;
 assign l2_be       = cur_read ? '0 : wb_head_mask;
@@ -531,18 +668,33 @@ end
 // Llegó la línea. Con forwarding se le ponen encima los bytes que siguen en
 // el write buffer. Con exclusiva llega además l2_rdirty: la línea se movió
 // desde la L2 y conserva su bit sucio.
+// Si es la línea de un MSHR, encima van los bytes de sus stores (los más
+// nuevos de todos) y queda sucia: tiene datos que la L2 no tiene.
 
-logic fill_dirty_in;
+logic              fill_dirty_in;
+logic              mshr_fill;           // el llenado es del MSHR más viejo
+logic [LINE_W-1:0] m_head_bits;         // m_head_mask con 8 bits por byte
+logic [LINE_W-1:0] mshr_fill_line;      // línea + bytes del MSHR
 
 assign fill_now      = rsp && (rd_pending || (accept && cur_read));
+assign mshr_fill     = fill_now &&  mshr_any;
+assign blk_fill      = fill_now && !mshr_any;
 assign fill_line     = USE_FWD ? wb_fwd_line : l2_rline;
 assign fill_dirty_in = IS_EXCL && l2_rdirty;
+
+integer hb;
+always @(*)
+    for (hb = 0; hb < LINE_BYTES; hb++)
+        m_head_bits[8*hb +: 8] = {8{m_head_mask[hb]}};
+
+assign mshr_fill_line = (fill_line & ~m_head_bits) | (m_head_data & m_head_bits);
 
 
 // ---- Elección de la víctima, en el momento del llenado (D8) ---------------
 // Primero una vía vacía; si las dos están ocupadas, la política de
 // reemplazo (notas 6.2.3). Se lee del puerto B, que en este momento mira el
-// conjunto del acceso.
+// conjunto de la línea que llega (rq_set). Como se elige al llenar y no al
+// pedir, dos MSHR del mismo conjunto no escogen la misma vía.
 
 logic repl_victim;
 logic repl_touch;
@@ -570,13 +722,13 @@ assign victim_push = fill_now && v_valid && (IS_EXCL || v_dirty);
 l1d_replacement #(.REPL_POLICY(REPL_POLICY)) REPL (
     .clk(clk),
     .reset(reset),
-    .lookup_set(a_index),
+    .lookup_set(rq_set),
     .victim_way(repl_victim),
     .touch(repl_touch),
     .touch_set(a_index),
     .touch_way(repl_touch_way),
     .fill(fill_now),
-    .fill_set(a_index),
+    .fill_set(rq_set),
     .fill_way(v_way)
 );
 
@@ -585,16 +737,21 @@ l1d_replacement #(.REPL_POLICY(REPL_POLICY)) REPL (
 //  TERMINACIÓN DEL ACCESO Y STALL
 // ############################################################################
 //
-// Load : termina cuando su línea está presente (hit, o llenado en este ciclo).
-// Store: termina cuando su línea está presente (o es un miss sin asignación)
-//        y, si además va al write buffer, hay espacio.
+// Load : termina cuando tiene su dato: hit, llenado de su línea en este
+//        ciclo, o la palabra completa en un MSHR.
+// Store sin MSHR: termina cuando su línea está presente (o es un miss sin
+//        asignación) y, si además va al write buffer, hay espacio.
+// Store con MSHR: termina si acierta, si su línea ya tiene MSHR (se mezcla)
+//        o si hay un MSHR libre. En el ciclo en que se llena un MSHR espera
+//        uno: el llenado usa el único puerto de escritura de los arreglos y
+//        además saca el MSHR 0 de la cola.
 // El store va al write buffer con write-through (siempre) o cuando falla
 // sin asignación (con write-back también: no tiene línea donde quedarse).
 
 logic st_to_wb;
 logic complete;
 
-assign st_to_wb = we && (!IS_WB || !acc_present);
+assign st_to_wb = we && (!IS_WB || (!acc_present && !MSHR_ON));
 
 always @(*) begin
 
@@ -602,11 +759,62 @@ always @(*) begin
         complete = 1'b0;
     else if (re)
         complete = acc_present;
+    else if (MSHR_ON)
+        complete = !mshr_fill && (hit || m_match || m_free);
     else
         complete = (acc_present || !IS_WALLOC) && !(st_to_wb && wb_full);
 end
 
 assign stall = acc && !complete;
+
+
+// ============================================================================
+// M1 (continuación). Actualización de los MSHR
+// ============================================================================
+//   - llenado del MSHR 0: sale de la cola y los demás bajan un lugar;
+//   - store que falla y su línea ya tiene MSHR: se mezclan sus bytes;
+//   - store que falla y su línea no tiene MSHR: ocupa el primero libre.
+// Nunca coinciden: en el ciclo de un llenado de MSHR los stores esperan.
+
+logic mshr_alloc;
+logic mshr_merge;
+
+assign mshr_alloc = MSHR_ON && complete && we && !hit && !m_match;
+assign mshr_merge = MSHR_ON && complete && we && !hit &&  m_match;
+
+integer mk;
+initial begin
+    m_line = '0;                    // solo para no ver X en las ondas
+    m_mask = '0;
+    m_data = '0;
+end
+
+always @(posedge clk) begin
+
+    if (reset)
+        m_count <= '0;
+    else if (mshr_fill) begin
+
+        for (mk = 0; mk < N_MSHR - 1; mk++) begin
+            m_line[mk*LINE_ADDR_W +: LINE_ADDR_W] <= m_line[(mk+1)*LINE_ADDR_W +: LINE_ADDR_W];
+            m_mask[mk*LINE_MASK_W +: LINE_MASK_W] <= m_mask[(mk+1)*LINE_MASK_W +: LINE_MASK_W];
+            m_data[mk*LINE_W      +: LINE_W]      <= m_data[(mk+1)*LINE_W      +: LINE_W];
+        end
+        m_count <= m_count - 1'b1;
+    end
+    else if (mshr_merge) begin
+
+        m_mask[m_idx*LINE_MASK_W +: LINE_MASK_W] <= m_sel_mask | st_mask;
+        m_data[m_idx*LINE_W      +: LINE_W]      <= (m_sel_data & ~st_bits) | (st_data & st_bits);
+    end
+    else if (mshr_alloc) begin
+
+        m_line[m_count*LINE_ADDR_W +: LINE_ADDR_W] <= a_line;
+        m_mask[m_count*LINE_MASK_W +: LINE_MASK_W] <= st_mask;
+        m_data[m_count*LINE_W      +: LINE_W]      <= st_data & st_bits;
+        m_count <= m_count + 1'b1;
+    end
+end
 
 
 // ============================================================================
@@ -616,8 +824,9 @@ assign stall = acc && !complete;
 //   - store: sus bytes (bit sucio = write-back: dato más nuevo que la RAM);
 //   - vaciado: línea sucia completa.
 // Nunca coinciden: las víctimas solo salen en M3, y en ese ciclo un store
-// que termina no va al buffer (con write-back está presente; con
-// write-through no hay víctimas); el vaciado ocurre con el núcleo detenido.
+// que termina no va al buffer (con write-back está presente o va a un MSHR;
+// con write-through no hay víctimas); el vaciado ocurre con el núcleo
+// detenido.
 
 logic store_push;
 logic flush_push;
@@ -633,7 +842,7 @@ always @(*) begin
     wb_push_dirty = IS_WB;
 
     if (victim_push) begin
-        wb_push_line  = {v_tag, a_index};
+        wb_push_line  = {v_tag, rq_set};
         wb_push_mask  = '1;
         wb_push_data  = v_line;
         wb_push_dirty = v_dirty;
@@ -650,9 +859,11 @@ end
 // ============================================================================
 // Escritura de los arreglos (un solo puerto, por prioridad)
 // ============================================================================
-//   - M3 llenado: la línea nueva en la vía de la víctima. Si un store
-//     termina en este mismo ciclo, ya va con sus bytes; queda sucia si la
-//     línea llegó sucia (exclusiva) o si es un store con write-back.
+//   - M3 llenado: la línea nueva en la vía de la víctima, en el conjunto
+//     de rq_line. Si un store termina en este mismo ciclo, ya va con sus
+//     bytes; queda sucia si la línea llegó sucia (exclusiva) o si es un
+//     store con write-back. Si es de un MSHR, va con los bytes del MSHR y
+//     queda sucia.
 //   - Store que acierta: los bytes nuevos; con write-back la línea queda
 //     sucia.
 //   - Vaciado: la línea que se mandó a la L2 queda limpia (NINE) o se
@@ -668,7 +879,15 @@ always @(*) begin
     arr_wdirty = 1'b0;
     arr_wvalid = 1'b1;
 
-    if (fill_now) begin
+    if (mshr_fill) begin
+        arr_we     = 1'b1;
+        arr_wset   = rq_set;
+        arr_wtag   = rq_tag;
+        arr_wway   = v_way;
+        arr_wline  = mshr_fill_line;
+        arr_wdirty = 1'b1;
+    end
+    else if (blk_fill) begin
         arr_we     = 1'b1;
         arr_wway   = v_way;
         arr_wline  = (we && complete) ? st_line : fill_line;
@@ -722,8 +941,13 @@ always @(posedge clk) begin
 end
 
 
-// Actualización de LRU: el acceso terminó usando la línea de esa vía
-assign repl_touch     = complete && acc_present;
+// Actualización de LRU: el acceso terminó usando la línea de esa vía (un
+// load servido por un MSHR o un store que va a un MSHR no usan ninguna vía;
+// esa línea se marca como recién usada cuando se llena).
+// Si en el mismo ciclo un hit y un llenado de MSHR caen en el mismo
+// conjunto, manda el llenado (l1d_replacement); es solo una aproximación
+// del LRU, no afecta la corrección.
+assign repl_touch     = complete && (hit || blk_fill);
 assign repl_touch_way = hit ? hit_way : v_way;
 
 
@@ -731,8 +955,8 @@ assign repl_touch_way = hit ? hit_way : v_way;
 //  VACIADO (D16)
 // ############################################################################
 //
-//   FL_IDLE  -> esperando flush_req; empieza cuando no hay ningún miss ni
-//               acceso a medias.
+//   FL_IDLE  -> esperando flush_req; empieza cuando no hay ningún miss, ni
+//               MSHR ocupado, ni acceso a medias.
 //   FL_SCAN  -> (solo write-back) recorre las 128 casillas por el puerto B;
 //               cada línea válida y sucia va al write buffer.
 //   FL_DRAIN -> espera a que el write buffer quede vacío y el bus libre.
@@ -771,7 +995,7 @@ always @(posedge clk) begin
         case (fl_state)
 
             FL_IDLE:
-                if (flush_req && !rd_pending && !acc_busy && !(acc && !complete)) begin
+                if (flush_req && !rd_pending && !mshr_any && !acc_busy && !(acc && !complete)) begin
                     fl_state <= IS_WB ? FL_SCAN : FL_DRAIN;
                     scan_ptr <= '0;
                 end
@@ -819,6 +1043,16 @@ assign ev_fill          = fill_now;
 assign ev_victim_dirty  = victim_push &&  v_dirty;
 assign ev_victim_clean  = victim_push && !v_dirty;
 
+// MSHR. Un store que ocupa o se mezcla en un MSHR cuenta también como
+// ev_wr_miss, y un load servido por un MSHR como ev_rd_miss: la línea no
+// estaba en la L1-D (es un "miss secundario"), aunque no hubo que esperar.
+assign ev_mshr_alloc      = mshr_alloc;
+assign ev_mshr_merge      = mshr_merge;
+assign ev_mshr_load       = complete && mshr_ld_hit;
+assign ev_hit_under_miss  = complete && hit && mshr_any;
+assign ev_mshr_full_stall = stall && MSHR_ON && acc_eval && we && !hit &&
+                            !m_match && !m_free && !mshr_fill;
+
 
 // ############################################################################
 //  Verificaciones de simulación
@@ -836,6 +1070,12 @@ always @(posedge clk) begin
 
         if (L2_BUS_V2 && l2_rvalid && !(rd_pending || (accept && cur_read)))
             $error("l1d_cache: l2_rvalid sin una lectura pendiente");
+
+        if (mshr_fill && (mshr_alloc || mshr_merge))
+            $error("l1d_cache: llenado de MSHR y store al MSHR en el mismo ciclo");
+
+        if (mshr_any && need_fill)
+            $error("l1d_cache: miss bloqueante con MSHR ocupados");
     end
 end
 
