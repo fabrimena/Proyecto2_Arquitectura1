@@ -14,6 +14,22 @@ module perf_cache_l1d (
     input logic ev_wb_push,
     input logic ev_l2_read,
     input logic ev_l2_write,
+    input logic ev_fill,
+    input logic ev_victim_dirty,
+    input logic ev_victim_clean,
+    input logic ev_mshr_alloc,
+    input logic ev_mshr_merge,
+    input logic ev_mshr_load,
+    input logic ev_hit_under_miss,
+    input logic ev_mshr_full_stall,
+    output logic [63:0] fill_events,
+    output logic [63:0] victim_dirty_events,
+    output logic [63:0] victim_clean_events,
+    output logic [63:0] mshr_alloc_events,
+    output logic [63:0] mshr_merge_events,
+    output logic [63:0] mshr_load_events,
+    output logic [63:0] hit_under_miss_events,
+    output logic [63:0] mshr_full_stall_cycles,
     output logic [63:0] read_hits,
     output logic [63:0] read_misses,
     output logic [63:0] write_hits,
@@ -33,7 +49,7 @@ module perf_cache_l1d (
 );
 
 // Los totales se derivan sin registros adicionales. Tanto estas sumas como
-// los once acumuladores son unsigned de 64 bits y desbordan módulo 2^64.
+// los diecinueve acumuladores son unsigned de 64 bits y desbordan módulo 2^64.
 assign read_accesses = read_hits + read_misses;
 assign write_accesses = write_hits + write_misses;
 assign total_accesses = read_accesses + write_accesses;
@@ -43,6 +59,14 @@ assign total_misses = read_misses + write_misses;
 always @(posedge clk) begin
     if (reset) begin
         // Reset síncrono prioritario, incluso con medición y eventos activos.
+        fill_events <= 64'd0;
+        victim_dirty_events <= 64'd0;
+        victim_clean_events <= 64'd0;
+        mshr_alloc_events <= 64'd0;
+        mshr_merge_events <= 64'd0;
+        mshr_load_events <= 64'd0;
+        hit_under_miss_events <= 64'd0;
+        mshr_full_stall_cycles <= 64'd0;
         read_hits <= 64'd0;
         read_misses <= 64'd0;
         write_hits <= 64'd0;
@@ -73,6 +97,17 @@ always @(posedge clk) begin
         // Inicios L1-D -> L2; no indican hits o misses de una L2 real.
         if (ev_l2_read) l2_read_requests <= l2_read_requests + 64'd1;
         if (ev_l2_write) l2_write_requests <= l2_write_requests + 64'd1;
+        // Los llenados, víctimas y MSHR no son nuevas demandas. Un store
+        // puede reservar o mezclar sin stall; el fill sucede por detrás.
+        // La víctima se cuenta al entrar al buffer, nunca por su permanencia.
+        if (ev_fill) fill_events <= fill_events + 64'd1;
+        if (ev_victim_dirty) victim_dirty_events <= victim_dirty_events + 64'd1;
+        if (ev_victim_clean) victim_clean_events <= victim_clean_events + 64'd1;
+        if (ev_mshr_alloc) mshr_alloc_events <= mshr_alloc_events + 64'd1;
+        if (ev_mshr_merge) mshr_merge_events <= mshr_merge_events + 64'd1;
+        if (ev_mshr_load) mshr_load_events <= mshr_load_events + 64'd1;
+        if (ev_hit_under_miss) hit_under_miss_events <= hit_under_miss_events + 64'd1;
+        if (ev_mshr_full_stall) mshr_full_stall_cycles <= mshr_full_stall_cycles + 64'd1;
     end
     // En pausa todos los acumuladores se conservan y los totales siguen sus sumas.
     // El productor garantiza clasificación única y un pulso por inicio L2;

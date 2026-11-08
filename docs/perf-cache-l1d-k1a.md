@@ -321,3 +321,269 @@ K1-A deja pendiente la integración del consumidor en una instancia real del
 sistema, la metodología definitiva de AMAT de K1-B y la instrumentación de L2
 según su interfaz final. No modifica la ISA, el pipeline ni los componentes
 asignados a otros integrantes.
+
+
+## K1-A2 — Actualización al bus v2 y eventos WB/exclusiva/MSHR
+
+Las secciones anteriores conservan íntegramente el registro histórico K1-A.
+Este anexo describe la implementación vigente después del PR #47 de José y las
+pruebas nuevas del 8 de noviembre de 2026. Los conteos y advertencias históricos
+no deben confundirse con los resultados actuales de este anexo.
+
+### Base, alcance y fases
+
+Base remota comprobada mediante `git fetch origin develop`, código 0:
+`3d8fae0645f15fd7e10e748c71e38b43d7599c5a`. Rama nueva:
+`feat/26a2-adaptacion-l1d-v2`. HEAD se conserva. El árbol y el índice estaban
+limpios y no había cambios locales de K1-B. Los tres archivos autorizados son
+los mismos de K1-A; no se crean archivos adicionales ni se modifica Compiladores.
+
+El PR #47 incorpora write-back, exclusiva, write-allocate, MSHR de stores,
+vaciado por recorrido, bits sucios y separación de aceptación/respuesta L2.
+También elimina las advertencias de sensibilidad del buffer mediante vectores
+aplanados. Esos cambios son de José: no forman parte de nuestro diff.
+Se revisaron sus fuentes, sus tres pruebas de caché y las decisiones/guía del equipo.
+
+Fase A primero: se adaptó únicamente el banco al bus v2 y las políticas explícitas,
+conservando el RTL de once contadores. Se ejecutaron seis targets de caché y los
+nueve controles negativos antes de iniciar la ampliación. Todos pasaron: el caso
+nominal terminó con 172995 verificaciones y código 0. La Fase B añadió ocho
+acumuladores y sus pruebas después de guardar esa versión verificada externamente.
+
+### Bus v2: aceptación no es respuesta
+
+`l2_req/we/addr/wline/be/wdirty` permanecen válidos hasta `req && gnt`.
+Una escritura se aplica al aceptar su solicitud y no genera `rvalid`. Una lectura
+aceptada queda pendiente por separado y solo entrega su línea con `rvalid` y
+`rdirty`. Que req permanezca activo antes del grant no indica nuevos inicios.
+Tras el grant de lectura req puede bajar durante la espera de respuesta; no se
+exige estabilidad de campos inválidos de una petición ya aceptada.
+
+Nuestro banco ya no conecta ni consulta `l2_ready`. Conecta `l2_gnt`, `l2_rvalid`,
+`l2_rdirty` y `l2_wdirty` y fija `L2_BUS_V2(1)` en todas sus instancias.
+En los escenarios históricos, el respondedor mínimo acepta la lectura al inicio
+y conserva ocho ciclos de espera hasta su respuesta. Para mantener la presión
+original sobre la FIFO, demora ocho flancos el grant de una escritura. Ya no
+simula una respuesta de lectura para confirmar un drenado. Los controles se
+estabilizan antes del flanco muestreado por el reloj manual del banco.
+
+El guion WB entrega grants y respuestas deliberadamente por separado. Retiene
+una escritura cuatro flancos sin grant, contrastando dirección, tipo, máscara,
+línea y dirty; solo un inicio de tráfico debe contabilizarse. Comprueba cada
+aceptación y que rvalid corresponda a una lectura previamente aceptada.
+`rdirty=1` se inyecta en un llenado conocido y debe observarse posteriormente
+como víctima sucia, incluso sin un store de CPU sobre esa línea.
+
+Esto sigue siendo infraestructura de prueba contenida en el banco: memoria de
+respuesta y estímulos deterministas, sin tags L2, inclusión, reemplazo ni controlador
+de producción. La memoria inferior se actualiza en el grant de escritura;
+la referencia arquitectónica se actualiza por los stores dirigidos.
+
+### Configuración explícita e independencia de defaults
+
+| Parámetro | Guiones originales y sus sombras | Guiones WB y sus sombras |
+|---|---|---|
+| WRITE_POLICY | WP_WRITE_THROUGH | WP_WRITE_BACK |
+| INCL_POLICY | INCL_NINE | INCL_EXCLUSIVE |
+| ALLOC_POLICY | AP_NO_WRITE_ALLOC | AP_WRITE_ALLOC |
+| REPL_POLICY | RP_LRU | RP_LRU |
+| RAW_POLICY | RAW_FORWARD o RAW_STALL | RAW_FORWARD (exclusiva obliga a esperar) |
+| WB_DEPTH | 2 | 2 |
+| N_MSHR | 1 | 1, 2 y 4 explícitos |
+| L2_BUS_V2 | 1 | 1 |
+
+Las dos macros de instanciación declaran los ocho parámetros; sus expansiones
+cubren las diez cachés reales/sombra. El banco no menciona los alias temporales
+`L1D_WRITE_POLICY` ni `L1L2_INCLUSION_POLICY`. Una auditoría estática verifica estos
+hechos y la ausencia del puerto antiguo. José puede cambiar los defaults y retirar
+los alias al actualizar su propio módulo, sin cambiar este banco, mientras conserve
+los nombres, códigos y contratos públicos de parámetros y puertos. No se alteraron
+sus defaults ni se ensayaron mutaciones de sus fuentes, tampoco en la copia externa.
+
+### Diecinueve contadores; cinco totales conservados
+
+Se mantienen los nombres, incrementos y cinco sumas originales. Se añaden entradas
+y acumuladores unsigned de 64 bits para:
+
+| Entrada | Acumulador nuevo | Semántica verificada |
+|---|---|---|
+| `ev_fill` | `fill_events` | Llegada de línea: incluye llenado asíncrono de un MSHR. |
+| `ev_victim_dirty` | `victim_dirty_events` | Víctima de reemplazo sucia que entra al write buffer. |
+| `ev_victim_clean` | `victim_clean_events` | Víctima de reemplazo limpia enviada por exclusiva. |
+| `ev_mshr_alloc` | `mshr_alloc_events` | Store miss que reserva un MSHR libre. |
+| `ev_mshr_merge` | `mshr_merge_events` | Store miss fusionado con una reserva existente. |
+| `ev_mshr_load` | `mshr_load_events` | Load servido por los cuatro bytes disponibles de una palabra en MSHR. |
+| `ev_hit_under_miss` | `hit_under_miss_events` | Hit de L1-D completado mientras hay MSHR ocupados. |
+| `ev_mshr_full_stall` | `mshr_full_stall_cycles` | Flanco de espera de store por reservas agotadas; excluye el flanco de fill. |
+
+Todos usan `posedge clk`, reset síncrono prioritario y la misma habilitación.
+Pausar conserva acumulados, sin encolar eventos perdidos. No hay detección de
+flancos ni exclusión entre categorías. Se conservan aritmética módulo 2^64 y
+cálculo externo de tasas; no hay divisores ni promedios adicionales en el RTL.
+
+La interpretación de los eventos originales sigue el productor vigente:
+
+- Las cuatro clasificaciones cuentan finalizaciones, no reservas o llenados.
+  Store reservado/fusionado en MSHR y load servido desde MSHR son misses de L1-D
+  aunque no tengan stalls. Los hits bajo miss pertenecen a L1-D, no a L2.
+- `ev_wb_push` ahora incluye stores WT, víctimas y líneas sucias del vaciado.
+  Su registro original se conserva; ya no debe interpretarse universalmente
+  como cantidad de stores completados.
+- `ev_stall` sigue siendo el total por flanco. WB lleno, RAW y MSHR lleno son
+  causas observadas y no se suman automáticamente al total.
+- `ev_l2_read/write` siguen siendo inicios de solicitudes, no aceptaciones ni
+  hits/misses de una L2 real. `ev_fill` corresponde a la respuesta efectiva.
+- `ev_victim_dirty/clean` clasifica reemplazos al ingresar a WBUF; un push del
+  recorrido de vaciado no activa por sí solo esos eventos de víctima.
+
+En particular, al llenarse un MSHR el puerto único bloquea stores un ciclo.
+Ese ciclo suma stall, pero queda excluido de `ev_mshr_full_stall`. El guion con
+reservas llenas comprueba tres ciclos de capacidad más uno de fill: cuatro
+stalls totales, no siete ni cuatro ciclos de MSHR lleno.
+
+### Referencia, guiones reales y pasividad
+
+Se conservan todos los escenarios históricos y sus expectativas de clasificación,
+datos, tasas, ventanas y espera. Cada tick contrasta ahora los diecinueve registros
+contra una referencia por operaciones y protocolo público. Los fills esperados
+proceden del respondedor independiente, no de leer `ev_fill`.
+
+El arnés adicional usa guiones de eventos explícitos por flanco, no una copia de
+la máquina de estados de José. Antes de cada operación se conocen dirección,
+datos, conjunto, reservas y resultados esperados. No lee registros privados de
+caché para construir expectativas. Un registro de aceptación pendiente valida
+el bus y memoria inferior; no calcula etiquetas ni reemplazo.
+
+Cada arnés WB (capacidades 1, 2 y 4) tiene caché sombra con idéntica configuración,
+pero sin consumidor. Datos, stall, flush, bus y eventos públicos se contrastan por
+flanco. El consumidor no controla ninguna entrada del productor. Tras el vaciado
+se comparan las 16384 palabras de memoria contra la referencia de CPU.
+
+| Escenario | Expectativa independiente comprobada |
+|---|---|
+| A/B/C/D, mismo conjunto 5, A modificada | C expulsa A sucia; D expulsa B limpia en exclusiva. |
+| E entra con rdirty=1, F y G posteriores | La víctima E conserva dirty sin store de CPU sobre E. |
+| Guion completo de reemplazo | 7 fills, 2 víctimas sucias y 3 limpias por capacidad. |
+| Store miss con capacidad 1 | 8 stalls, fill y un miss; no reserva MSHR. |
+| Store miss con capacidad 2/4 | Se completa con reserva antes del fill, sin stall. |
+| Segundo store a línea pendiente | Un merge, sin nueva reserva; ambos datos sobreviven al fill. |
+| Load de palabra completa del MSHR | Un miss secundario y evento mshr_load, sin fill ni stall. |
+| Load y store hits con otro MSHR ocupado | Dos hit_under_miss y sus clasificaciones de demanda. |
+| NM reservas agotadas | Tres FULL+STALL y luego FILL+STALL sin FULL; el nuevo store reserva después. |
+| Ráfaga drenada en orden | NM+1 reservas/fills únicos, datos de todas las líneas correctos. |
+| Flush exclusivo | Push de líneas sucias, grant de escrituras, memoria correcta y cero demanda inventada. |
+| Carga posterior de línea sucia vaciada | Miss público: esa línea fue invalidada al moverse. |
+| Ventana apagada y reset de métricas | Productor continúa, registros conservados y posterior borrado de los diecinueve. |
+
+Los guiones de capacidad usan longitudes adaptadas a NM para llenar todas sus
+reservas. No se presentan como un benchmark comparativo de velocidad entre
+capacidades ni se exige igualdad de ciclos; cada una se contrasta con su memoria
+esperada. La exclusividad global frente a una L2 real requiere su integración
+posterior; la sombra no sustituye ese checker.
+
+### Sintéticos, controles negativos y resultados
+
+Se extienden eventos individuales, consecutivos, combinaciones, pausas y resets
+a los diecinueve contadores. El testbench conserva las precargas de acarreo y
+overflow y las amplía a los ocho registros nuevos, sin `force` ni alteraciones de
+estado privado del productor. Solo el consumidor sintético recibe precargas.
+
+Se conservan las nueve mutaciones originales y se agregan siete: reserva duplicada,
+merge/fill omitidos, víctima sucia reclasificada, repetición de FULL, ventana WB
+ignorada y omisión de reset con solo el contador de fills no nulo. Todas modifican
+exclusivamente entradas diagnósticas del consumidor. Para el reset negativo se
+omite su reset, sin cambiar el reset del productor. Los dieciséis controles
+terminan con código 1 en el índice de contador previsto; son fallos esperados,
+no regresiones nominales. La tabla completa y las primeras divergencias están en
+el informe externo y `final-negativos.json`.
+
+Resultado nominal nuevo: **247770 verificaciones, código 0**. Incluye 22861,
+23611 y 23871 del arnés WB con NM=1/2/4; los demás chequeos pertenecen a los
+sintéticos y escenarios históricos ampliados. La cifra es de aserciones, no de
+programas distintos. La Fase A tuvo 172995 frente a 172950 de la línea base:
+se agregó dirty y se ajustó la comprobación de validez de petición al bus separado;
+los campos de una lectura ya aceptada no necesitan permanecer válidos mientras
+req=0. Se conservan las comprobaciones funcionales, de retención hasta grant y
+los nueve controles de sensibilidad anteriores.
+
+| Comando | Antes: código | Después: código | Antes: resultado | Después: resultado |
+|---|---:|---:|---|---|
+| `make tb_perf_cache_l1d_k1a` | 0 | 0 | 172950 verificaciones | 247770 verificaciones |
+| `make tb_l1d_cache` | 0 | 0 | tb_l1d_cache: 81 verificaciones correctas | tb_l1d_cache: 81 verificaciones correctas |
+| `make tb_l1d_writeback` | 0 | 0 | tb_l1d_writeback: 68 verificaciones correctas | tb_l1d_writeback: 68 verificaciones correctas |
+| `make tb_l1d_mshr` | 0 | 0 | tb_l1d_mshr: 109 verificaciones correctas | tb_l1d_mshr: 109 verificaciones correctas |
+| `make tb_l1d_replacement` | 0 | 0 | tb_l1d_replacement: 17 verificaciones correctas | tb_l1d_replacement: 17 verificaciones correctas |
+| `make tb_l1d_write_buffer` | 0 | 0 | tb_l1d_write_buffer: 15613 verificaciones correctas | tb_l1d_write_buffer: 15613 verificaciones correctas |
+| `make tb_perf_counters` | 0 | 0 | tb_perf_counters: 292 verificaciones correctas | tb_perf_counters: 292 verificaciones correctas |
+| `make tb_perf_slot_mask` | 0 | 0 | tb_perf_slot_mask: 4299 verificaciones correctas | tb_perf_slot_mask: 4299 verificaciones correctas |
+| `make tb_perf_pipeline_monitor` | 0 | 0 | tb_perf_pipeline_monitor: 9981 verificaciones correctas | tb_perf_pipeline_monitor: 9981 verificaciones correctas |
+| `make tb_perf_vliw_monitor_d4b1` | 0 | 0 | tb_perf_vliw_monitor_d4b1: 42188 verificaciones correctas | tb_perf_vliw_monitor_d4b1: 42188 verificaciones correctas |
+| `make tb_perf_top_d3` | 0 | 0 | tb_perf_top_d3: 13717 verificaciones correctas | tb_perf_top_d3: 13717 verificaciones correctas |
+| `make tb_perf_branch_d4a` | 0 | 0 | tb_perf_branch_d4a: 12573 verificaciones correctas | tb_perf_branch_d4a: 12573 verificaciones correctas |
+| `make tb_perf_stall_d5a` | 0 | 0 | tb_perf_stall_d5a: 72538 verificaciones correctas | tb_perf_stall_d5a: 72538 verificaciones correctas |
+| `make tb_pipeline_stall` | 0 | 0 | tb_pipeline_stall: 50 verificaciones correctas | tb_pipeline_stall: 50 verificaciones correctas |
+| `make sim` | 0 | 0 | Resumen: 35 PASS, 0 FAIL, 0 NO-COMPILA, 0 SIN-CHEQUEO | Resumen: 35 PASS, 0 FAIL, 0 NO-COMPILA, 0 SIN-CHEQUEO |
+| `make test-assembler` | 0 | 0 | 44 métodos (21+13+4+6) | 44 métodos (21+13+4+6) |
+| `make test-programs` | 0 | 0 | 14 métodos | 14 métodos |
+
+Los 17 comandos anteriores y posteriores terminaron con código 0. El total de
+`make sim` ya era 35 en la base del PR #47 y sigue siendo 35; este bloque no añade
+un archivo de testbench. Las pruebas del ensamblador y programas suman 44 y 14
+métodos respectivamente. El nuevo target no presenta warnings de Icarus y las
+advertencias históricas del write buffer ya habían sido resueltas por José.
+El resto de advertencias de compilación de `make sim`, si las hubiera, permanece
+en los compile.log externos; no se silenció ni modificó código protegido.
+La ejecución opcional con VCD termina con código 0, 247770 verificaciones y
+1874788 bytes de ondas. Las trazas incluyen capacidad, ciclo, dirección, vector
+esperado/real, ventana, reset y las señales públicas del bus v2.
+En la revisión final se corrigió el registro del CSV WB para escribir eventos
+antes del flanco, en el mismo instante que usan las aserciones. Las 733 filas
+posteriores al reset inicial de los tres arneses concuerdan con su vector esperado.
+La primera fila de cada arnés es anterior al primer reset síncrono efectivo:
+puede contener X del productor y no se interpreta como divergencia funcional.
+
+
+### Dependencias de K1-B y L2 real
+
+No se implementa latencia/AMAT nuevo. K1-B debe separar aceptación de CPU,
+aceptación de solicitud L2, respuesta/fill, finalización de demanda y persistencia.
+Un store puede retirarse con MSHR pendiente, un load puede salir de bytes de MSHR,
+y un hit puede solaparse con otro fill. Causas FULL/RAW/WBUF no particionan
+necesariamente toda espera. Stores WB no actualizan inmediatamente la memoria
+inferior; el vaciado incluye MSHR, recorrido, buffer y luego los niveles restantes.
+
+Por esas razones `AMAT = 1 + stall_cycles/accesos` no es identidad universal de
+la caché non-blocking. Las ventanas pueden cortar reserva, solicitud y fill en
+flancos diferentes; sus cantidades no son la misma población de accesos. Los
+archivos locales y la rama de K1-B se conservan sin modificar.
+
+La L2 real debe garantizar grants/respuestas según su contrato, mantener dirty
+con exclusiva y completar su vaciado posterior al de L1-D. Los guiones manuales
+no prueban rendimiento de la jerarquía completa, múltiples respuestas fuera de
+orden ni memoria principal. No se añaden contadores de L2 ni se conecta el
+procesador. El issue #26 sigue pendiente de las etapas restantes.
+
+### Reproducción y aislamiento
+
+Ejecutar en una copia externa con las fuentes vigentes:
+
+```bash
+make tb_perf_cache_l1d_k1a
+make tb_perf_cache_l1d_k1a PLUSARGS=+VCD
+```
+
+Para sensibilidad, desde otro directorio externo, usar la ruta absoluta al
+`build/tb_perf_cache_l1d_k1a/sim.vvp` compilado y `+MUTATION=N` (N=1..16).
+Cada control debe terminar con código 1 y la aserción especificada; el nominal
+termina con código 0. No ejecutar las mutaciones como si fueran PASS de `make sim`.
+
+Evidencia actual: `/tmp/ce4301-k1a2-kx69djnu/`, con manifiestos, diff de José,
+regresiones antes/fase-a/después, fuentes de Fase A verificadas, trazas CSV,
+controles negativos, VCD, auditoría de parámetros e informe A–AE. Las ubicaciones
+temporales anteriores de K1-A son históricas, no dependencias de reproducción.
+
+Se protegen los 391 archivos iniciales de Arquitectura salvo los tres autorizados,
+y los 359 archivos de Compiladores. La comparación incluye SHA-256, tamaño y modo;
+además se comprueban HEAD, rama e índice. No se crean nuevos archivos dentro de
+ningún repositorio ni se modifica implementación de compañeros. Los resultados
+finales de aislamiento se registran en `aislamiento.json` y el informe externo.
