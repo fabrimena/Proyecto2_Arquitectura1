@@ -5,9 +5,11 @@
  Descripción:
  ------------------------------------------------------------------------------
  Pruebas de rtl-p2/l1d_write_buffer.sv, el write buffer L1-D -> L2 (notas
- de clase 6.3.5). Como la L1-D es write-through, cada entrada es un store:
- las entradas de prueba se arman igual que en la L1-D, con st_entry()
- (guardap = 4 bytes marcados, guardab = 1 byte marcado).
+ de clase 6.3.5). Las entradas de prueba se arman igual que en la L1-D:
+   - st_entry():  un store de write-through (guardap = 4 bytes marcados,
+                  guardab = 1 byte marcado), con el bit sucio en 0;
+   - vic_entry(): una víctima de write-back (la línea completa, los 32
+                  bytes marcados), limpia o sucia.
 
    1. Cola FIFO: las entradas salen en el mismo orden en que entraron.
    2. full / empty / count, incluido push y pop en el mismo ciclo.
@@ -17,7 +19,12 @@
       figura 6.13): los bytes pendientes se ponen encima de la línea de la
       L2 y, si dos stores escriben el mismo byte, gana el más nuevo.
    5. Prueba aleatoria contra un modelo de referencia escrito en el propio
-      testbench (una lista por instancia), para DEPTH = 2, 3, 4 y 8.
+      testbench (una lista por instancia), para DEPTH = 2, 3, 4 y 8, con
+      stores y víctimas mezclados.
+   6. Víctimas de línea completa: el bit sucio sale por head_dirty en orden
+      (va a l2_wdirty), y la búsqueda por línea (fwd_hit) encuentra tanto
+      stores como víctimas, que es lo que usa la política exclusiva para
+      esperar a que una víctima llegue a la L2.
 
  Uso: make tb_l1d_write_buffer
 ================================================================================
@@ -44,7 +51,7 @@ always #5 clk = ~clk;
 
 localparam int N_DUT = 4;
 
-logic              push, pop_req;
+logic              push, pop_req, push_dirty;
 logic [LA_W-1:0]   push_line_addr, fwd_line_addr;
 logic [31:0]       push_mask;
 logic [255:0]      push_data, fwd_base_line;
@@ -56,6 +63,7 @@ logic [3:0]        count  [N_DUT];
 logic [LA_W-1:0]   h_addr [N_DUT];
 logic [31:0]       h_mask [N_DUT];
 logic [255:0]      h_data [N_DUT];
+logic              h_dirty[N_DUT];
 logic              f_hit  [N_DUT];
 logic [31:0]       f_mask [N_DUT];
 logic [255:0]      f_line [N_DUT];
@@ -79,9 +87,10 @@ generate
         l1d_write_buffer #(.DEPTH(D)) DUT (
             .clk(clk), .reset(reset),
             .push(push_ok[g]), .push_line_addr(push_line_addr),
-            .push_mask(push_mask), .push_data(push_data),
+            .push_mask(push_mask), .push_data(push_data), .push_dirty(push_dirty),
             .pop(pop[g]),
             .head_line_addr(h_addr[g]), .head_mask(h_mask[g]), .head_data(h_data[g]),
+            .head_dirty(h_dirty[g]),
             .full(full[g]), .empty(empty[g]), .count(cnt),
             .fwd_line_addr(fwd_line_addr), .fwd_base_line(fwd_base_line),
             .fwd_hit(f_hit[g]), .fwd_mask(f_mask[g]), .fwd_line(f_line[g])
@@ -102,7 +111,11 @@ endfunction
 logic [LA_W-1:0] ma [N_DUT][8];    // dirección de línea
 logic [31:0]     mm [N_DUT][8];    // máscara
 logic [255:0]    md [N_DUT][8];    // datos
+logic            mdy[N_DUT][8];    // bit sucio
 int              mn [N_DUT];       // entradas ocupadas
+
+// Bit sucio de la próxima entrada (lo fijan st_entry y vic_entry, más abajo)
+logic            e_dirty = 1'b0;
 
 
 // Línea esperada del forwarding según el modelo
@@ -131,22 +144,24 @@ task automatic cycle(input logic do_push, input logic [LA_W-1:0] a,
                      input logic [31:0] m, input logic [255:0] d,
                      input logic do_pop);
     push = do_push; push_line_addr = a; push_mask = m; push_data = d;
+    push_dirty = e_dirty;
     pop_req = do_pop;
     #1;
     for (int k = 0; k < N_DUT; k++) begin
         if (pop[k]) begin                       // se va la más vieja
             for (int j = 0; j < 7; j++) begin
                 ma[k][j] = ma[k][j+1]; mm[k][j] = mm[k][j+1]; md[k][j] = md[k][j+1];
+                mdy[k][j] = mdy[k][j+1];
             end
             mn[k]--;
         end
         if (push_ok[k]) begin                   // la nueva queda al final
-            ma[k][mn[k]] = a; mm[k][mn[k]] = m; md[k][mn[k]] = d;
+            ma[k][mn[k]] = a; mm[k][mn[k]] = m; md[k][mn[k]] = d; mdy[k][mn[k]] = e_dirty;
             mn[k]++;
         end
     end
     @(posedge clk); #1;
-    push = 0; pop_req = 0;
+    push = 0; pop_req = 0; push_dirty = 0;
 endtask
 
 
@@ -163,6 +178,7 @@ task automatic compare_all(input string tag);
             check({tag, $sformatf(" D=%0d head addr", depth_of(k))}, h_addr[k], ma[k][0]);
             check({tag, $sformatf(" D=%0d head mask", depth_of(k))}, h_mask[k], mm[k][0]);
             check_true({tag, $sformatf(" D=%0d head data", depth_of(k))}, h_data[k] === md[k][0]);
+            check({tag, $sformatf(" D=%0d head dirty", depth_of(k))}, h_dirty[k], mdy[k][0]);
         end
         model_fwd(k, fwd_line_addr, fwd_base_line, eh, em, el);
         check({tag, $sformatf(" D=%0d fwd_hit",  depth_of(k))}, f_hit[k],  eh);
@@ -182,8 +198,19 @@ logic [31:0]  e_mask;
 logic [255:0] e_data;
 
 task automatic st_entry(input int word, input logic [3:0] be, input logic [31:0] wdata);
-    e_mask = {28'b0, be} << (word * 4);
-    e_data = {8{wdata}};
+    e_mask  = {28'b0, be} << (word * 4);
+    e_data  = {8{wdata}};
+    e_dirty = 1'b0;                     // un store de write-through no lleva bit sucio
+endtask
+
+// ----------------------------------------------------------------------------
+// Entrada de una víctima de write-back: la línea completa, con su bit sucio.
+// (Con NINE solo salen sucias; con exclusiva también salen limpias.)
+// ----------------------------------------------------------------------------
+task automatic vic_entry(input logic [255:0] line, input logic dirty);
+    e_mask  = '1;
+    e_data  = line;
+    e_dirty = dirty;
 endtask
 
 // Un store aleatorio: 60 % guardap, 40 % guardab
@@ -212,7 +239,7 @@ initial begin
     $dumpfile("tb_l1d_write_buffer.vcd");
     $dumpvars(0, tb_l1d_write_buffer);
 
-    push = 0; pop_req = 0; push_line_addr = 0; push_mask = 0; push_data = 0;
+    push = 0; pop_req = 0; push_line_addr = 0; push_mask = 0; push_data = 0; push_dirty = 0;
     fwd_line_addr = 0; fwd_base_line = 0;
     for (int k = 0; k < N_DUT; k++) mn[k] = 0;
     reset = 1;
@@ -270,11 +297,42 @@ initial begin
         // Pocas direcciones distintas para que haya muchas coincidencias
         fwd_line_addr = LA_W'($urandom_range(0, 3));
         fwd_base_line = rand_line();
-        rand_store();
+        // 70 % stores (write-through), 30 % víctimas limpias o sucias
+        if ($urandom_range(0, 99) < 70) rand_store();
+        else                            vic_entry(rand_line(), $urandom_range(0, 1));
         cycle($urandom_range(0, 99) < 55, LA_W'($urandom_range(0, 3)),
               e_mask, e_data, $urandom_range(0, 99) < 45);
         compare_all($sformatf("it %0d", it));
     end
+
+
+    // ------------------------------------------------------------------
+    tb_section("6. Víctimas de línea completa: bit sucio y búsqueda por línea");
+    // ------------------------------------------------------------------
+    for (it = 0; it < 8; it++) cycle(0, 0, 0, 0, 1);     // vaciar las cuatro instancias
+    fwd_base_line = {8{32'h1111_1111}};
+    // Víctima limpia de la línea 0x10 (solo pasa con exclusiva)
+    vic_entry({8{32'hAAAA_0000}}, 1'b0); cycle(1, 11'h010, e_mask, e_data, 0);
+    // Víctima sucia de la línea 0x11
+    vic_entry({8{32'hBBBB_0000}}, 1'b1); cycle(1, 11'h011, e_mask, e_data, 0);
+    // Store más nuevo a la línea 0x10: guardab en el byte 1 de la palabra 2
+    st_entry(2, 4'b0010, 32'h0000_CC00); cycle(1, 11'h010, e_mask, e_data, 0);
+    fwd_line_addr = 11'h010; #1;
+    compare_all("víctimas");
+    check("cabeza: víctima limpia (D=8)", h_dirty[3], 1'b0);
+    check("búsqueda: la línea 0x10 está pendiente (D=8)", f_hit[3], 1'b1);
+    check("forwarding: la víctima reemplaza toda la línea (D=8)", f_line[3][31:0], 32'hAAAA_0000);
+    check("forwarding: el store más nuevo queda encima (D=8)", f_line[3][95:64], 32'hAAAA_CC00);
+    check("máscara completa (D=8)", f_mask[3], 32'hFFFF_FFFF);
+    cycle(0, 0, 0, 0, 1);                                // se drena la víctima limpia
+    check("cabeza: víctima sucia (D=8)", h_dirty[3], 1'b1);
+    check("dirección de la víctima sucia (D=8)", h_addr[3], 11'h011);
+    fwd_line_addr = 11'h011; #1;
+    check("búsqueda: la víctima sucia sigue pendiente (D=8)", f_hit[3], 1'b1);
+    cycle(0, 0, 0, 0, 1);                                // se drena la víctima sucia
+    fwd_line_addr = 11'h011; #1;
+    check("búsqueda: ya no está pendiente tras drenarse (D=8)", f_hit[3], 1'b0);
+    compare_all("tras drenar las víctimas");
 
 
     tb_finish("tb_l1d_write_buffer");

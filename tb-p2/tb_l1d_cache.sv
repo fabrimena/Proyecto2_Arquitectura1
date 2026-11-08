@@ -5,20 +5,24 @@
  Descripción:
  ------------------------------------------------------------------------------
  Pruebas de la caché L1-D completa (rtl-p2/l1d_cache.sv con l1d_arrays,
- l1d_replacement y l1d_write_buffer). La L1-D es write-through con política
- de inclusión NINE (cache_defs.sv).
+ l1d_replacement y l1d_write_buffer) con la configuración write-through +
+ NINE, puesta de forma EXPLÍCITA en cada instancia (no depende de los valores
+ por defecto). Write-back y la política exclusiva se prueban en
+ tb_l1d_writeback.sv.
 
  La L2 real es trabajo de Alejandro. Para probar la L1-D sin esperarla, este
  archivo trae tb_l2_model: una L2 "ideal" que siempre acierta, guarda los
- 64 KB completos y responde con el protocolo de docs/memory-interfaces.md
- (sección 5): l2_req se mantiene hasta l2_ready, que sale de un registro.
+ 64 KB completos y usa el bus L1-D <-> L2 versión 2 (cache_defs.sv,
+ sección 4): acepta con l2_gnt (registrado) y responde las lecturas con
+ l2_rvalid; una escritura termina al ser aceptada. Es bloqueante: después
+ de aceptar algo no acepta otra petición hasta terminarlo.
    - Latencia fija de 8 ciclos (hit de L2), o
-   - latencia aleatoria: a veces 8 + 53 (como un miss de L2 con Tmem = 53
-     ciclos a 25 MHz) y a veces unos ciclos más, para estresar el handshake.
- También revisa que la L1-D no cambie la petición mientras espera.
+   - latencia aleatoria: aceptación demorada, a veces 8 + 53 (como un miss
+     de L2 con Tmem = 53 ciclos a 25 MHz) y a veces unos ciclos más.
+ También revisa que la L1-D no cambie la petición mientras espera l2_gnt.
 
- Parte 1. Pruebas dirigidas (configuración por defecto: no-write-allocate,
-          LRU, forwarding, write buffer de 4 entradas):
+ Parte 1. Pruebas dirigidas (write-through + NINE + no-write-allocate, LRU,
+          forwarding, write buffer de 4 entradas):
    1. Miss en frío: exactamente 8 ciclos de stall y dato correcto.
    2. Hit: 0 ciclos de stall, en el mismo ciclo (notas 6.3.1, acceso paralelo).
    3. guardap y guardab que aciertan: 0 ciclos, la L1-D se actualiza.
@@ -29,7 +33,7 @@
       store sigue en el write buffer -> forwarding, dato correcto, 8 ciclos.
    7. LRU con 2 vías (notas 6.2.3): A, B, A, C saca a B; la línea que sale
       se descarta sin escribir en la L2 (está limpia).
-   8. Write buffer lleno: el 5.º store seguido espera (riesgo estructural).
+   8. Write buffer lleno: el 6.º store seguido espera (riesgo estructural).
    9. Vaciado: solo drena el write buffer; las líneas siguen en la L1-D.
 
  Parte 2. Pruebas aleatorias de 6 configuraciones a la vez (tb_l1d_harness),
@@ -59,8 +63,8 @@
 // ############################################################################
 
 module tb_l2_model #(
-    parameter int LAT      = 8,     // ciclos desde l2_req hasta l2_ready
-    parameter bit RAND_LAT = 0,     // 1: latencia variable (incluye "misses")
+    parameter int LAT      = 8,     // ciclos desde la aceptación hasta l2_rvalid
+    parameter bit RAND_LAT = 0,     // 1: aceptación y latencia variables
     parameter int SEED     = 1
 ) (
     input  logic         clk,
@@ -70,7 +74,8 @@ module tb_l2_model #(
     input  logic [31:0]  l2_addr,
     input  logic [255:0] l2_wline,
     input  logic [31:0]  l2_be,
-    output logic         l2_ready,
+    output logic         l2_gnt,
+    output logic         l2_rvalid,
     output logic [255:0] l2_rline,
     output int           n_reads,
     output int           n_writes,
@@ -82,67 +87,72 @@ logic [31:0] mem [0:16383];
 integer i;
 initial for (i = 0; i < 16384; i++) mem[i] = `INIT_WORD(i);
 
-logic        busy;
-int          cnt, target;
-logic        q_we;
-logic [31:0] q_addr;
 integer      seed = SEED;
-
-// Latencia de la petición que empieza
-function automatic int pick_latency();
-    int r;
-    if (!RAND_LAT) return LAT;
-    r = $unsigned($random(seed)) % 8;
-    if (r == 0) return LAT + 53;                 // "miss de L2" con Tmem = 53
-    return LAT + ($unsigned($random(seed)) % 3); // 8, 9 o 10 ciclos
-endfunction
-
-integer b, w;
-logic [13:0] base;
+int          busy;              // ciclos que faltan para quedar libre tras una escritura
+logic        rd_on;             // hay una lectura en curso
+int          rd_cnt;
+logic [31:0] rd_addr;
+logic        prev_wait;         // en el ciclo anterior había una petición sin aceptar
+logic        prev_we;
+logic [31:0] prev_addr;
 
 always @(posedge clk) begin
 
     if (reset) begin
-        busy <= 0; l2_ready <= 0; cnt <= 0;
+        busy <= 0; rd_on <= 0; l2_gnt <= 1; l2_rvalid <= 0; prev_wait <= 0;
         n_reads <= 0; n_writes <= 0; proto_errors <= 0;
     end
-    else if (l2_ready) begin
-        // Ciclo de respuesta terminado
-        l2_ready <= 0;
-        busy     <= 0;
-    end
-    else if (!busy && l2_req) begin
-        // Empieza una petición
-        busy   <= 1;
-        cnt    <= 1;
-        target <= pick_latency();
-        q_we   <= l2_we;
-        q_addr <= l2_addr;
-        if (l2_addr[4:0] != 0) begin
-            $display("  [L2] dirección no alineada %h", l2_addr);
+    else begin
+
+        // La petición tiene que mantenerse igual hasta que se acepta
+        if (prev_wait && (!l2_req || l2_we !== prev_we || l2_addr !== prev_addr)) begin
+            $display("  [L2] la petición cambió antes de l2_gnt (t=%0t)", $time);
             proto_errors <= proto_errors + 1;
         end
-    end
-    else if (busy) begin
-        // La L1-D debe mantener la petición igual hasta l2_ready
-        if (!l2_req || l2_we !== q_we || l2_addr !== q_addr) begin
-            $display("  [L2] la petición cambió antes de l2_ready (t=%0t)", $time);
-            proto_errors <= proto_errors + 1;
-        end
-        if (cnt == target - 1) begin
-            base = q_addr[15:2];
-            if (q_we) begin
-                for (b = 0; b < 32; b++)
-                    if (l2_be[b]) mem[base + b/4][8*(b%4) +: 8] = l2_wline[8*b +: 8];
+        prev_wait <= l2_req && !l2_gnt;
+        prev_we   <= l2_we;
+        prev_addr <= l2_addr;
+
+        l2_rvalid <= 1'b0;
+
+        // ---- Petición aceptada ------------------------------------------
+        if (l2_req && l2_gnt) begin
+            if (l2_addr[4:0] != 0) begin
+                $display("  [L2] dirección no alineada %h", l2_addr);
+                proto_errors <= proto_errors + 1;
+            end
+            if (l2_we) begin
+                // La escritura termina al ser aceptada
+                for (int b = 0; b < 32; b++)
+                    if (l2_be[b]) mem[l2_addr[15:2] + b/4][8*(b%4) +: 8] = l2_wline[8*b +: 8];
                 n_writes <= n_writes + 1;
+                busy     <= LAT + (RAND_LAT ? $unsigned($random(seed)) % 3 : 0);
             end
             else begin
-                for (w = 0; w < 8; w++) l2_rline[32*w +: 32] <= mem[base + w];
-                n_reads <= n_reads + 1;
+                rd_on   <= 1'b1;
+                rd_addr <= l2_addr;
+                rd_cnt  <= LAT - 2 + (RAND_LAT ? (($unsigned($random(seed)) % 8 == 0) ? 53
+                                                  : $unsigned($random(seed)) % 3) : 0);
             end
-            l2_ready <= 1;
         end
-        cnt <= cnt + 1;
+
+        // ---- Respuesta de la lectura (l2_rvalid, un ciclo) --------------
+        if (rd_on) begin
+            if (rd_cnt == 0) begin
+                for (int w = 0; w < 8; w++) l2_rline[32*w +: 32] <= mem[rd_addr[15:2] + w];
+                n_reads   <= n_reads + 1;
+                l2_rvalid <= 1'b1;
+                rd_on     <= 1'b0;
+            end
+            else
+                rd_cnt <= rd_cnt - 1;
+        end
+        else if (busy > 0)
+            busy <= busy - 1;
+
+        // ---- Aceptación (registrada): libre, y a veces demorada ----------
+        l2_gnt <= !rd_on && busy <= 1 && !(l2_req && l2_gnt) &&
+                  (!RAND_LAT || $unsigned($random(seed)) % 4 != 0);
     end
 end
 
@@ -180,7 +190,7 @@ module tb_l1d_harness #(
 logic        re, we, flush_req, flush_done, stall;
 logic [3:0]  be;
 logic [31:0] addr, wdata, rdata;
-logic        l2_req, l2_we, l2_ready;
+logic        l2_req, l2_we, l2_gnt, l2_rvalid, l2_wdirty;
 logic [31:0] l2_addr, l2_be;
 logic [255:0] l2_wline, l2_rline;
 logic ev_rd_hit, ev_rd_miss, ev_wr_hit, ev_wr_miss, ev_stall, ev_wb_full_stall;
@@ -188,6 +198,7 @@ logic ev_raw_stall, ev_raw_forward, ev_wb_push, ev_l2_read, ev_l2_write;
 int   l2_reads, l2_writes, l2_proto;
 
 l1d_cache #(
+    .WRITE_POLICY(WP_WRITE_THROUGH), .INCL_POLICY(INCL_NINE), .L2_BUS_V2(1),
     .ALLOC_POLICY(ALLOC_POLICY), .REPL_POLICY(REPL_POLICY),
     .RAW_POLICY(RAW_POLICY),     .WB_DEPTH(WB_DEPTH)
 ) DUT (
@@ -195,7 +206,7 @@ l1d_cache #(
     .re(re), .we(we), .be(be), .addr(addr), .wdata(wdata), .rdata(rdata), .stall(stall),
     .flush_req(flush_req), .flush_done(flush_done),
     .l2_req(l2_req), .l2_we(l2_we), .l2_addr(l2_addr), .l2_wline(l2_wline), .l2_be(l2_be),
-    .l2_ready(l2_ready), .l2_rline(l2_rline),
+    .l2_wdirty(l2_wdirty), .l2_gnt(l2_gnt), .l2_rvalid(l2_rvalid), .l2_rline(l2_rline),
     .ev_rd_hit(ev_rd_hit), .ev_rd_miss(ev_rd_miss), .ev_wr_hit(ev_wr_hit), .ev_wr_miss(ev_wr_miss),
     .ev_stall(ev_stall), .ev_wb_full_stall(ev_wb_full_stall), .ev_raw_stall(ev_raw_stall),
     .ev_raw_forward(ev_raw_forward), .ev_wb_push(ev_wb_push),
@@ -205,7 +216,7 @@ l1d_cache #(
 tb_l2_model #(.LAT(8), .RAND_LAT(RAND_LAT), .SEED(SEED + 1000)) L2 (
     .clk(clk), .reset(reset),
     .l2_req(l2_req), .l2_we(l2_we), .l2_addr(l2_addr), .l2_wline(l2_wline), .l2_be(l2_be),
-    .l2_ready(l2_ready), .l2_rline(l2_rline),
+    .l2_gnt(l2_gnt), .l2_rvalid(l2_rvalid), .l2_rline(l2_rline),
     .n_reads(l2_reads), .n_writes(l2_writes), .proto_errors(l2_proto)
 );
 
@@ -360,19 +371,23 @@ always #5 clk = ~clk;
 logic        re, we, flush_req, flush_done, stall;
 logic [3:0]  be;
 logic [31:0] addr, wdata, rdata;
-logic        l2_req, l2_we, l2_ready;
+logic        l2_req, l2_we, l2_gnt, l2_rvalid, l2_wdirty;
 logic [31:0] l2_addr, l2_be;
 logic [255:0] l2_wline, l2_rline;
 logic ev_rd_hit, ev_rd_miss, ev_wr_hit, ev_wr_miss, ev_stall, ev_wb_full_stall;
 logic ev_raw_stall, ev_raw_forward, ev_wb_push, ev_l2_read, ev_l2_write;
 int   l2_reads, l2_writes, l2_proto;
 
-l1d_cache DUT (
+l1d_cache #(
+    .WRITE_POLICY(WP_WRITE_THROUGH), .INCL_POLICY(INCL_NINE), .L2_BUS_V2(1),
+    .ALLOC_POLICY(AP_NO_WRITE_ALLOC), .REPL_POLICY(RP_LRU),
+    .RAW_POLICY(RAW_FORWARD), .WB_DEPTH(4)
+) DUT (
     .clk(clk), .reset(reset),
     .re(re), .we(we), .be(be), .addr(addr), .wdata(wdata), .rdata(rdata), .stall(stall),
     .flush_req(flush_req), .flush_done(flush_done),
     .l2_req(l2_req), .l2_we(l2_we), .l2_addr(l2_addr), .l2_wline(l2_wline), .l2_be(l2_be),
-    .l2_ready(l2_ready), .l2_rline(l2_rline),
+    .l2_wdirty(l2_wdirty), .l2_gnt(l2_gnt), .l2_rvalid(l2_rvalid), .l2_rline(l2_rline),
     .ev_rd_hit(ev_rd_hit), .ev_rd_miss(ev_rd_miss), .ev_wr_hit(ev_wr_hit), .ev_wr_miss(ev_wr_miss),
     .ev_stall(ev_stall), .ev_wb_full_stall(ev_wb_full_stall), .ev_raw_stall(ev_raw_stall),
     .ev_raw_forward(ev_raw_forward), .ev_wb_push(ev_wb_push),
@@ -382,7 +397,7 @@ l1d_cache DUT (
 tb_l2_model #(.LAT(8)) L2 (
     .clk(clk), .reset(reset),
     .l2_req(l2_req), .l2_we(l2_we), .l2_addr(l2_addr), .l2_wline(l2_wline), .l2_be(l2_be),
-    .l2_ready(l2_ready), .l2_rline(l2_rline),
+    .l2_gnt(l2_gnt), .l2_rvalid(l2_rvalid), .l2_rline(l2_rline),
     .n_reads(l2_reads), .n_writes(l2_writes), .proto_errors(l2_proto)
 );
 
@@ -428,11 +443,11 @@ task automatic do_access(input logic is_load, input logic [31:0] a, input logic 
     re = 0; we = 0;
 endtask
 
-// Espera, sin accesos, a que el write buffer quede vacío y el bus libre.
-// Se usa para que cada prueba dirigida empiece con el bus desocupado y las
+// Espera, sin accesos, a que el write buffer quede vacío, el bus libre y la
+// L2 desocupada. Se usa para que cada prueba dirigida empiece así y las
 // latencias medidas sean exactas.
 task automatic wait_drained();
-    while (!(DUT.wb_empty && !DUT.port_busy)) begin
+    while (!(DUT.wb_empty && !DUT.port_busy && L2.busy == 0 && !L2.rd_on)) begin
         @(posedge clk); #1;
     end
 endtask
@@ -603,23 +618,25 @@ initial begin
 
 
     // ------------------------------------------------------------------
-    tb_section("8. Write buffer lleno (4 entradas): el 5.º store espera");
+    tb_section("8. Write buffer lleno (4 entradas): el 6.º store espera");
     // ------------------------------------------------------------------
-    // Cinco guardap seguidos que aciertan. Los cuatro primeros entran al
-    // buffer sin esperar. El drenado del primero empieza un ciclo después
-    // de entrar y tarda 8, así que libera su lugar 9 ciclos después del
-    // primer store; el 5.º store (que llega 4 ciclos después del primero)
-    // espera 9 - 4 + 1 = 6 ciclos.
+    // Seis guardap seguidos que aciertan, uno por ciclo (ciclos c0 a c5).
+    // Con el bus versión 2 una escritura termina al ser aceptada:
+    //   - el store de c0 entra al buffer y en c1 la L2 lo acepta (sale);
+    //   - la L2 queda ocupada 8 ciclos y vuelve a aceptar en c10;
+    //   - los stores de c1 a c4 llenan las 4 entradas;
+    //   - el de c5 encuentra el buffer lleno; en c10 sale otra entrada y el
+    //     store entra en c11: espera de c5 a c10, 6 ciclos.
     wait_drained();
-    for (k = 0; k < 4; k++) begin
+    for (k = 0; k < 5; k++) begin
         do_access(0, mk(1, 5, k), 4'b1111, 32'hA000_0000 + k, q, st);
         check($sformatf("store %0d: sin espera", k + 1), st, 0);
     end
-    do_access(0, mk(1, 5, 4), 4'b1111, 32'hA000_0004, q, st);
-    check("store 5: espera a que se libere un lugar", st, 6);
+    do_access(0, mk(1, 5, 5), 4'b1111, 32'hA000_0005, q, st);
+    check("store 6: espera a que se libere un lugar", st, 6);
     check("eventos de buffer lleno", c_wb_full, 6);
-    do_access(1, mk(1, 5, 4), 0, 0, q, st);
-    check("el 5.º store quedó escrito", q, 32'hA000_0004);
+    do_access(1, mk(1, 5, 5), 0, 0, q, st);
+    check("el 6.º store quedó escrito", q, 32'hA000_0005);
 
 
     // ------------------------------------------------------------------
@@ -630,7 +647,7 @@ initial begin
     while (!flush_done && k < 2000) begin @(posedge clk); #1; k++; end
     check_true("flush_done", flush_done);
     check_true("write buffer vacío", DUT.wb_empty);
-    for (k = 0; k < 5; k++)
+    for (k = 0; k < 6; k++)
         check($sformatf("L2 tras el vaciado (store %0d)", k + 1),
               L2.mem[mk(1, 5, k) >> 2], 32'hA000_0000 + k);
     // Durante el vaciado el núcleo espera
