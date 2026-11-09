@@ -187,14 +187,15 @@ localparam logic [1:0] L1D_DEFAULT_REPL_POLICY = RP_LRU;
 // Write-through + EXCLUSIVE no es posible: cada store llegaría a la L2 y la
 // línea quedaría en los dos niveles.
 //
-// Por defecto NINE, mientras el profesor no apruebe la exclusiva y no esté la
-// L2 exclusiva de Alejandro (decisiones-importantes.md, 4.1: si no se
-// aprueba, NINE queda por defecto). Cuando ambas cosas estén, se cambia
-// L1D_DEFAULT_INCL_POLICY a INCL_EXCLUSIVE.
+// Por defecto EXCLUSIVE: el profesor aprobó el crédito extra
+// (decisiones-importantes.md, 4.1). NINE queda como parámetro para la
+// comparación NINE contra exclusiva. La L2 (Alejandro) debe usar la misma
+// política: con exclusiva guarda las víctimas de la L1-D (limpias o sucias)
+// e invalida la línea que manda a la L1-D.
 localparam logic [1:0] INCL_INCLUSIVE = 2'd0;
 localparam logic [1:0] INCL_NINE      = 2'd1;
 localparam logic [1:0] INCL_EXCLUSIVE = 2'd2;
-localparam logic [1:0] L1D_DEFAULT_INCL_POLICY = INCL_NINE;
+localparam logic [1:0] L1D_DEFAULT_INCL_POLICY = INCL_EXCLUSIVE;
 
 // --- Riesgo RAW en memoria del write buffer (enunciado 3.4, notas 6.3.5) ----
 // Si un miss pide a la L2 una línea que todavía tiene escrituras esperando en
@@ -224,13 +225,6 @@ localparam int WB_DEPTH_MAX     = 8;
 localparam int L1D_N_MSHR_DEFAULT = 2;
 localparam int L1D_N_MSHR_MIN     = 1;
 localparam int L1D_N_MSHR_MAX     = 4;
-
-// --- TEMPORAL: nombres de la versión write-through + NINE -------------------
-// Los usa el l1d_cache.sv actual mientras pasa a los parámetros de arriba.
-// Se BORRAN en el mismo commit en que l1d_cache.sv deje de usarlos.
-localparam logic       L1D_WRITE_POLICY         = WP_WRITE_THROUGH;
-localparam logic [1:0] L1L2_INCLUSION_POLICY    = INCL_NINE;
-localparam logic       L1D_DEFAULT_ALLOC_POLICY = AP_NO_WRITE_ALLOC;
 
 
 // ============================================================================
