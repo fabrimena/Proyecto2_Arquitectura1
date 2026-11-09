@@ -271,6 +271,8 @@ task automatic finish_case;
 endtask
 
 task automatic run_cycles(input int n);
+    // Un flanco más con reset después de cargar el programa: la ROM síncrona lee el bundle 0 en ese flanco.
+    if(reset)tick();
     reset=0;measure_enable=1;repeat(n)tick();
 endtask
 
@@ -343,7 +345,7 @@ initial begin
     // no una multiplicación del número de saltos que cayó dentro de la ventana.
     for(int window_=0;window_<5;window_++)begin
         prepare(7+window_);tb_section($sformatf("Ventana de medición %0d",window_));
-        forward_program();reset=0;
+        forward_program();tick();reset=0;
         for(int n=1;n<=12;n++)begin
             case(window_)
                 0: measure_enable=(n<=4);                // Salto dentro, recuperación fuera.

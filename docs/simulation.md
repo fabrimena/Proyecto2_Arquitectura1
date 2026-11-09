@@ -61,7 +61,9 @@ Cada testbench deja en `build/<tb>/` el ejecutable (`sim.vvp`), `compile.log`, `
 **Memoria de instrucciones.** Tiene `IMEM_BUNDLES` = 1024 bundles (16 KB) y arranca llena de NOP.
 Con `+IMEM=<archivo.mem>` carga un programa con `$readmemh`: una línea por bundle, 32 dígitos
 hexadecimales, con el slot CRIPTO en los bits altos (el formato del ensamblador). Los testbenches
-también pueden escribir `DUT.IMEM.memory[]` directamente. Para correr un programa propio se usa
+también pueden escribir `DUT.IMEM.memory[]` directamente. En el proyecto 2 es una ROM síncrona
+(`rtl-p2/rom_sync.sv`, `ROM_SYNC = 1` en `top`): el programa tiene que estar escrito antes de un flanco
+con `reset` en 1, porque en ese flanco la ROM lee el bundle 0. Para correr un programa propio se usa
 `tools/run_program.py` (sección 12).
 
 **Cifrado de un archivo** (`make archivo`):
@@ -411,6 +413,9 @@ Todos son autoverificables:
 | `tb_pipeline_cripto` | Cifrado y descifrado de 4 bloques contra la referencia, las 4 unidades en el mismo bundle, excepciones (bundle y 2 siguientes anulados, salto a `TRAP_VECTOR`) y que ningún registro ni palabra de memoria contenga la llave |
 | `tb_top` | Programa cargado desde un `.mem` y 4 bundles distintos en IF, ID, EX y WB en el mismo ciclo |
 | `tb_pipeline_stall` | Proyecto 2: el mismo programa en `top` sin stalls y con 1 y 4 ciclos de stall por acceso (`MEM_MODE = 1`). Mismo estado final (registros, memoria, bóveda y ESTADO), las mismas escrituras en el mismo orden (`camcon` rota una sola vez), N ciclos más por acceso y el PC y los registros de segmentación quietos en cada stall. Interfaces en [`memory-interfaces.md`](memory-interfaces.md) |
+| `tb_rom_sync` | Proyecto 2: la ROM síncrona contra la memoria combinacional del proyecto 1 (`ROM_SYNC` 1 y 0), sin stalls y con 4 ciclos de stall por acceso. En cada ciclo el mismo PC, el mismo bundle en IF (que es `memory[pc]`), los mismos registros de segmentación y las mismas escrituras en WB, con un bucle, `sye`, `syer` y una excepción; el mismo estado final y los mismos ciclos; y un cambio en `memory` solo se ve en el flanco siguiente |
+| `tb_mem_hierarchy` | Proyecto 2: la jerarquía del modo 2 (árbitro, L1-D y L2 de prueba) contra un modelo de la memoria del proyecto 1. Latencias (miss 8 ciclos, hit y store con MSHR libre 0), `vcr` y `camcon` solos y con la LSU en el mismo bundle (1 y 2 ciclos más), orden de lectura y escritura dentro del bundle, valores que solo están sucios en la L1-D, vaciado y 3000 bundles aleatorios sobre líneas que compiten por los mismos conjuntos |
+| `tb_port_b` | Proyecto 2: un programa con `setpwd`, `vcr` y `camcon` junto a cargas y stores de la misma palabra, en `top` con `MEM_MODE` 0, 1 y 2. Mismo estado final que el proyecto 1 (con el modo 2, después del vaciado), las mismas escrituras al banco, `camcon` escribe una sola vez y el núcleo queda quieto en cada stall |
 | `tb_fetch`, `tb_dispatch`, `tb_decoder_alu` | El bundle sin esperar un flanco, la separación de los 4 slots y las 18 instrucciones ALU con sus campos |
 | `tb_pipeline_if_id`, `tb_pipeline_id_ex`, `tb_pipeline_ex_wb` | Captura en el flanco, `flush`, prioridad del reset y 300 ciclos aleatorios |
 
