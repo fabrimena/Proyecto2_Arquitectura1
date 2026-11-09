@@ -59,12 +59,11 @@ sección 5 de `decisiones-importantes.md` salgan del mismo diseño.
 Combinaciones válidas: write-through + NINE, write-back + NINE y write-back + exclusiva. Write-through +
 exclusiva y la inclusiva se rechazan con `$fatal` al inicio.
 
-> **TEMPORAL.** Mientras `tb-p2/tb_perf_cache_l1d_k1a.sv` (Javier) siga con el bus anterior y sin pasar
-> parámetros, los valores por defecto de `l1d_cache` son los de la versión anterior: write-through +
-> NINE + bus anterior + 1 MSHR (alias `L1D_WRITE_POLICY` y `L1L2_INCLUSION_POLICY` de `cache_defs.sv`).
-> Mis testbenches ya pasan la configuración explícita. Cuando Javier actualice el suyo, un commit pone por
-> defecto la configuración final de esta tabla y borra los alias; en ese commit `tb_l1d_writeback` pasa
-> `N_MSHR(1)`, porque mide la caché bloqueante.
+Los valores por defecto de `l1d_cache` son la configuración final de esta tabla (constantes
+`L1D_DEFAULT_*`, `WB_DEPTH_DEFAULT` y `L1D_N_MSHR_DEFAULT` de `cache_defs.sv`, y `L2_BUS_V2 = 1`). Para
+medir otra configuración se pasan los parámetros al instanciar, sin tocar el diseño. Los testbenches
+pasan siempre su configuración explícita; por ejemplo, `tb_l1d_cache` usa write-through + NINE y
+`tb_l1d_writeback` usa `N_MSHR = 1` porque mide la caché bloqueante.
 
 **Qué hace cada combinación:**
 
@@ -310,14 +309,13 @@ propósito en una copia de `l1d_cache.sv`, y cada una hizo fallar las pruebas:
 - **Revisión de exclusividad**: mis testbenches revisan el sentido "la L2 acepta una línea → no está en la
   L1-D". El otro sentido ("la L1-D se llena → la línea no queda en la L2") depende de la L2 real y se
   revisa en la integración.
-- **Valores por defecto temporales** (sección 3): la configuración final queda por defecto cuando Javier
-  actualice su testbench.
 
 ## 9. Pendiente de otros bloques
 
-- **Javier:** actualizar `tb_perf_cache_l1d_k1a.sv` al bus versión 2 y a la configuración explícita (o a
-  los nuevos valores por defecto); después yo cambio los valores por defecto y borro los alias. Contadores
-  a partir de los eventos `ev_*`, incluidos los de MSHR y víctimas.
+- **Javier:** ya adaptó sus contadores (`perf_cache_l1d.sv`, `tb_perf_cache_l1d_k1a.sv`,
+  [perf-cache-l1d-k1a.md](perf-cache-l1d-k1a.md)) al bus versión 2 y a los eventos de víctimas y MSHR.
+  Falta medir con los benchmarks las comparaciones de `decisiones-importantes.md`, sección 5 (NINE contra
+  exclusiva, write-through contra write-back, reemplazo, `N_MSHR` = 1, 2 y 4).
 - **Fabricio:** conectar `l1d_cache` en `top.sv` (`MEM_MODE = 2`) y pasar el puerto B (`vcr`, `camcon`)
   por la L1-D.
 - **Alejandro:** L2 real con el bus versión 2 (salidas registradas, `l2_rdirty` con exclusiva, guardar las
