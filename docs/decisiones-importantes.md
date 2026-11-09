@@ -73,7 +73,10 @@ Como usa `core_clk`, se congela junto con el PC.
 
 - Se mantienen la instancia `IMEM`, el arreglo `memory` y la carga con `+IMEM=`, para que
   `tb_assembled_program`, `tb_ce1108_program` y los demás testbenches carguen el programa igual. El
-  programa tiene que estar cargado antes del primer flanco con `reset` en 1, como ya ocurre.
+  programa tiene que estar cargado antes de un flanco con `reset` en 1, porque en ese flanco la ROM lee
+  el bundle 0. Los 4 testbenches de métricas que cargaban el programa después de ese flanco
+  (`tb_perf_top_d3`, `tb_perf_branch_d4a`, `tb_perf_stall_d5a` y `tb_perf_vliw_monitor_d4b1`) dan un
+  flanco más con `reset` en 1 después de cargarlo; sus métricas no cambian.
 - 1024 bundles (16 KB, dentro del máximo de 64 KB). Agrandarla cambiaría `IMEM_BUNDLES` y `TRAP_VECTOR`
   en `rtl/isa_defs.sv`, que el ensamblador también lee.
 - Parámetro `ROM_SYNC` en `top` (1 por defecto; 0 = la memoria combinacional del proyecto 1). La prueba
