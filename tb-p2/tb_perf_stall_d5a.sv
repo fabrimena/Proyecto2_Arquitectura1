@@ -453,6 +453,8 @@ endtask
 task automatic start_case(input int scenario_,policy_,program_);
     reset=1;tick();
     REF.prepare(scenario_,policy_,program_);DUT1.prepare(scenario_,policy_,program_);DUT4.prepare(scenario_,policy_,program_);
+    // Un flanco más con reset después de cargar el programa: la ROM síncrona lee el bundle 0 en ese flanco.
+    tick();
     reset=0;
 endtask
 

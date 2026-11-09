@@ -98,7 +98,7 @@ mismo que en el proyecto 1.
 
 | Reloj | Qué usa ese reloj |
 |:---|:---|
-| `core_clk` | `PC_BRANCH`, `IF_ID`, `ID_EX`, `EX_WB`, `REGFILE`, `LSU`, `BRU`, `CRYPTO` (con la bóveda adentro) y `trap_pc`/`trap_count` |
+| `core_clk` | `PC_BRANCH`, `IMEM` (ROM síncrona), `IF_ID`, `ID_EX`, `EX_WB`, `REGFILE`, `LSU`, `BRU`, `CRYPTO` (con la bóveda adentro) y `trap_pc`/`trap_count` |
 | `clk` | `DMEM`, `mem_stall_model` y todo lo que se agregue: cachés, buffers, controlador y contadores |
 
 Durante un stall todo el núcleo se queda en el mismo estado: el bundle de EX mantiene su acceso, el de
@@ -176,9 +176,8 @@ Fabricio en la iteración 3.
 2. Stall o store-to-load forwarding en los buffers (José y Alejandro).
 3. Inclusiva o NINE, a más tardar en la iteración 4 (Alejandro).
 4. Cruce de dominios de reloj y timeout (Dylan).
-5. Confirmar con el profesor que se acepta la memoria de instrucciones combinacional. El enunciado pide
-   una ROM síncrona, pero hacerla síncrona cambia IF y la penalización de los saltos, y eso afecta al
-   compilador.
+5. Memoria de instrucciones: listo. ROM síncrona leída con el siguiente PC (`rtl-p2/rom_sync.sv`, D1),
+   que mantiene los tiempos de IF y no afecta al compilador.
 6. Puerto B a través de la L1-D (Fabricio).
 
 ## 10. Pruebas

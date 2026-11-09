@@ -219,6 +219,8 @@ task automatic comparar_memoria;
 endtask
 
 task automatic ejecutar(input int cuantos);
+    // Un flanco más con reset después de cargar el programa: la ROM síncrona lee el bundle 0 en ese flanco.
+    if(reset)flanco();
     reset=0;measure_enable=1;
     repeat(cuantos)flanco();comparar_memoria();
 endtask
@@ -299,14 +301,14 @@ initial begin
     check("no completar bundle culpable ni burbujas",bundles,2);check("solo anterior y manejador",instructions,2);
 
     preparar(6);tb_section("NOP válidos, ventana tardía, pausa y reanudación");
-    reset=0;
+    flanco();reset=0;
     for(int i=1;i<=20;i++)begin measure_enable=(i>=5 && i<=8)||(i>=15);flanco();end
     comparar_memoria();check("ventana suma diez ciclos",cycles,10);check("diez NOP completados",bundles,10);
     check("NOP no suma instrucciones",instructions,0);
 
     preparar(7);tb_section("Pausa con útiles pendientes y reset durante actividad");
     for(int i=0;i<32;i++)cargar(i,b(ai((i%24)+1,0,i+1),0,0,0),1,0);
-    reset=0;
+    flanco();reset=0;
     for(int i=1;i<=20;i++)begin measure_enable=(i>=5 && i<=8)||(i>=15);flanco();end
     comparar_memoria();check("útiles solo al finalizar dentro de ventana",instructions,10);
     check("reanudar no repite eventos",bundles,10);
