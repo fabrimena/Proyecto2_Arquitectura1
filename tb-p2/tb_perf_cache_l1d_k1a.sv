@@ -14,6 +14,14 @@ perf_cache_l1d NAME (.clk(CLOCK),.reset(RST),.measure_enable(ENABLE), \
     .ev_wb_push(EV[8]), \
     .ev_l2_read(EV[9]), \
     .ev_l2_write(EV[10]), \
+    .ev_fill(EV[11]), \
+    .ev_victim_dirty(EV[12]), \
+    .ev_victim_clean(EV[13]), \
+    .ev_mshr_alloc(EV[14]), \
+    .ev_mshr_merge(EV[15]), \
+    .ev_mshr_load(EV[16]), \
+    .ev_hit_under_miss(EV[17]), \
+    .ev_mshr_full_stall(EV[18]), \
     .read_hits(C[0]), \
     .read_misses(C[1]), \
     .write_hits(C[2]), \
@@ -29,12 +37,23 @@ perf_cache_l1d NAME (.clk(CLOCK),.reset(RST),.measure_enable(ENABLE), \
     .write_accesses(T[1]), \
     .total_accesses(T[2]), \
     .total_hits(T[3]), \
+    .fill_events(C[11]), \
+    .victim_dirty_events(C[12]), \
+    .victim_clean_events(C[13]), \
+    .mshr_alloc_events(C[14]), \
+    .mshr_merge_events(C[15]), \
+    .mshr_load_events(C[16]), \
+    .hit_under_miss_events(C[17]), \
+    .mshr_full_stall_cycles(C[18]), \
     .total_misses(T[4]));
-`define K1A_CACHE(NAME, RAW_, EV, Q, ST, DONE_, RQ, WE_, A_, DATA_, BE_) \
-l1d_cache #(.ALLOC_POLICY(AP_NO_WRITE_ALLOC),.REPL_POLICY(RP_LRU),.RAW_POLICY(RAW_),.WB_DEPTH(2)) NAME ( \
+`define K1A_CACHE(NAME, RAW_, EV, Q, ST, DONE_, RQ, WE_, A_, DATA_, BE_, WD_) \
+/* Configuración histórica explícita: no depende de los defaults de José. */ \
+l1d_cache #(.WRITE_POLICY(WP_WRITE_THROUGH),.INCL_POLICY(INCL_NINE), \
+    .ALLOC_POLICY(AP_NO_WRITE_ALLOC),.REPL_POLICY(RP_LRU),.RAW_POLICY(RAW_), \
+    .WB_DEPTH(2),.N_MSHR(1),.L2_BUS_V2(1)) NAME ( \
     .clk(clk),.reset(reset),.re(re),.we(we),.be(be),.addr(addr),.wdata(wdata),.rdata(Q),.stall(ST), \
     .flush_req(flush_req),.flush_done(DONE_),.l2_req(RQ),.l2_we(WE_),.l2_addr(A_),.l2_wline(DATA_),.l2_be(BE_), \
-    .l2_ready(ready),.l2_rline(rline), \
+    .l2_gnt(gnt),.l2_rvalid(rvalid),.l2_rdirty(1'b0),.l2_wdirty(WD_),.l2_rline(rline), \
     .ev_rd_hit(EV[0]), \
     .ev_rd_miss(EV[1]), \
     .ev_wr_hit(EV[2]), \
@@ -45,7 +64,15 @@ l1d_cache #(.ALLOC_POLICY(AP_NO_WRITE_ALLOC),.REPL_POLICY(RP_LRU),.RAW_POLICY(RA
     .ev_raw_forward(EV[7]), \
     .ev_wb_push(EV[8]), \
     .ev_l2_read(EV[9]), \
-    .ev_l2_write(EV[10]));
+    .ev_l2_write(EV[10]), \
+    .ev_fill(EV[11]), \
+    .ev_victim_dirty(EV[12]), \
+    .ev_victim_clean(EV[13]), \
+    .ev_mshr_alloc(EV[14]), \
+    .ev_mshr_merge(EV[15]), \
+    .ev_mshr_load(EV[16]), \
+    .ev_hit_under_miss(EV[17]), \
+    .ev_mshr_full_stall(EV[18]));
 
 
 /* Dos cachés originales reciben el mismo estímulo; solo una tiene consumidor.
@@ -53,19 +80,20 @@ l1d_cache #(.ALLOC_POLICY(AP_NO_WRITE_ALLOC),.REPL_POLICY(RP_LRU),.RAW_POLICY(RA
  * de respuesta de ocho esperas. Nunca consulta registros privados de L1-D. */
 module k1a_real #(parameter RAW = RAW_FORWARD)(input logic go, output logic done);
     logic clk=0, reset=1, metric_reset=0, enable=1;
-    logic re=0,we=0,flush_req=0,ready=0;
+    logic re=0,we=0,flush_req=0,rvalid=0,gnt=0;
+    wire wd,wds;
     logic [3:0] be=15;
     logic [31:0] addr=0,wdata=0,q,qs,la,las;
     logic [255:0] rline=0,wl,wls;
     logic [31:0] mask,masks;
-    wire [10:0] ev,shadow_ev;
-    logic [10:0] diagnostic;
+    wire [18:0] ev,shadow_ev;
+    logic [18:0] diagnostic;
     wire st,sts,fd,fds,rq,rqs,lwe,lwes;
-    wire [63:0] c[0:10],t[0:4];
+    wire [63:0] c[0:18],t[0:4];
     wire crst=reset|metric_reset;
     wire cen=enable | (mutation==7);
-    `K1A_CACHE(CACHE,RAW,ev,q,st,fd,rq,lwe,la,wl,mask)
-    `K1A_CACHE(SHADOW,RAW,shadow_ev,qs,sts,fds,rqs,lwes,las,wls,masks)
+    `K1A_CACHE(CACHE,RAW,ev,q,st,fd,rq,lwe,la,wl,mask,wd)
+    `K1A_CACHE(SHADOW,RAW,shadow_ev,qs,sts,fds,rqs,lwes,las,wls,masks,wds)
     `K1A_COUNTER(COUNTERS,clk,crst,cen,diagnostic,c,t)
 
     integer mutation=0,cycle=0,checks=0,nq=0,age=0,steps=0;
@@ -79,8 +107,8 @@ module k1a_real #(parameter RAW = RAW_FORWARD)(input logic go, output logic done
     logic [31:0] qa[0:1],qm[0:1];
     logic [255:0] qd[0:1];
     logic [31:0] memory[0:16383],gold[0:16383];
-    logic [63:0] expected[0:10];
-    logic [10:0] previous=0;
+    logic [63:0] expected[0:18];
+    logic [18:0] previous=0;
 
     // Las mutaciones solo afectan entradas diagnósticas del consumidor. La
     // referencia y ambas cachés siguen recibiendo exactamente el caso nominal.
@@ -109,11 +137,11 @@ module k1a_real #(parameter RAW = RAW_FORWARD)(input logic go, output logic done
     endtask
 
     /* Muestreo PRE: los eventos combinacionales describen el flanco que viene.
-     * POST: se contrastan los once acumulados y cinco sumas tras sus NBA.
+     * POST: se contrastan los diecinueve acumulados y cinco sumas tras sus NBA.
      * La cola de referencia contiene stores aceptados, no señales de WBUF. */
     task automatic tick;
         logic pending,fill,complete,start_read,start_write,pop;
-        logic [10:0] want;
+        logic [18:0] want;
         logic [31:0] target,expected_data;
         integer i,j,k;
         begin
@@ -123,11 +151,16 @@ module k1a_real #(parameter RAW = RAW_FORWARD)(input logic go, output logic done
             finished=0;
             pending=0;
             for(i=0;i<nq;i++) if(qa[i]==(addr&32'hffe0)) pending=1;
-            fill=busy && ready && !buswrite;
+            fill=busy && rvalid && !buswrite;
             complete=(re||we) && (re ? (!expected_miss||fill) : nq<2);
             start_read=!busy && re && expected_miss && !(RAW==RAW_STALL && pending);
             start_write=!busy && !start_read && nq>0;
-            pop=busy && ready && buswrite;
+            // Aceptar no equivale a responder: la lectura se acepta ahora y
+            // responde ocho flancos después. El drenado espera ocho flancos
+            // antes del grant para conservar la presión original sobre WBUF.
+            gnt=start_read || (busy && buswrite && age==8);
+            #1;
+            pop=busy && gnt && buswrite;
             if (!reset) begin
                 // Hit/miss viene del guion dirigido y la geometría: el modelo
                 // no vuelve a calcular etiquetas ni reproduce la política LRU.
@@ -139,11 +172,13 @@ module k1a_real #(parameter RAW = RAW_FORWARD)(input logic go, output logic done
                 want[8]=complete&&we;
                 want[9]=start_read;
                 want[10]=start_write;
+                want[11]=fill;
                 check(ev===want,$sformatf("eventos productor: esperado=%b observado=%b",want,ev));
                 check(st===want[4],"stall contra finalización esperada");
-                check({q,st,fd,rq,lwe,la,wl,mask,ev} ===
-                      {qs,sts,fds,rqs,lwes,las,wls,masks,shadow_ev},"pasividad: salidas públicas distintas");
-                check(rq===(busy||start_read||start_write),"presencia de transacción L2");
+                check({q,st,fd,rq,lwe,la,wl,mask,wd,ev} ===
+                      {qs,sts,fds,rqs,lwes,las,wls,masks,wds,shadow_ev},"pasividad: salidas públicas distintas");
+                check(rq===((busy&&buswrite)||start_read||start_write),"presencia de transacción L2");
+                check(!wd,"write-through siempre transmite dirty=0");
                 if(rq) begin
                     target=busy?busaddr:(start_read?(addr&32'hffe0):qa[0]);
                     check(la===target && lwe===(busy?buswrite:start_write),"tipo/dirección L2 retenidos");
@@ -159,7 +194,7 @@ module k1a_real #(parameter RAW = RAW_FORWARD)(input logic go, output logic done
                 // Las expectativas se incrementan con el guion/protocolo de
                 // referencia, nunca con ev ni con los resultados del DUT.
                 if(!metric_reset && enable)
-                    for(i=0;i<11;i++) if(want[i]) expected[i]++;
+                    for(i=0;i<19;i++) if(want[i]) expected[i]++;
                 starts_rd+=start_read;
                 starts_wr+=start_write;
                 finished=complete;
@@ -170,12 +205,12 @@ module k1a_real #(parameter RAW = RAW_FORWARD)(input logic go, output logic done
                     observed_hits+=!expected_miss;
                     observed_misses+=expected_miss;
                 end
-                $fdisplay(trace,"%0d,%0d,%h,%0d,%0d,%0d,%0d,%b,%b,%0d,%0d,%0d,%0d,%0d",RAW,cycle,addr,re,we,expected_miss,enable,want,ev,nq,busy,ready,complete,metric_reset);
+                $fdisplay(trace,"%0d,%0d,%h,%0d,%0d,%0d,%0d,%b,%b,%0d,%0d,%0d,%0d,%0d",RAW,cycle,addr,re,we,expected_miss,enable,want,ev,nq,busy,rvalid,complete,metric_reset);
             end
-            if(crst) for(i=0;i<11;i++) expected[i]=0;
+            if(crst) for(i=0;i<19;i++) expected[i]=0;
             clk=1;
             #1;
-            for(i=0;i<11;i++)
+            for(i=0;i<19;i++)
                 check(c[i]===expected[i],$sformatf("contador[%0d] esperado=%0d observado=%0d",i,expected[i],c[i]));
             check(t[0]===expected[0]+expected[1],"total lecturas");
             check(t[1]===expected[2]+expected[3],"total escrituras");
@@ -184,34 +219,34 @@ module k1a_real #(parameter RAW = RAW_FORWARD)(input logic go, output logic done
             check(t[4]===expected[1]+expected[3],"total misses");
             check(t[3]+t[4]===t[2],"partición hits/misses");
 
-            // Respuesta mínima registrada: ocho flancos de espera en una
-            // solicitud nueva. No hay tags, reemplazo ni políticas de L2.
+            // Bus v2: solo las lecturas generan rvalid. Las escrituras se
+            // aplican al consumir grant, sin fabricar respuesta de lectura.
             if(reset) begin
-                busy=0; ready=0; nq=0; age=0; previous=0;
+                busy=0; rvalid=0; gnt=0; nq=0; age=0; previous=0;
             end else begin
                 previous=want;
-                if(busy) begin
-                    if(ready) begin ready=0; busy=0; end
+                if(pop) begin
+                    for(j=0;j<8;j++) for(k=0;k<4;k++) if(busmask[j*4+k])
+                        memory[(busaddr>>2)+j][k*8+:8]=busdata[(j*4+k)*8+:8];
+                    busy=0;
+                end else if(busy && !buswrite) begin
+                    if(rvalid) begin rvalid=0; busy=0; end
                     else begin
                         if(age==7) begin
-                            for(j=0;j<8;j++) begin
-                                if(buswrite) begin
-                                    for(k=0;k<4;k++) if(busmask[j*4+k])
-                                        memory[(busaddr>>2)+j][k*8+:8]=busdata[(j*4+k)*8+:8];
-                                end else rline[j*32+:32]=memory[(busaddr>>2)+j];
-                            end
-                            ready=1;
+                            for(j=0;j<8;j++) rline[j*32+:32]=memory[(busaddr>>2)+j];
+                            rvalid=1;
                         end
                         age++;
                     end
-                end else if(start_read||start_write) begin
+                end else if(busy) age++;
+                else if(start_read||start_write) begin
                     busy=1; buswrite=start_write; age=1;
                     busaddr=start_read?(addr&32'hffe0):qa[0];
                     busdata=start_write?qd[0]:0;
                     busmask=start_write?qm[0]:0;
                 end
-                // El pop corresponde al ready consumido, no a la generación
-                // de ready. Con FIFO llena, un pop no habilita el push previo.
+                // El pop de escritura corresponde al grant consumido. Con FIFO
+                // llena, un pop no habilita el push previo.
                 if(pop) begin qa[0]=qa[1]; qm[0]=qm[1]; qd[0]=qd[1]; nq--; end
                 if(complete&&we) begin
                     qa[nq]=addr&32'hffe0;
@@ -291,9 +326,9 @@ module k1a_real #(parameter RAW = RAW_FORWARD)(input logic go, output logic done
         if(RAW==RAW_FORWARD) trace=$fopen("k1a-forward.csv","w");
         else trace=$fopen("k1a-stall.csv","w");
         check(trace!=0,"abrir traza externa de flancos");
-        $fdisplay(trace,"raw,cycle,address,re,we,initial_miss,enable,expected_events,actual_events,queued,busy,ready,complete,metric_reset");
+        $fdisplay(trace,"raw,cycle,address,re,we,initial_miss,enable,expected_events,actual_events,queued,busy,rvalid,complete,metric_reset");
         for(i=0;i<16384;i++) begin memory[i]=32'h92100000^i; gold[i]=memory[i]; end
-        for(i=0;i<11;i++) expected[i]=0;
+        for(i=0;i<19;i++) expected[i]=0;
         tick; reset=0; tick;
         // A, B y C comparten conjunto 5. A/B/A/C conserva A y desaloja B
         // por LRU de dos vías; no se modela internamente el reemplazo.
@@ -317,7 +352,7 @@ module k1a_real #(parameter RAW = RAW_FORWARD)(input logic go, output logic done
         access(1,32'h3024,1,0,15,0,RAW==RAW_FORWARD?8:17,"RAW-read");
         drain;
         // El tercer store se presenta con dos entradas ocupadas. El bus ya
-        // está drenando y no ofrece espacio hasta después de consumir ready.
+        // está drenando y no ofrece espacio hasta después de consumir rvalid.
         access(0,32'h08ac,0,32'h11111111,15,0,0,"full-1");
         access(0,32'h08ac,0,32'h22222222,15,0,0,"full-2");
         access(0,32'h08ac,0,32'h33333333,15,0,8,"full-3");
@@ -366,31 +401,312 @@ module k1a_real #(parameter RAW = RAW_FORWARD)(input logic go, output logic done
     end
 endmodule
 
+/* Guiones WB/exclusiva independientes del controlador: cada tick declara sus
+ * eventos esperados. El respondedor manual solo entrega las líneas indicadas
+ * por el guion; no reproduce tags, reemplazo ni máquinas de estados de L1-D. */
+module k1a2_extended #(parameter integer NM=2)(input logic go,output logic done);
+    localparam [18:0] RH=19'b1, RM=19'b1<<1, WH=19'b1<<2, WM=19'b1<<3,
+        ST=19'b1<<4, PUSH=19'b1<<8, RD=19'b1<<9, WR=19'b1<<10,
+        FILL=19'b1<<11, VD=19'b1<<12, VC=19'b1<<13, AL=19'b1<<14,
+        MERGE=19'b1<<15, ML=19'b1<<16, HUM=19'b1<<17, FULL=19'b1<<18;
+    logic clk=0,reset=1,metric_reset=0,enable=1;
+    logic re=0,we=0,fr=0,gnt=1,rv=0,rdirty=0;
+    logic [31:0] addr=0,data=0;
+    logic [3:0] be=15;
+    logic [255:0] line_=0;
+    wire [18:0] ev,sev;
+    logic [18:0] diag,previous=0;
+    wire [63:0] c[0:18],t[0:4];
+    logic [63:0] expected[0:18];
+    wire [31:0] q,sq,la,sla,mask,smask;
+    wire [255:0] wl,swl;
+    wire stall,sstall,fd,sfd,rq,srq,lwe,slwe,wd,swd;
+    integer checks=0,cycle=0,mutation=0,trace;
+    logic held=0,pending=0;
+    logic [31:0] heldaddr=0,pendingaddr=0;
+    logic heldwe=0,helddirty=0;
+    logic [255:0] heldline=0;
+    logic [31:0] heldmask=0;
+    logic [31:0] memory[0:16383],gold[0:16383];
+    wire crst=reset|metric_reset;
+    wire cen=enable|(mutation==15);
+    // Los parámetros se fijan también en la sombra. RAW_FORWARD no permite
+    // forwarding en exclusiva: la espera obligatoria la decide el productor.
+`define K1A2_WB(NAME,E,Q,S,D,R,W,A,L,B,V) \
+    l1d_cache #(.WRITE_POLICY(WP_WRITE_BACK),.INCL_POLICY(INCL_EXCLUSIVE), \
+        .ALLOC_POLICY(AP_WRITE_ALLOC),.REPL_POLICY(RP_LRU),.RAW_POLICY(RAW_FORWARD), \
+        .WB_DEPTH(2),.N_MSHR(NM),.L2_BUS_V2(1)) NAME ( \
+        .clk(clk),.reset(reset),.re(re),.we(we),.be(be),.addr(addr),.wdata(data),.rdata(Q),.stall(S), \
+        .flush_req(fr),.flush_done(D),.l2_req(R),.l2_we(W),.l2_addr(A),.l2_wline(L),.l2_be(B),.l2_wdirty(V), \
+        .l2_gnt(gnt),.l2_rvalid(rv),.l2_rdirty(rdirty),.l2_rline(line_), \
+        .ev_rd_hit(E[0]),.ev_rd_miss(E[1]),.ev_wr_hit(E[2]),.ev_wr_miss(E[3]), \
+        .ev_stall(E[4]),.ev_wb_full_stall(E[5]),.ev_raw_stall(E[6]),.ev_raw_forward(E[7]), \
+        .ev_wb_push(E[8]),.ev_l2_read(E[9]),.ev_l2_write(E[10]),.ev_fill(E[11]), \
+        .ev_victim_dirty(E[12]),.ev_victim_clean(E[13]),.ev_mshr_alloc(E[14]), \
+        .ev_mshr_merge(E[15]),.ev_mshr_load(E[16]),.ev_hit_under_miss(E[17]),.ev_mshr_full_stall(E[18]));
+    `K1A2_WB(CACHE,ev,q,stall,fd,rq,lwe,la,wl,mask,wd)
+    `K1A2_WB(SHADOW,sev,sq,sstall,sfd,srq,slwe,sla,swl,smask,swd)
+    `K1A_COUNTER(COUNTERS,clk,crst,cen,diag,c,t)
+`undef K1A2_WB
+
+    // Solo las entradas del consumidor cambian en los controles negativos.
+    always @* begin
+        diag=ev;
+        case(mutation)
+            10: diag[14]=ev[14]|previous[14];
+            11: diag[15]=0;
+            12: diag[11]=0;
+            13: begin diag[12]=0; diag[13]=ev[13]|ev[12]; end
+            14: diag[18]=ev[18]|previous[18];
+            default: begin end
+        endcase
+    end
+    task automatic check(input logic ok,input string why);
+        begin
+            checks++;
+            if(ok!==1'b1) $fatal(1,"K1A2 NM=%0d ciclo=%0d mutacion=%0d: %s",NM,cycle,mutation,why);
+        end
+    endtask
+
+    /* target y dirty indican la transacción conocida que debe comenzar. Una
+     * petición retenida se compara hasta su grant; las lecturas aceptadas se
+     * recuerdan por separado hasta rvalid. Las escrituras no generan respuesta. */
+    task automatic tick(input logic [18:0] want,input logic [31:0] target=0,input logic dirty=0);
+        integer i,j;
+        logic request_,write_;
+        begin
+            #2; cycle++;
+            if(!reset) begin
+                check(ev===want,$sformatf("eventos esperado=%b observado=%b",want,ev));
+                check({q,stall,fd,rq,lwe,la,wl,mask,wd,ev}===
+                      {sq,sstall,sfd,srq,slwe,sla,swl,smask,swd,sev},"pasividad de caché sombra");
+                check(stall===want[4],"stall esperado del guion");
+                request_=held||want[9]||want[10];
+                check(rq===request_,"solicitud pública esperada");
+                if(held) begin
+                    check({lwe,la,mask,wd}==={heldwe,heldaddr,heldmask,helddirty},"petición estable hasta grant");
+                    // Los datos solo tienen significado en una escritura.
+                    if(heldwe) check(wl===heldline,"línea retenida antes del grant");
+                end else if(request_) begin
+                    check(la===target && lwe===want[10],"tipo y dirección al iniciar");
+                    check(wd===dirty,"dirty al iniciar");
+                    check(mask===(want[10]?32'hffffffff:32'd0),"máscara de la transacción");
+                    if(want[10]) for(i=0;i<8;i++)
+                        check(wl[i*32+:32]===gold[(target>>2)+i],"bytes de víctima/flush frente a CPU");
+                end
+                check(rv===want[11],"una respuesta de lectura por llenado");
+                if(rv) check(pending,"respuesta solo después de aceptación");
+                if(want[0]||want[1]) check(q===gold[addr[15:2]],"dato de carga frente a referencia");
+                if(!metric_reset&&enable) for(i=0;i<19;i++) if(want[i]) expected[i]++;
+                // Persistencia observable: solo al grant de una escritura.
+                if(rq&&gnt&&lwe) for(i=0;i<32;i++) if(mask[i])
+                    memory[(la>>2)+i/4][8*(i%4)+:8]=wl[8*i+:8];
+                if(rv) pending=0;
+                if(rq&&gnt&&!lwe) begin
+                    check(!pending,"no se acepta dos veces la misma lectura");
+                    pending=1; pendingaddr=la;
+                end
+                if(!held && request_) begin
+                    heldaddr=target; heldwe=want[10]; heldmask=mask; helddirty=dirty; heldline=wl;
+                end
+                held=request_&&!gnt;
+            end
+            // La traza conserva el mismo muestreo PRE usado por las aserciones.
+            $fdisplay(trace,"%0d,%0d,%h,%h,%h,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%h,%0d,%h,%h",NM,cycle,addr,want,ev,enable,metric_reset,gnt,rv,rdirty,rq,lwe,la,wd,mask,wl);
+            if(crst) for(i=0;i<19;i++) expected[i]=0;
+            clk=1; #1;
+            for(i=0;i<19;i++) check(c[i]===expected[i],$sformatf("contador[%0d] esperado=%0d observado=%0d",i,expected[i],c[i]));
+            check(t[0]===expected[0]+expected[1],"lecturas anteriores conservadas");
+            check(t[1]===expected[2]+expected[3],"escrituras anteriores conservadas");
+            check(t[2]===expected[0]+expected[1]+expected[2]+expected[3],"total sin sumar MSHR/fills/víctimas");
+            check(t[3]===expected[0]+expected[2] && t[4]===expected[1]+expected[3],"totales hit/miss anteriores");
+            previous=want;
+            if(reset) begin held=0; pending=0; previous=0; end
+            #1; clk=0; #1;
+        end
+    endtask
+
+    task automatic respond(input logic [18:0] want,input logic dirty=0);
+        integer i;
+        begin
+            check(pending,"hay una lectura conocida pendiente");
+            for(i=0;i<8;i++) line_[i*32+:32]=memory[(pendingaddr>>2)+i];
+            rdirty=dirty; rv=1; tick(want); rv=0; rdirty=0;
+        end
+    endtask
+
+    // Para escenarios de reemplazo se dejan ocho esperas desde el grant;
+    // una lectura limpia o sucia entrante produce un único fill al responder.
+    task automatic load_cold(input logic [31:0] a,input logic [18:0] victim=0,input logic dirty=0);
+        begin
+            re=1; we=0; addr=a;
+            tick(ST|RD,a&32'hffe0);
+            repeat(7) tick(ST);
+            respond(RM|FILL|victim,dirty);
+            re=0;
+        end
+    endtask
+
+    task automatic store_hit(input logic [31:0] a,input logic [31:0] d,input logic [18:0] extra=0);
+        begin
+            addr=a; re=0; we=1; data=d; be=15;
+            gold[a>>2]=d;
+            tick(WH|extra); we=0;
+        end
+    endtask
+
+    // Un guion nuevo arranca con caché vacía. La memoria no cambia al reset
+    // del consumidor; aquí el reset común se reserva para separar escenarios.
+    task automatic fresh;
+        integer i;
+        begin
+            reset=1; re=0; we=0; fr=0; rv=0; enable=1; metric_reset=0; gnt=1;
+            for(i=0;i<16384;i++) begin memory[i]=32'h98100000^i; gold[i]=memory[i]; end
+            tick(0); reset=0;
+        end
+    endtask
+
+    integer i,j;
+    logic [31:0] a;
+    initial begin
+        done=0; wait(go);
+        if(!$value$plusargs("MUTATION=%d",mutation)) mutation=0;
+        trace=$fopen($sformatf("k1a2-mshr-%0d.csv",NM),"w");
+        check(trace!=0,"abrir traza de eventos nuevos");
+        $fdisplay(trace,"capacity,cycle,address,expected_events,actual_events,enable,metric_reset,gnt,rvalid,rdirty,req,we,l2_addr,wdirty,byte_enable,wline");
+        for(i=0;i<19;i++) expected[i]=0;
+        fresh;
+        // A/B/C/D comparten conjunto 5. A se ensucia, C desaloja A y D
+        // desaloja B limpia. Los dirty bits viajan con cada víctima, no son
+        // inferidos por el consumidor a partir de los datos.
+        load_cold(32'h08a0);
+        store_hit(32'h08a0,32'h12345678);
+        load_cold(32'h10a0);
+        load_cold(32'h18a0,PUSH|VD);
+        // Retención de escritura con gnt apagado: solo el primer ciclo
+        // presenta ev_l2_write; dirección, máscara, datos y dirty se mantienen.
+        gnt=0; tick(WR,32'h08a0,1); repeat(3) tick(0);
+        gnt=1; tick(0);
+        load_cold(32'h20a0,PUSH|VC);
+        tick(WR,32'h10a0,0);
+        // l2_rdirty=1 debe sobrevivir al siguiente reemplazo aunque la CPU
+        // nunca haga store en la línea: E entra sucia y G la desaloja.
+        load_cold(32'h28a0,PUSH|VC,1); tick(WR,32'h18a0,0);
+        load_cold(32'h30a0,PUSH|VC); tick(WR,32'h20a0,0);
+        load_cold(32'h38a0,PUSH|VD); tick(WR,32'h28a0,1);
+        check(c[11]===7 && c[12]===2 && c[13]===3,"fills y víctimas del guion LRU");
+        // Store miss con NM=1 bloquea; con NM>=2 se retira antes del fill.
+        fresh;
+        if(NM==1) begin
+            addr=32'h0940; we=1; data=32'haaaa0001; gold[addr>>2]=data;
+            tick(ST|RD,32'h0940); repeat(7) tick(ST);
+            respond(WM|FILL); we=0;
+            check(c[14]===0 && c[4]===8,"NM=1 es bloqueante sin reserva MSHR");
+        end else begin
+            // H reside en conjunto 20; X en conjunto 10 entra primero al
+            // MSHR. Las operaciones siguientes suceden antes de su respuesta.
+            load_cold(32'h1280);
+            addr=32'h0940; we=1; data=32'haaaa0001; gold[addr>>2]=data;
+            tick(WM|AL); we=0;
+            addr=32'h0944; we=1; data=32'hbbbb0002; gold[addr>>2]=data;
+            tick(WM|MERGE|RD,32'h0940); we=0;
+            addr=32'h0940; re=1; tick(RM|ML); re=0;
+            addr=32'h1280; re=1; tick(RH|HUM); re=0;
+            store_hit(32'h1284,32'hcccc0003,HUM);
+            tick(0); tick(0); tick(0); tick(0);
+            respond(FILL);
+            addr=32'h0944; re=1; tick(RH); re=0;
+            check(c[14]===1 && c[15]===1 && c[16]===1 && c[17]===2,"reserva, mezcla, carga MSHR y dos hits bajo miss");
+        end
+        // Otra escena llena exactamente NM reservas. La respuesta se demora
+        // deliberadamente hasta comprobar tres ciclos con MSHR llenos; el
+        // flanco de fill también bloquea al store por el puerto único, pero
+        // NO activa la causa MSHR lleno. Capacidad no equivale a latencia.
+        if(NM>=2) begin
+            fresh;
+            for(i=0;i<NM;i++) begin
+                addr=32'h0a00+i*32; we=1; data=32'h55550000+i; gold[addr>>2]=data;
+                tick(WM|AL|(i==1?RD:0),i==1?32'h0a00:0); we=0;
+            end
+            addr=32'h0a00+NM*32; we=1; data=32'h77770000; gold[addr>>2]=data;
+            repeat(3) tick(ST|FULL);
+            respond(ST|FILL);
+            tick(WM|AL|RD,32'h0a20); we=0;
+            check(c[18]===3 && c[4]===4,"tres stalls de capacidad más uno de fill, sin duplicación");
+            // Completar en orden todos los stores aceptados, sin acceder a
+            // colas privadas. Cada línea usa un conjunto vacío distinto.
+            for(i=1;i<=NM;i++) begin
+                respond(FILL);
+                if(i<NM) tick(RD,32'h0a00+(i+1)*32);
+            end
+            for(i=0;i<=NM;i++) begin addr=32'h0a00+i*32; re=1; tick(RH); re=0; end
+            check(c[14]==NM+1 && c[11]==NM+1,"reservas/fills únicos de la ráfaga");
+        end
+        // Flush de líneas conocidas, después de drenar MSHR. Los stores de
+        // esta escena llenaron siempre la vía 0: el recorrido público pasa
+        // por conjunto*2. El guion fija en qué flanco aparece cada push.
+        // Con NM=1 hay una línea sucia en conjunto 10; con 2/4 están en 16..NM+16.
+        fr=1; tick(0);
+        for(j=0;j<128;j++) begin
+            if(NM==1) begin
+                if(j==20) tick(PUSH);
+                else if(j==21) tick(WR,32'h0940,1);
+                else tick(0);
+            end else begin
+                if(j>=32 && j<=32+2*NM && j%2==0) tick(PUSH);
+                else if(j>=33 && j<=33+2*NM && j%2==1)
+                    tick(WR,32'h0a00+((j-33)/2)*32,1);
+                else tick(0);
+            end
+        end
+        tick(0); tick(0); check(fd,"flush termina sin accesos ficticios");
+        fr=0; tick(0);
+        for(i=0;i<16384;i++) check(memory[i]===gold[i],"memoria completa después de flush exclusivo");
+        // En exclusiva, la línea sucia vaciada debe volver como miss público.
+        // También se verifica una ventana apagada y reset de nuevos contadores.
+        enable=0; load_cold(NM==1?32'h0940:32'h0a00);
+        enable=1; metric_reset=1; tick(0); metric_reset=0;
+        for(i=0;i<19;i++) check(c[i]===0,"reset completo tras nuevos eventos reales");
+        $display("[PASS] K1A2 NM=%0d: %0d verificaciones",NM,checks);
+        $fclose(trace); done=1;
+    end
+endmodule
+
 /* Los casos sintéticos separan acumulación del contrato del productor. Incluso
  * causas coincidentes deben acumularse sin prioridad; sus sumas no son stalls. */
 module tb_perf_cache_l1d_k1a;
     logic clk=0,reset=1,enable=1;
-    logic [10:0] ev=0;
-    wire [63:0] c[0:10],t[0:4];
-    logic [63:0] expected[0:10];
+    integer mutation=0;
+    logic reset_negative_active=0;
+    // El control negativo 16 omite el reset únicamente en una escena donde
+    // solo fill_events es no nulo, para detectar el borrado de eventos nuevos.
+    wire unit_reset=reset && !(mutation==16 && reset_negative_active);
+    logic [18:0] ev=0;
+    wire [63:0] c[0:18],t[0:4];
+    logic [63:0] expected[0:18];
     integer checks=0,i,j;
     logic go_f=0,go_s=0;
+    logic go_1=0,go_2=0,go_4=0;
+    wire done_1,done_2,done_4;
+    k1a2_extended #(.NM(1)) ext1(go_1,done_1);
+    k1a2_extended #(.NM(2)) ext2(go_2,done_2);
+    k1a2_extended #(.NM(4)) ext4(go_4,done_4);
     wire done_f,done_s;
     k1a_real #(.RAW(RAW_FORWARD)) forward_case(go_f,done_f);
     k1a_real #(.RAW(RAW_STALL)) stall_case(go_s,done_s);
-    `K1A_COUNTER(UNIT,clk,reset,enable,ev,c,t)
+    `K1A_COUNTER(UNIT,clk,unit_reset,enable,ev,c,t)
 
     task automatic check(input logic ok,input string why);
         begin checks++; if(ok!==1'b1) $fatal(1,"K1A sintético: %s",why); end
     endtask
-    task automatic step(input logic rst,input logic en,input logic [10:0] events_);
+    task automatic step(input logic rst,input logic en,input logic [18:0] events_);
         integer k;
         begin
             reset=rst; enable=en; ev=events_;
-            if(rst) for(k=0;k<11;k++) expected[k]=0;
-            else if(en) for(k=0;k<11;k++) if(events_[k]) expected[k]++;
+            if(rst) for(k=0;k<19;k++) expected[k]=0;
+            else if(en) for(k=0;k<19;k++) if(events_[k]) expected[k]++;
             #3; clk=1; #1;
-            for(k=0;k<11;k++) check(c[k]===expected[k],$sformatf("contador %0d",k));
+            for(k=0;k<19;k++) check(c[k]===expected[k],$sformatf("contador[%0d]",k));
             check(t[0]===expected[0]+expected[1],"lecturas derivadas");
             check(t[1]===expected[2]+expected[3],"escrituras derivadas");
             check(t[2]===expected[0]+expected[1]+expected[2]+expected[3],"accesos derivados");
@@ -435,6 +751,15 @@ module tb_perf_cache_l1d_k1a;
                 8: UNIT.wb_push_events=value_;
                 9: UNIT.l2_read_requests=value_;
                 10: UNIT.l2_write_requests=value_;
+                11: UNIT.fill_events=value_;
+                12: UNIT.victim_dirty_events=value_;
+                13: UNIT.victim_clean_events=value_;
+                14: UNIT.mshr_alloc_events=value_;
+                15: UNIT.mshr_merge_events=value_;
+                16: UNIT.mshr_load_events=value_;
+                17: UNIT.hit_under_miss_events=value_;
+                18: UNIT.mshr_full_stall_cycles=value_;
+
 
             endcase
             expected[index_]=value_;
@@ -446,7 +771,12 @@ module tb_perf_cache_l1d_k1a;
             $dumpfile("tb_perf_cache_l1d_k1a.vcd");
             $dumpvars(0,tb_perf_cache_l1d_k1a);
         end
-        for(i=0;i<11;i++) expected[i]=0;
+        if(!$value$plusargs("MUTATION=%d",mutation)) mutation=0;
+        for(i=0;i<19;i++) expected[i]=0;
+        // Un fill aislado prueba reset de los nuevos acumuladores sin que
+        // un contador antiguo enmascare la primera divergencia del control 16.
+        step(1,1,0); step(0,1,19'b1<<11);
+        reset_negative_active=1; step(1,1,0); reset_negative_active=0;
         // Reset con todos los eventos activos y habilitación; prioridad total.
         step(1,1,'1);
         rate(t[3],t[2],-1.0,"empty-hit");
@@ -456,12 +786,18 @@ module tb_perf_cache_l1d_k1a;
         rate(c[2],t[1],-1.0,"empty-write-hit");
         rate(c[3],t[1],-1.0,"empty-write-miss");
         step(0,1,0);
-        // Once eventos individuales, repetidos sin separar niveles activos.
-        for(i=0;i<11;i++) begin step(0,1,11'b1<<i); step(0,1,11'b1<<i); end
+        // Diecinueve eventos individuales, repetidos sin separar niveles activos.
+        for(i=0;i<19;i++) begin step(0,1,19'b1<<i); step(0,1,19'b1<<i); end
         step(0,0,'1); step(0,0,0); step(0,1,0);
         step(0,1,11'b10100000100); // store hit + push + drenado independiente.
         step(0,1,11'b00001110000); // causas de espera sintéticas coincidentes.
         step(1,0,'1); // Reset también opera cuando la ventana está deshabilitada.
+        // Store miss no bloqueante: demanda, reserva e inicio pertenecen
+        // a magnitudes independientes. Un stall MSHR se observa también
+        // en el total sin sumarlo otra vez al contador de ciclos de espera.
+        step(0,1,(19'b1<<3)|(19'b1<<14)|(19'b1<<9));
+        step(0,1,(19'b1<<4)|(19'b1<<18));
+        step(0,0,'1); step(0,1,0); step(1,1,'1);
         // Dataset explícito: lecturas 3H/1M, escrituras 1H/3M, total 4H/4M.
         repeat(3) step(0,1,1); step(0,1,2);
         step(0,1,4); repeat(3) step(0,1,8);
@@ -471,18 +807,19 @@ module tb_perf_cache_l1d_k1a;
         rate(c[2],t[1],0.25,"write-hit"); rate(c[3],t[1],0.75,"write-miss");
         check(real'(t[3])/real'(t[2])+real'(t[4])/real'(t[2])==1.0,"tasas complementarias");
         // Acarreo de 32 a 33 bits y vuelta de 64 bits en TODOS los acumuladores.
-        for(i=0;i<11;i++) begin
+        for(i=0;i<19;i++) begin
             step(1,1,0);
-            preload(i,64'hffffffff); step(0,1,11'b1<<i);
+            preload(i,64'hffffffff); step(0,1,19'b1<<i);
             check(c[i]===64'h100000000,"acarreo más allá de 32 bits");
-            preload(i,64'hffffffffffffffff); step(0,1,11'b1<<i);
+            preload(i,64'hffffffffffffffff); step(0,1,19'b1<<i);
             check(c[i]===0,"overflow módulo 2^64");
         end
         // Los totales combinacionales también tienen ancho fijo y desbordan.
         step(1,1,0); preload(0,64'hffffffffffffffff); preload(1,1);
         step(0,1,0); check(t[0]===0 && t[2]===0,"overflow de totales derivados");
         go_f=1; wait(done_f); go_s=1; wait(done_s);
-        $display("[PASS] tb_perf_cache_l1d_k1a: %0d verificaciones",checks+forward_case.checks+stall_case.checks);
+        go_1=1; wait(done_1); go_2=1; wait(done_2); go_4=1; wait(done_4);
+        $display("[PASS] tb_perf_cache_l1d_k1a: %0d verificaciones",checks+forward_case.checks+stall_case.checks+ext1.checks+ext2.checks+ext4.checks);
         $finish;
     end
     initial begin #200000; $fatal(1,"K1A timeout global"); end
