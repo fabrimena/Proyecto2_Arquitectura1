@@ -239,7 +239,9 @@ task automatic tick;
 endtask
 
 task automatic start_case(input int p);
-    reset=1;tick();REF.prepare(p);DUT1.prepare(p);DUT4.prepare(p);reset=0;
+    reset=1;tick();REF.prepare(p);DUT1.prepare(p);DUT4.prepare(p);
+    // Un flanco más con reset después de cargar el programa: la ROM síncrona lee el bundle 0 en ese flanco.
+    tick();reset=0;
 endtask
 
 `define SAME(D) \
