@@ -75,6 +75,12 @@
      ID/EX, EX/WB, banco, LSU, BRU, CRIPTO y bóveda): el bundle completo
      queda congelado y al terminar sigue igual, con más ciclos. DMEM y lo que
      se agregue para la jerarquía siguen con clk.
+     Con MEM_MODE = 2 los dos puertos (LSU y cripto) pasan por la L1-D
+     (rtl-p2/mem_hierarchy.sv) y DMEM queda detrás como la RAM. Con
+     write-back DMEM no tiene los últimos valores hasta que se vacía la
+     caché: un testbench pone flush_req = 1 y espera flush_done antes de
+     leer DUT.DMEM.mem. En los modos 0 y 1 no hay nada que vaciar y
+     flush_done sigue a flush_req.
 
  Proyecto 2, memoria de instrucciones (decisiones-importantes.md 3.1):
      IMEM es una ROM síncrona (rtl-p2/rom_sync.sv) que lee con el siguiente
@@ -94,6 +100,8 @@ module top #(
     //   0  conexión directa con DMEM, como en el proyecto 1 (por defecto)
     //   1  modelo de stalls (rtl-p2/mem_stall_model.sv): cada acceso de la LSU
     //      tarda STALL_CYCLES ciclos más, para probar el congelamiento
+    //   2  jerarquía de caché (rtl-p2/mem_hierarchy.sv): L1-D y, mientras no
+    //      esté la L2 real, la L2 de prueba (rtl-p2/l2_model.sv)
     parameter int MEM_MODE     = 0,
     parameter int STALL_CYCLES = 3,
 
@@ -104,6 +112,10 @@ module top #(
 
     input  logic         clk,
     input  logic         reset,
+
+    // Vaciado de la caché para los testbenches (MEM_MODE = 2)
+    input  logic         flush_req = 1'b0,
+    output logic         flush_done,
 
     output logic [31:0]  debug_result,
     output logic [4:0]   debug_rd,
@@ -604,6 +616,13 @@ logic mem_re;
 assign mem_re = id_ex_valid && ex_lsu_valid && !crypto_fault &&
                 (ex_lsu_op == OP_CARGAI || ex_lsu_op == OP_CARGABAI);
 
+// Lo mismo para el puerto B: vcr o camcon válidos y con permiso en EX (las
+// condiciones de exec en crypto_unit). camcon además escribe: crypto_mem_we.
+logic mem_re_b;
+
+assign mem_re_b = id_ex_valid && ex_crypto_valid && !ex_crypto_fault &&
+                  (ex_crypto_op == OP_VCR || ex_crypto_op == OP_CAMCON);
+
 
 // -----------------------------------------------------------------------------
 // Enganche de la memoria de datos (MEM_MODE). DMEM se queda aquí como el
@@ -653,11 +672,50 @@ generate
             .m_wdata_b(dmem_wdata_b),
             .m_rdata_b(dmem_rdata_b)
         );
+
+        assign flush_done = flush_req;      // no hay caché que vaciar
+    end
+    else if (MEM_MODE == 2) begin : g_mem_cache
+
+        mem_hierarchy HIER (
+            .clk(clk),
+            .reset(reset),
+
+            .re(mem_re),
+            .we(mem_we),
+            .be(mem_be),
+            .addr(mem_addr),
+            .wdata(mem_wdata),
+            .rdata(mem_rdata),
+
+            .re_b(mem_re_b),
+            .we_b(crypto_mem_we),
+            .addr_b(crypto_mem_addr),
+            .wdata_b(crypto_mem_wdata),
+            .rdata_b(crypto_mem_rdata),
+
+            .stall(cache_stall),
+
+            .flush_req(flush_req),
+            .flush_done(flush_done),
+
+            .m_we(dmem_we),
+            .m_be(dmem_be),
+            .m_addr(dmem_addr),
+            .m_wdata(dmem_wdata),
+            .m_rdata(dmem_rdata)
+        );
+
+        // La cripto pasa por la L1-D: el puerto B de DMEM no se usa
+        assign dmem_we_b    = 1'b0;
+        assign dmem_addr_b  = 32'b0;
+        assign dmem_wdata_b = 32'b0;
     end
     else begin : g_mem_directa
 
         // Proyecto 1: la LSU y la cripto van directo a DMEM, sin stalls
         assign cache_stall = 1'b0;
+        assign flush_done  = flush_req;     // no hay caché que vaciar
 
         assign dmem_we      = mem_we;
         assign dmem_be      = mem_be;

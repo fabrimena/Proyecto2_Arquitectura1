@@ -46,7 +46,7 @@ y `tb_perf_cache_l1d_k1a`); el proyecto 1 terminó con 0 y conviene dejarlo igua
 | 14 | Timeout | 256 ciclos, un reintento y después error | Pendiente | Dylan |
 | 15 | Eviction buffer | 4 entradas (4 a 16), forwarding de línea, lecturas primero | Pendiente | Dylan |
 | 16 | Vaciado | MSHR → L1-D → write buffer → L2 → eviction buffer → RAM | Solo el write buffer | José, Alejandro |
-| 17 | Puerto B (cripto) | Entra a la L1-D después del puerto A | Pendiente | Fabricio |
+| 17 | Puerto B (cripto) | Entra a la L1-D: lectura de B, acceso de A y escritura de `camcon` | Pendiente | Fabricio |
 | 18 | Instrucciones nuevas | **`vaciarc`, `medir` y `lcont`**, tipo `1001101`, slot 1 | No se agregaban | Javier, Fabricio |
 | 19 | Contadores por etapa | Ocupado, burbuja y congelado en IF, ID, EX y WB | Pendiente (#8) | Javier |
 
@@ -138,10 +138,13 @@ CE1108.
 ### 3.6 Puerto B de la unidad cripto (Fabricio, #20)
 
 `vcr` y `camcon` entran a la L1-D como un acceso más. `top` calcula `mem_re_b` igual que `mem_re`. Si en
-un bundle accede la LSU y también la cripto, se atiende primero el puerto A y después el B (un ciclo más
-de stall, solo en ese caso). `camcon` lee y escribe la misma palabra en la L1-D y la escribe una sola vez,
-en el último ciclo, como en el modelo de stalls. Con exclusiva y write-back esto es obligatorio: la copia
-más nueva de una palabra puede estar en la L1-D, en un buffer, en la L2 o en la RAM.
+un bundle accede la LSU y también la cripto, `l1d_port_arbiter` los atiende en fases: primero la lectura
+de B, después el acceso de A y al final la escritura de `camcon`. Así el bundle lee antes de escribir y,
+si los dos escriben la misma palabra, gana B, igual que en el proyecto 1. Si todo acierta, `vcr` solo no
+agrega ciclos; `vcr` junto a la LSU o `camcon` solo agregan uno, y `camcon` junto a la LSU dos. `camcon`
+escribe una sola vez, en su última fase. Con exclusiva y write-back esto es obligatorio: la copia más
+nueva de una palabra puede estar en la L1-D, en un buffer, en la L2 o en la RAM. Detalle en
+`memory-interfaces.md`, sección 8.
 
 ### 3.7 Vaciado (José y Alejandro #24, Javier #28)
 
