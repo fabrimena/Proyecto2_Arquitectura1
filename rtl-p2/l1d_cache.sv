@@ -35,13 +35,10 @@
  Combinaciones válidas: write-through + NINE, write-back + NINE y
  write-back + exclusiva. Las demás se rechazan con $fatal al inicio.
 
- TEMPORAL: mientras tb-p2/tb_perf_cache_l1d_k1a.sv (Javier) siga con el bus
- anterior y sin pasar WRITE_POLICY ni INCL_POLICY, los valores por defecto
- son los de la versión anterior: write-through + NINE + bus anterior + 1 MSHR
- (alias L1D_WRITE_POLICY y L1L2_INCLUSION_POLICY de cache_defs.sv). Cuando
- Javier lo actualice, otro commit pone por defecto write-back + exclusiva +
- bus versión 2 + L1D_N_MSHR_DEFAULT (L1D_DEFAULT_WRITE_POLICY,
- L1D_DEFAULT_INCL_POLICY) y borra los alias.
+ Valores por defecto: la configuración final del proyecto, tomada de
+ cache_defs.sv (L1D_DEFAULT_*, WB_DEPTH_DEFAULT, L1D_N_MSHR_DEFAULT) y con el
+ bus versión 2. Para comparar otra configuración se pasan los parámetros al
+ instanciar (como hacen los testbenches), sin tocar este archivo.
 
 
  ==============================================================================
@@ -183,16 +180,16 @@
 
 module l1d_cache #(
 
-    // TEMPORAL: valores por defecto de la versión anterior (ver arriba)
-    parameter logic       WRITE_POLICY = L1D_WRITE_POLICY,
-    parameter logic [1:0] INCL_POLICY  = L1L2_INCLUSION_POLICY,
+    // Configuración final por defecto (cache_defs.sv, sección 3)
+    parameter logic       WRITE_POLICY = L1D_DEFAULT_WRITE_POLICY,
+    parameter logic [1:0] INCL_POLICY  = L1D_DEFAULT_INCL_POLICY,
     parameter logic       ALLOC_POLICY = (WRITE_POLICY == WP_WRITE_BACK) ? L1D_ALLOC_WITH_WB
                                                                          : L1D_ALLOC_WITH_WT,
     parameter logic [1:0] REPL_POLICY  = L1D_DEFAULT_REPL_POLICY,
     parameter logic       RAW_POLICY   = L1D_DEFAULT_RAW_POLICY,
     parameter int         WB_DEPTH     = WB_DEPTH_DEFAULT,
-    parameter int         N_MSHR       = 1,        // TEMPORAL: bloqueante por defecto
-    parameter bit         L2_BUS_V2    = 1'b0      // TEMPORAL: bus anterior por defecto
+    parameter int         N_MSHR       = L1D_N_MSHR_DEFAULT,
+    parameter bit         L2_BUS_V2    = 1'b1      // bus versión 2 (0 = bus anterior, compatibilidad)
 ) (
 
     input  logic          clk,          // reloj sin detener (no core_clk)
