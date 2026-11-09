@@ -16,13 +16,13 @@ Reglas para todos:
 - Una rama por bloque, un commit por archivo y un PR a `develop` revisado por otro integrante.
 
 **Estado:** *Modificar* = el archivo ya existe y hay que cambiarlo. *Falta* = el archivo no existe y hay
-que crearlo. Si depende de otra pieza, se indica.
+que crearlo. *Hecho* = implementado y probado. Si depende de otra pieza, se indica.
 
 ## 1. Cambios en archivos que ya están en el repositorio
 
 | Integrante | Archivo | Qué cambiar | Decisión | Estado |
 |:---|:---|:---|:---|:---|
-| Fabricio | `rtl-p2/top.sv` | Parámetro `ROM_SYNC` (la instancia `IMEM` pasa a `rom_sync` con el siguiente PC). `MEM_MODE = 2` instancia `mem_hierarchy` en lugar de la conexión directa; `DMEM` queda como almacenamiento de la RAM. Agregar `mem_re_b`. `cache_stall` = stall de la jerarquía o de `vaciarc`. El carril de escritura de la LSU se comparte con `lcont`. Conectar `measure_enable` desde `cache_isa_unit`, instanciar los contadores (`perf_vliw_monitor`, `perf_cache_l1d`, `perf_cache_l2`, `perf_memory`, `perf_stage_counters`) y sacar `flush_req`/`flush_done` para los testbenches | D1, D2, D16, D17, D18 (extra: instrucciones) | Modificar |
+| Fabricio | `rtl-p2/top.sv` | Parámetro `ROM_SYNC` (la instancia `IMEM` pasa a `rom_sync` con el siguiente PC). `MEM_MODE = 2` instancia `mem_hierarchy` en lugar de la conexión directa; `DMEM` queda como almacenamiento de la RAM. Agregar `mem_re_b`. `cache_stall` = stall de la jerarquía o de `vaciarc`. El carril de escritura de la LSU se comparte con `lcont`. Conectar `measure_enable` desde `cache_isa_unit`, instanciar los contadores (`perf_vliw_monitor`, `perf_cache_l1d`, `perf_cache_l2`, `perf_memory`, `perf_stage_counters`) y sacar `flush_req`/`flush_done` para los testbenches | D1, D2, D16, D17, D18 (extra: instrucciones) | Modificar (hecho: `ROM_SYNC`) |
 | Fabricio | `rtl-p2/mem_stall_model.sv` | Frenar también los accesos del puerto B (`vcr`, `camcon`): primero A y después B, con un stall más, para probar el congelamiento con la cripto antes de tener la jerarquía | D17 | Modificar |
 | Fabricio | `tb-p2/tb_pipeline_stall.sv` | Casos con `vcr` y `camcon` en el mismo bundle que una carga, con el puerto B frenado (`camcon` rota una sola vez), y la misma prueba con `ROM_SYNC = 1` | D1, D17 | Modificar |
 | Fabricio | `docs/memory-interfaces.md` | Sección 5 con el bus versión 2 (`l2_gnt`, `l2_rvalid`, `l2_wdirty`, `l2_rdirty`); sección 6 con 25 MHz, handshake, timeout y forwarding del eviction buffer; sección 7 con la cadena de vaciado y `vaciarc`; sección 8 con el árbitro del puerto B; cerrar los pendientes de la sección 9 | D9, D12 a D18 | Modificar |
@@ -50,13 +50,13 @@ que crearlo. Si depende de otra pieza, se indica.
 
 | Integrante | Archivo | Qué agregar | Decisión | Estado |
 |:---|:---|:---|:---|:---|
-| Fabricio | `rtl-p2/rom_sync.sv` | ROM síncrona leída con el siguiente PC, con la misma carga `+IMEM=`, la instancia `IMEM` y el arreglo `memory` de hoy | D1 | Falta |
+| Fabricio | `rtl-p2/rom_sync.sv` | ROM síncrona leída con el siguiente PC, con la misma carga `+IMEM=`, la instancia `IMEM` y el arreglo `memory` de hoy | D1 | Hecho |
 | Fabricio | `rtl-p2/l1d_port_arbiter.sv` | Junta los puertos A (LSU) y B (cripto) sobre el puerto único de la L1-D: A primero, B después; `camcon` lee y escribe la misma palabra y la escribe una sola vez | D17 | Falta, usa `l1d_cache.sv` |
 | Fabricio | `rtl-p2/l2_model.sv` | L2 de prueba con el bus versión 2: siempre acierta, responde en 8 ciclos y lee y escribe `DMEM`. Sirve para conectar la L1-D antes de tener la L2 real | D9 | Falta |
 | Fabricio | `rtl-p2/mem_hierarchy.sv` | Jerarquía con la interfaz de `memory.sv` más `cache_stall`, `flush_req`/`flush_done` y eventos: árbitro, `l1d_cache`, `l2_cache` (o `l2_model`), `eviction_buffer` y `mem_controller` | D9, D16 | Falta, empieza con la L1-D y `l2_model` |
 | Fabricio | `rtl-p2/excl_checker.sv` | Checker solo de simulación: ninguna línea válida en la L1-D y la L2 a la vez | D3 (extra: exclusiva) | Falta, después de `l2_cache.sv` |
 | Fabricio | `rtl-p2/l2_cache.sv` | La L2 bloqueante pasa a 4 etapas (recepción, etiquetas, datos, respuesta) con valid/ready; acepta una petición por ciclo y un miss detiene S2 | D11 (extra: pipeline interno) | Falta, después de la L2 bloqueante de Alejandro |
-| Fabricio | `tb-p2/tb_rom_sync.sv` | El mismo bundle que la memoria combinacional en cada ciclo, con saltos, excepciones y congelamiento | D1 | Falta |
+| Fabricio | `tb-p2/tb_rom_sync.sv` | El mismo bundle que la memoria combinacional en cada ciclo, con saltos, excepciones y congelamiento | D1 | Hecho |
 | Fabricio | `tb-p2/tb_port_b.sv` | `vcr` y `camcon` solos y en el mismo bundle que una carga, con `MEM_MODE` 1 y 2 | D17 | Falta |
 | Fabricio | `tb-p2/tb_mem_hierarchy.sv` | Latencias de 0, +8 y +8 + 53 ciclos; los programas del proyecto 1 con `MEM_MODE = 2`; el checker de exclusividad sin errores | D2, D3, D12 | Falta |
 | Fabricio | `tb-p2/tb_l2_pipeline.sv` | Una petición por ciclo, peticiones al mismo conjunto, un miss que detiene y respuestas en orden | D11 | Falta |
