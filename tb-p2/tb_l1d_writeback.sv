@@ -25,6 +25,10 @@
  Latencia: fija (acepta de inmediato y responde a los 8 ciclos) o variable
  (aceptación demorada, a veces 8 + 53 como un miss de L2).
 
+ Todas las L1-D de este testbench usan N_MSHR = 1 (caché bloqueante): aquí
+ se mide el camino del miss bloqueante (por ejemplo, el store que falla con
+ write-allocate cuesta 8 ciclos). Los MSHR se prueban en tb_l1d_mshr.sv.
+
  Parte 1. Pruebas dirigidas (write-back + exclusiva + write-allocate + LRU,
           write buffer de 4, L2 de 8 ciclos):
    1. Miss en frío: 8 ciclos, la línea se mueve desde la L2.
@@ -222,7 +226,7 @@ int          l2_err, l2_mv, l2_wd, l2_wc;
 logic        e [0:13];
 
 l1d_cache #(.WRITE_POLICY(WP), .INCL_POLICY(INCL), .ALLOC_POLICY(AP), .REPL_POLICY(RP),
-            .RAW_POLICY(RAW), .WB_DEPTH(DEPTH), .L2_BUS_V2(1)) DUT (
+            .RAW_POLICY(RAW), .WB_DEPTH(DEPTH), .N_MSHR(1), .L2_BUS_V2(1)) DUT (
     .clk(clk), .reset(reset),
     .re(re), .we(we), .be(be), .addr(addr), .wdata(wdata), .rdata(rdata), .stall(stall),
     .flush_req(fr), .flush_done(fd),
@@ -398,7 +402,7 @@ logic        e [0:13];
 
 l1d_cache #(.WRITE_POLICY(WP_WRITE_BACK), .INCL_POLICY(INCL_EXCLUSIVE),
             .ALLOC_POLICY(AP_WRITE_ALLOC), .REPL_POLICY(RP_LRU), .WB_DEPTH(4),
-            .L2_BUS_V2(1)) DUT (
+            .N_MSHR(1), .L2_BUS_V2(1)) DUT (
     .clk(clk), .reset(reset),
     .re(re), .we(we), .be(be), .addr(addr), .wdata(wdata), .rdata(rdata), .stall(stall),
     .flush_req(fr), .flush_done(fd),
