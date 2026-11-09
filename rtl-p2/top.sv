@@ -76,6 +76,12 @@
      queda congelado y al terminar sigue igual, con más ciclos. DMEM y lo que
      se agregue para la jerarquía siguen con clk.
 
+ Proyecto 2, memoria de instrucciones (decisiones-importantes.md 3.1):
+     IMEM es una ROM síncrona (rtl-p2/rom_sync.sv) que lee con el siguiente
+     PC en el flanco de core_clk. Durante el ciclo entrega memory[pc], igual
+     que la memoria combinacional del proyecto 1, así que no cambia ningún
+     tiempo. Con ROM_SYNC = 0 vuelve a leer de forma combinacional.
+
 ================================================================================
 */
 
@@ -89,7 +95,11 @@ module top #(
     //   1  modelo de stalls (rtl-p2/mem_stall_model.sv): cada acceso de la LSU
     //      tarda STALL_CYCLES ciclos más, para probar el congelamiento
     parameter int MEM_MODE     = 0,
-    parameter int STALL_CYCLES = 3
+    parameter int STALL_CYCLES = 3,
+
+    // Memoria de instrucciones: 1 = ROM síncrona (por defecto), 0 = lectura
+    // combinacional como en el proyecto 1
+    parameter bit ROM_SYNC     = 1'b1
 ) (
 
     input  logic         clk,
@@ -269,10 +279,21 @@ assign core_clk = clk & core_en;
 
 // =============================================================================
 // PC + Memoria de instrucciones
+//
+// next_pc es el valor que PC_BRANCH carga en el próximo flanco de core_clk,
+// con la misma regla de rtl/pc_branch.sv. La ROM síncrona lee con él en ese
+// mismo flanco, así que durante el ciclo entrega el bundle de pc.
 // =============================================================================
 
-instruction_memory IMEM(
+logic [31:0] next_pc;
+
+assign next_pc = reset    ? 32'b0 :
+                 redirect ? redirect_pc : pc + BUNDLE_BYTES;
+
+rom_sync #(.SYNC(ROM_SYNC)) IMEM (
+    .clk(core_clk),
     .address(pc),
+    .next_address(next_pc),
     .instruction_bundle(instruction_bundle)
 );
 
