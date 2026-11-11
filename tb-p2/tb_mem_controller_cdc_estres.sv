@@ -82,7 +82,7 @@ module mem_controller_cdc_stress_case #(
     integer observed_words;
 
     reg transfer_observed;
-    reg last_done_seen;
+    reg confirmed_this_request;
 
     // Instanciar el controlador real que se esta verificando.
     mem_controller #(
@@ -163,22 +163,45 @@ module mem_controller_cdc_stress_case #(
         end
     end
 
-    // Comprobar que una respuesta exitosa corresponde
-    // a una confirmacion CDC ya sincronizada.
+    // Verificar que cada respuesta de CPU este respaldada
+    // por una confirmacion CDC de la solicitud vigente.
     //
-    // La comparacion utiliza la informacion interna
-    // solamente para diagnostico de simulacion.
-    // No modifica el funcionamiento del controlador.
-    always @(posedge clk) begin
+    // Una confirmacion puede llegar antes de TMEM.
+    // En ese caso se conserva hasta que CPU entregue
+    // la respuesta mediante ram_ready.
 
-        if (!reset && ram_ready) begin
+    always @(posedge clk or posedge reset) begin
 
-            if (DUT.done_sync2 == DUT.done_seen) begin
+        if (reset) begin
 
-                // done_seen puede actualizarse al mismo tiempo
-                // que ram_ready, por lo que se verifica tambien
-                // que la confirmacion haya cambiado recientemente.
-                if (!last_done_seen) begin
+            confirmed_this_request <= 1'b0;
+
+        end else begin
+
+            // Una solicitud nueva debe recibir su
+            // propia confirmacion desde memoria.
+            //
+            // Un reintento tambien invalida la
+            // confirmacion del intento anterior.
+            if (req_accept || timeout_event) begin
+
+                confirmed_this_request <= 1'b0;
+
+            end else if ((DUT.done_sync2 != DUT.done_seen) &&
+                        (DUT.done_id_sync2 == DUT.req_toggle)) begin
+
+                // Registrar una confirmacion sincronizada
+                // correspondiente al intento vigente.
+                confirmed_this_request <= 1'b1;
+            end
+
+            // RAM no puede anunciar una respuesta correcta
+            // si no existe una confirmacion CDC valida.
+            if (ram_ready) begin
+
+                if (!confirmed_this_request &&
+                    !((DUT.done_sync2 != DUT.done_seen) &&
+                    (DUT.done_id_sync2 == DUT.req_toggle))) begin
 
                     $display(
                         "[FAIL] DIV=%0d ram_ready sin confirmacion CDC",
@@ -187,14 +210,9 @@ module mem_controller_cdc_stress_case #(
 
                     $fatal(1);
                 end
+
             end
         end
-
-        if (reset)
-            last_done_seen <= 1'b0;
-        else
-            last_done_seen <=
-                (DUT.done_sync2 != DUT.done_seen);
     end
 
     // Esperar un ciclo del procesador.
