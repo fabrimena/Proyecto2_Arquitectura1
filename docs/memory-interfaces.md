@@ -2,14 +2,14 @@
 
 > Curso: CE4301 – Arquitectura de Computadores I, II Semestre 2026  
 > Profesor: Dr.-Ing. Jeferson González Gómez  
-> Estado: secciones 2 a 5, 7 y 8 implementadas; la 6 (L2 real y memoria principal) pendiente  
+> Estado: interfaces de núcleo y L1-D documentadas; controlador de memoria y eviction buffer implementados y probados por separado; integración con L2 real pendiente 
 > Equipo: Dylan Guerrero González, José García Izaguirre, Javier Hernández Castillo, Alejandro Vásquez Oviedo, Fabricio Mena Mejia
 
 Cómo se conectan el núcleo del proyecto 1, la L1-D, la L2 y la memoria principal. La idea es que cada
 uno pueda hacer y probar su módulo por separado contra un modelo simple y que después todo encaje. Las
 secciones 2 a 4 están en `rtl-p2/top.sv` y `rtl-p2/mem_stall_model.sv`; la 5, la 7 y la 8 en
-`rtl-p2/mem_hierarchy.sv`, la L1-D de José y la L2 de prueba (`rtl-p2/l2_model.sv`). La sección 6 sigue
-como propuesta hasta que estén la L2, el eviction buffer y el controlador de memoria. Las decisiones de
+`rtl-p2/mem_hierarchy.sv`, la L1-D de José y la L2 de prueba (`rtl-p2/l2_model.sv`). La sección 6 documenta los puertos implementados de memoria principal y eviction buffer.
+La conexión de estos módulos con la L2 real todavía está pendiente en `mem_hierarchy.sv`. Las decisiones de
 diseño están en [`decisiones-importantes.md`](decisiones-importantes.md).
 
 ## 1. Regla de partida
@@ -149,27 +149,182 @@ lectura tarda exactamente 8 ciclos (las 8 palabras de la línea). Una escritura 
 ciclos. `l2_rdirty` siempre es 0 porque lo que entrega ya está en la RAM; con la política exclusiva se
 comporta como una L2 vacía con la RAM detrás. La L2 real se conecta en su lugar con el mismo bus.
 
-## 6. L2 y memoria principal (propuesta para Alejandro y Dylan)
+## 6. L2, eviction buffer y memoria principal
 
-La L2 es write-back, así que hacia la memoria solo mueve líneas completas:
+La memoria principal tiene una capacidad de 64 KB y utiliza líneas de 256 bits, equivalentes a ocho palabras de 32 bits.
 
-| Señal | Hacia | Bits | Significado |
-|:---|:---|:---:|:---|
-| `ram_req` | controlador | 1 | Hay una petición; se mantiene hasta `ram_ready` |
-| `ram_we` | controlador | 1 | 0 = leer una línea, 1 = escribir una línea sucia |
-| `ram_addr` | controlador | 32 | Dirección alineada a 32 bytes |
-| `ram_wline` | controlador | 256 | Línea que se escribe |
-| `ram_ready` | L2 | 1 | Un ciclo en 1 cuando la transferencia terminó |
-| `ram_rline` | L2 | 256 | Línea leída |
+El controlador de memoria trabaja con un reloj generado mediante un divisor del reloj del procesador. La frecuencia es configurable entre 20 MHz y 50 MHz, con 25 MHz como configuración predeterminada.
 
-- Eviction buffer de 4 a 16 líneas entre la L2 y el controlador: la L2 deja ahí la víctima sucia y
-  sigue; el controlador la escribe cuando no hay lecturas pendientes. Un miss de L2 primero busca su
-  línea en el buffer (riesgo RAW).
-- El controlador trabaja con el reloj de la memoria (20 a 50 MHz, con la CPU a 100 MHz). Una línea tarda
-  `Tmem = 25 + 7 × ⌈100 / fmem⌉` ciclos del procesador (53 a 25 MHz). Lee y escribe DMEM palabra por
-  palabra, una por ciclo de memoria.
-- Cruce de dominios de reloj (sincronizadores de 2 flip-flops para `req`/`ack` o una FIFO asíncrona) y
-  timeout: pendiente, Dylan.
+### 6.1. Interfaz de solicitudes de memoria
+
+La interfaz de línea completa utiliza las siguientes señales:
+
+| Señal | Dirección | Bits | Descripción |
+|---|---|---:|---|
+| `ram_req` | Hacia controlador | 1 | Solicitud de acceso a memoria |
+| `ram_we` | Hacia controlador | 1 | 0: lectura; 1: escritura |
+| `ram_addr` | Hacia controlador | 32 | Dirección de byte, alineada a 32 bytes |
+| `ram_wline` | Hacia controlador | 256 | Línea completa para escritura |
+| `ram_ready` | Desde controlador | 1 | Pulso de finalización de la solicitud |
+| `ram_rline` | Desde controlador | 256 | Línea completa obtenida en una lectura |
+| `mem_error` | Desde controlador | 1 | Indica que la operación terminó con error |
+
+El controlador conserva internamente los parámetros de cada solicitud mientras realiza la transferencia.
+
+El evento `ram_ready` indica que la línea completa está disponible o que la escritura terminó correctamente. No representa la llegada de cada palabra individual.
+
+### 6.2. Entrega individual de palabras
+
+El controlador también proporciona señales para observar la entrega de cada palabra al dominio del procesador.
+
+| Señal | Dirección | Bits | Descripción |
+|---|---|---:|---|
+| `ram_word_valid` | Desde controlador | 1 | Indica la entrega de una palabra válida |
+| `ram_word_data` | Desde controlador | 32 | Dato correspondiente a la palabra entregada |
+| `ram_word_index` | Desde controlador | 3 | Posición de la palabra dentro de la línea, entre 0 y 7 |
+
+Las señales permiten comprobar que la primera palabra se entrega después de 25 ciclos del procesador y que las siguientes respetan la frecuencia de memoria.
+
+Estas salidas complementan la interfaz de línea completa. No sustituyen `ram_ready` ni `ram_rline`.
+
+### 6.3. Reloj y temporización
+
+El procesador funciona a 100 MHz. El reloj de memoria se obtiene mediante un divisor configurable:
+
+| Parámetro `MEM_DIV` | Frecuencia RAM | Latencia de línea `TMEM` |
+|---|---|---|
+| 2 | 50 MHz | 39 ciclos CPU |
+| 4 | 25 MHz | 53 ciclos CPU |
+| 5 | 20 MHz | 60 ciclos CPU |
+
+La latencia nominal se calcula mediante:
+
+`TMEM = 25 + 7 × MEM_DIV`
+
+La primera palabra se entrega después de 25 ciclos de CPU. Las siete palabras restantes se entregan con una separación de `MEM_DIV` ciclos.
+
+Para la configuración predeterminada de 25 MHz, las entregas corresponden a los ciclos 25, 29, 33, 37, 41, 45, 49 y 53.
+
+El controlador utiliza precarga interna para obtener los datos antes de su fecha de entrega. Esta implementación sigue la aclaración del profesor, que permite anticipar los accesos internos siempre que los datos se entreguen con la latencia y tasa de transferencia especificadas.
+
+### 6.4. Interfaz física de RAM
+
+El controlador accede a la memoria mediante palabras de 32 bits.
+
+| Señal | Dirección | Bits | Descripción |
+|---|---|---:|---|
+| `clk_mem` | Desde controlador | 1 | Reloj de RAM generado mediante divisor |
+| `mem_word_addr` | Hacia RAM | 14 | Dirección de palabra dentro de los 64 KB |
+| `mem_word_wdata` | Hacia RAM | 32 | Dato de escritura |
+| `mem_word_we` | Hacia RAM | 1 | Habilitación de escritura |
+| `mem_word_rdata` | Desde RAM | 32 | Dato leído |
+
+Cada línea se divide en ocho palabras consecutivas. La palabra de índice cero ocupa los bits menos significativos de la línea.
+
+La transferencia física procesa una palabra por ciclo de memoria.
+
+### 6.5. Cruce de dominios de reloj
+
+El controlador utiliza sincronizadores de dos registros para transferir eventos de control entre los dominios CPU y RAM.
+
+El protocolo identifica solicitudes y confirmaciones mediante cambios de estado o *toggles*.
+
+El controlador conserva la solicitud mientras está activa y utiliza confirmaciones para distinguir cuándo termina una transferencia.
+
+La implementación incluye mecanismos para detectar respuestas atrasadas y evitar que una confirmación de un intento anterior complete una solicitud nueva.
+
+La validación funcional incluye pruebas de solicitudes consecutivas, cambios de fase, transferencias interrumpidas y recuperación.
+
+### 6.6. Timeout y recuperación
+
+El parámetro `MEM_TIMEOUT` establece un límite predeterminado de 256 ciclos de CPU por intento.
+
+Las señales de control y observación son:
+
+| Señal | Dirección | Bits | Descripción |
+|---|---|---:|---|
+| `req_accept` | Desde controlador | 1 | Indica aceptación de una solicitud |
+| `req_we_accepted` | Desde controlador | 1 | Indica aceptación de una escritura |
+| `transfer_busy` | Desde controlador | 1 | Indica transferencia activa |
+| `timeout_event` | Desde controlador | 1 | Pulso que registra un timeout |
+| `error_event` | Desde controlador | 1 | Pulso que registra un error definitivo |
+| `mem_hold` | Hacia controlador | 1 | Detiene el avance de la transferencia física |
+
+Cuando un intento supera el tiempo permitido, el controlador realiza un único reintento.
+
+Si el segundo intento también falla, la operación termina con error.
+
+Durante la recuperación, el controlador evita reutilizar datos o confirmaciones correspondientes al intento anterior.
+
+### 6.7. Eviction buffer
+
+`rtl-p2/eviction_buffer.sv` implementa una FIFO de líneas sucias de 256 bits con profundidad configurable mediante `EB_DEPTH` (mínimo 4, máximo 16; valor predeterminado 4). Las direcciones se alinean a 32 bytes y las entradas permanecen almacenadas hasta recibir confirmación de escritura exitosa desde RAM.
+
+**Interfaz de desalojo desde L2 hacia el buffer:**
+
+| Señal | Dirección relativa al eviction buffer | Bits | Contrato |
+|---|---|---:|---|
+| `evict_valid` | Entrada | 1 | L2 presenta una línea sucia para insertar |
+| `evict_addr` | Entrada | 32 | Dirección de byte; el buffer la alinea a 32 bytes |
+| `evict_line` | Entrada | 256 | Contenido completo de la línea desalojada |
+| `evict_ready` | Salida | 1 | Hay espacio para insertar la línea; inserción cuando `evict_valid && evict_ready` |
+
+**Interfaz de lectura desde L2 hacia el buffer:**
+
+| Señal | Dirección relativa al eviction buffer | Bits | Contrato |
+|---|---|---:|---|
+| `read_req` | Entrada | 1 | L2 solicita leer una línea; se requiere retirar la solicitud para habilitar una nueva |
+| `read_addr` | Entrada | 32 | Dirección de la línea solicitada, alineada internamente |
+| `read_ready` | Salida | 1 | Pulso de respuesta de lectura correcta |
+| `read_line` | Salida | 256 | Contenido de la línea solicitada |
+| `read_forwarded` | Salida | 1 | La lectura se resolvió directamente con una línea aún en FIFO |
+
+Si la dirección coincide con entradas de la FIFO, el buffer devuelve la versión más reciente (*forwarding*), incluso si esa línea aún espera confirmación de escritura. Para lecturas sin coincidencia, el buffer emite una solicitud de lectura hacia RAM. Las lecturas pendientes tienen prioridad sobre **nuevos** drenados; una escritura de RAM que ya está en curso no se interrumpe.
+
+**Interfaz con el controlador de memoria principal:**
+
+| Señal | Dirección relativa al eviction buffer | Bits | Contrato |
+|---|---|---:|---|
+| `ram_req` | Salida | 1 | Solicitud de transferencia de línea |
+| `ram_we` | Salida | 1 | 0 = lectura; 1 = drenado de escritura |
+| `ram_addr` | Salida | 32 | Dirección de byte de la línea |
+| `ram_wline` | Salida | 256 | Línea que se escribe en RAM |
+| `ram_ready` | Entrada | 1 | Confirmación satisfactoria de la transferencia |
+| `ram_rline` | Entrada | 256 | Línea recibida desde RAM |
+| `ram_error` | Entrada | 1 | Error definitivo reportado por el controlador (`mem_error`) |
+
+El controlador utiliza `mem_error` para su salida de error; **al conectarlo al buffer debe enlazarse con el puerto `ram_error`**. Una escritura pendiente solo se retira de la FIFO si `ram_ready && !ram_error`. Ante un error de escritura, la FIFO conserva la línea y bloquea los nuevos drenados, sin impedir las lecturas.
+
+**Estado, recuperación y eventos:**
+
+| Señal | Dirección relativa al eviction buffer | Bits | Contrato |
+|---|---|---:|---|
+| `clear_write_error` | Entrada | 1 | Pulso de recuperación que elimina el bloqueo si RAM está libre y sin respuesta activa |
+| `empty` | Salida | 1 | FIFO sin líneas |
+| `full` | Salida | 1 | FIFO sin espacio disponible |
+| `busy` | Salida | 1 | Existen líneas, lectura pendiente o transferencia activa |
+| `occupancy` | Salida | 32 | Número de líneas pendientes en FIFO |
+| `write_error_blocked` | Salida | 1 | Drenados suspendidos por fallo de escritura |
+| `ev_push` | Salida | 1 | Pulso de inserción de una línea |
+| `ev_pop` | Salida | 1 | Pulso de retiro de una línea escrita correctamente |
+| `ev_forward` | Salida | 1 | Pulso de lectura resuelta mediante forwarding |
+| `ev_error` | Salida | 1 | Pulso de error en operación con RAM |
+
+El buffer utiliza `clk` del dominio CPU y `reset`. La integración de buffer, controlador y RAM simulada está probada mediante `tb_eviction_buffer_integracion.sv`.
+
+### 6.7.1. Estado real de integración con la jerarquía
+
+En la versión revisada de `rtl-p2/mem_hierarchy.sv`, las solicitudes de la L1-D llegan a `l2_model`, que sigue conectado directamente a DMEM mediante `m_we`, `m_be`, `m_addr`, `m_wdata` y `m_rdata`. La L2 real, el eviction buffer y el controlador no están instanciados allí. Por tanto, **las interfaces del buffer y del controlador están definidas y verificadas por separado, pero su conexión con la L2 real está pendiente**. El bus L1-D ↔ L2 de la sección 5 permanece como contrato de integración; no debe confundirse con los puertos `evict_*` y `read_*` del buffer.
+
+### 6.8. Verificación
+
+Las interfaces del controlador se han probado mediante testbenches de temporización, lectura, escritura, CDC, estrés, timeout, reintentos y confirmaciones atrasadas.
+
+Se verificaron las configuraciones de memoria de 20 MHz, 25 MHz y 50 MHz.
+
+Las pruebas de integración comprobaron el intercambio de líneas completas entre el eviction buffer y memoria principal.
+
+Estas pruebas proporcionan evidencia de comportamiento funcional y temporal en simulación. No sustituyen una revisión de las restricciones de reloj y CDC para síntesis.
 
 ## 7. Vaciado de líneas sucias
 
@@ -226,11 +381,12 @@ accesos en los dos, se atienden en fases y el núcleo sigue congelado hasta la �
 
 1. Políticas de la L1-D: listo (José): write-back, write-allocate y LRU por defecto; write-through, FIFO
    y Random como parámetros.
-2. Riesgo RAW: listo en el write buffer de la L1-D (forwarding con NINE, espera con exclusiva); falta el
-   eviction buffer (Dylan).
+2. Riesgo RAW: write buffer de la L1-D implementado; eviction buffer con forwarding implementado y
+   probado por separado (Dylan). Falta conectarlo a la L2 real en la jerarquía.
 3. Inclusión: exclusiva por defecto y NINE como parámetro (D3), mientras el profesor la confirma; falta
    la parte de la L2 (Alejandro).
-4. Cruce de dominios de reloj y timeout: decididos (D12 a D14), falta implementarlos (Dylan).
+4. Cruce de dominios de reloj, timeout y reintento: implementados y probados en `mem_controller.sv`
+   (Dylan). Pendiente la integración con la L2 real y la revisión CDC para síntesis.
 5. Memoria de instrucciones: listo. ROM síncrona leída con el siguiente PC (`rtl-p2/rom_sync.sv`, D1),
    que mantiene los tiempos de IF y no afecta al compilador.
 6. Puerto B a través de la L1-D: listo (sección 8).
