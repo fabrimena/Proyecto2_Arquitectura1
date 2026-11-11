@@ -1,9 +1,10 @@
 `timescale 1ns/1ps
 `default_nettype none
 
-// Verifica por separado la temporizacion de cada palabra del burst
-// y el protocolo de timeout con un solo reintento.
-// No reemplaza el testbench funcional tb_mem_controller.sv.
+// Comprueba la entrega visible de cada palabra en el dominio CPU.
+// La precarga fisica esta permitida: la entrega debe ocurrir
+// en el ciclo 25 y continuar cada MEM_DIV ciclos.
+// Conserva la comprobacion de timeout y reintento del TB original.
 module mem_controller_verificacion_case #(
     parameter integer MEM_DIV = 4,
     parameter integer TMEM = 25 + 7 * MEM_DIV
@@ -23,6 +24,9 @@ module mem_controller_verificacion_case #(
     wire ram_ready;
     wire [255:0] ram_rline;
     wire mem_error;
+    wire ram_word_valid;
+    wire [31:0] ram_word_data;
+    wire [2:0] ram_word_index;
     wire req_accept;
     wire req_we_accepted;
     wire transfer_busy;
@@ -40,6 +44,8 @@ module mem_controller_verificacion_case #(
     integer beat_count;
     integer beat_cycles [0:7];
     integer beat_indices [0:7];
+    integer physical_count;
+    integer physical_cycles [0:7];
     integer i;
     integer elapsed;
     integer timeout_count;
@@ -63,18 +69,47 @@ module mem_controller_verificacion_case #(
     always @(posedge clk)
         cpu_clock_count <= cpu_clock_count + 1;
 
-    // Observa las palabras realmente atendidas por la maquina de memoria.
-    // No confunde la respuesta de linea de 256 bits con el bus de 32 bits.
-    // Este monitor utiliza estados internos solo para verificacion aislada.
+    // Monitor de entregas visibles. La muestra se realiza despues
+    // de las asignaciones no bloqueantes del flanco CPU.
+    // El retraso de 0.1 ns evita competir con el monitor principal.
+    always @(posedge clk) begin
+        #0.1;
+        if (monitor_burst && ram_word_valid) begin
+            if (beat_count < 8) begin
+                beat_cycles[beat_count] = cpu_clock_count - start_clock;
+                beat_indices[beat_count] = ram_word_index;
+                if (ram_word_data !== (32'hCAFE0000 + beat_count)) begin
+                    burst_ok = 1'b0;
+                    $display("[FAIL] DIV=%0d dato palabra=%0d obtenido=%h esperado=%h",
+                             MEM_DIV, beat_count, ram_word_data,
+                             32'hCAFE0000 + beat_count);
+                end
+            end else begin
+                burst_ok = 1'b0;
+                $display("[FAIL] DIV=%0d palabra adicional de CPU", MEM_DIV);
+            end
+            beat_count = beat_count + 1;
+        end
+    end
+
+    // El acceso fisico puede anticiparse. Sin embargo, debe haber
+    // exactamente ocho accesos, uno por ciclo de clk_mem, en orden.
     always @(posedge clk_mem) begin
         if (monitor_burst && !mem_hold &&
             DUT.mem_state == 2'd1 &&
             DUT.req_sync2 == DUT.req_seen) begin
-            if (beat_count < 8) begin
-                beat_cycles[beat_count] = cpu_clock_count - start_clock;
-                beat_indices[beat_count] = DUT.word_index;
+            if (physical_count < 8) begin
+                physical_cycles[physical_count] = cpu_clock_count - start_clock;
+                if (DUT.word_index !== physical_count[2:0]) begin
+                    burst_ok = 1'b0;
+                    $display("[FAIL] DIV=%0d indice fisico=%0d esperado=%0d",
+                             MEM_DIV, DUT.word_index, physical_count);
+                end
+            end else begin
+                burst_ok = 1'b0;
+                $display("[FAIL] DIV=%0d acceso fisico adicional", MEM_DIV);
             end
-            beat_count = beat_count + 1;
+            physical_count = physical_count + 1;
         end
     end
 
@@ -82,7 +117,11 @@ module mem_controller_verificacion_case #(
         .clk(clk), .reset(reset), .ram_req(ram_req), .ram_we(ram_we),
         .ram_addr(ram_addr), .ram_wline(ram_wline),
         .ram_ready(ram_ready), .ram_rline(ram_rline),
-        .mem_error(mem_error), .req_accept(req_accept),
+        .mem_error(mem_error),
+        .ram_word_valid(ram_word_valid),
+        .ram_word_data(ram_word_data),
+        .ram_word_index(ram_word_index),
+        .req_accept(req_accept),
         .req_we_accepted(req_we_accepted),
         .transfer_busy(transfer_busy),
         .timeout_event(timeout_event), .error_event(error_event),
@@ -98,6 +137,7 @@ module mem_controller_verificacion_case #(
         burst_ok = 1'b1;
         retry_ok = 1'b1;
         beat_count = 0;
+        physical_count = 0;
         expected_line = 256'd0;
         for (i = 0; i < 16384; i = i + 1)
             memory[i] = 32'd0;
@@ -140,19 +180,39 @@ module mem_controller_verificacion_case #(
         end
         for (i = 0; i < 8; i = i + 1) begin
             if (i < beat_count) begin
-                // El enunciado pide 25 ciclos para la primera palabra
-                // y un intervalo MEM_DIV para las restantes.
+                // El requisito temporal se comprueba en la entrega,
+                // no en el acceso de precarga a RAM.
                 if (beat_indices[i] != i ||
                     beat_cycles[i] != (25 + i * MEM_DIV)) begin
                     burst_ok = 1'b0;
-                    $display("[FAIL] DIV=%0d palabra=%0d indice=%0d ciclo=%0d esperado=%0d",
+                    $display("[FAIL] DIV=%0d entrega palabra=%0d indice=%0d ciclo=%0d esperado=%0d",
                              MEM_DIV, i, beat_indices[i], beat_cycles[i],
                              25 + i * MEM_DIV);
                 end
             end
         end
+        if (physical_count != 8) begin
+            burst_ok = 1'b0;
+            $display("[FAIL] DIV=%0d accesos fisicos=%0d esperado=8",
+                     MEM_DIV, physical_count);
+        end
+        for (i = 0; i < 8; i = i + 1) begin
+            if (i < physical_count) begin
+                if (physical_cycles[i] > 25 + i * MEM_DIV) begin
+                    burst_ok = 1'b0;
+                    $display("[FAIL] DIV=%0d precarga tardia palabra=%0d ciclo=%0d limite=%0d",
+                             MEM_DIV, i, physical_cycles[i], 25 + i * MEM_DIV);
+                end
+                if (i > 0 &&
+                    physical_cycles[i] - physical_cycles[i-1] != MEM_DIV) begin
+                    burst_ok = 1'b0;
+                    $display("[FAIL] DIV=%0d ritmo fisico palabra=%0d intervalo=%0d esperado=%0d",
+                             MEM_DIV, i, physical_cycles[i] - physical_cycles[i-1], MEM_DIV);
+                end
+            end
+        end
         if (burst_ok)
-            $display("[PASS] DIV=%0d tiempos del burst y datos", MEM_DIV);
+            $display("[PASS] DIV=%0d entrega exacta, precarga y datos", MEM_DIV);
 
         // Deja terminar el protocolo anterior antes de iniciar el timeout.
         @(negedge clk);
