@@ -18,9 +18,10 @@
       contraseña, la candidata, la dirección de fin (0x200 + tamaño
       redondeado a 8 bytes) y la llave.
    2. Ejecuta el programa de cifrado hasta su bucle final (sye x0, fin) y
-      guarda la memoria en cifrado.mem con $writememh.
+      vacía la caché y guarda la memoria en cifrado.mem con $writememh.
    3. Aplica reset (borra el banco y la bóveda; la memoria de datos se
-      mantiene), ejecuta el programa de descifrado y guarda descifrado.mem.
+      mantiene), ejecuta descifrado, vacía de nuevo y guarda descifrado.mem.
+      Vaciar ANTES del reset evita perder líneas sucias y stores con MSHR.
    4. Verifica que ningún programa generó una excepción, que el cifrado
       cambió el archivo, que no se tocó la memoria después del archivo y que
       el descifrado devolvió exactamente el original.
@@ -47,6 +48,78 @@
 
 module tb_archivo;
 
+    // El límite protege la simulación sin sustituir el protocolo por un retardo.
+    // Se configura solo para pruebas/diagnóstico; la persistencia siempre exige done=1.
+    integer flush_limit = 10000;
+    // req nace inactivo; done pertenece al productor y confirma DMEM persistente.
+    logic flush_req = 1'b0;
+    wire flush_done;
+
+    // Rechaza actividad útil mientras el vaciado necesita avanzar clk. La caché
+    // no detiene un pipeline que solo ejecuta ALU o saltos: no existe un halt en
+    // esta interfaz. Permitimos NOP y saltos sin enlace, pero no nuevas demandas,
+    // escrituras GPR, operaciones cripto ni excepciones que cambiarían el corte.
+    // Solo observa señales del núcleo; las escrituras de mantenimiento a DMEM
+    // deben seguir funcionando y no se confunden con stores nuevos de CPU.
+    task automatic check_flush_quiescence(input string phase);
+        begin
+            if ({DUT.mem_re,DUT.mem_we,DUT.mem_re_b,DUT.crypto_mem_we} !== 4'b0000 ||
+                DUT.crypto_fault !== 1'b0 ||
+                (DUT.id_ex_valid && DUT.ex_crypto_valid))
+                $fatal(1,"[FAIL] programa no quiescente durante vaciado fase=%s pc=%h ex=%h",phase,DUT.pc,DUT.ex_pc);
+            for (int p=0;p<5;p++)
+                if (DUT.wb_we[p] !== 1'b0 && DUT.wb_waddr[p] !== 5'd0)
+                    $fatal(1,"[FAIL] escritura GPR durante vaciado fase=%s puerto=%0d",phase,p);
+        end
+    endtask
+
+    // Contrato local del issue28: el llamador ya alcanzó su corte y terminó las
+    // lecturas/escrituras útiles. Recibe la fase para diagnosticar cada programa;
+    // modifica solo flush_req y consume clk general, nunca core_clk ni reset.
+    // #1 sitúa la solicitud fuera del flanco que pudo aceptar el último bundle.
+    // Otro #1 deja propagar done combinacional en modos0/1 sin añadir un ciclo.
+    // En modo2 esperamos posedge y observamos POST-NBA: MSHR, scan, WBUF y la
+    // última palabra de l2_model deben terminar antes de leer DUT.DMEM.mem.
+    task automatic flush_cache(input string phase);
+        // waited mide mantenimiento hasta done; released mide retorno a FL_IDLE.
+        // Ninguno se suma al presupuesto de ejecución útil del programa.
+        int waited, released;
+        begin
+            if ($value$plusargs("FLUSH_MAXCYCLES=%d",flush_limit)) begin end
+            if (flush_limit<1) $fatal(1,"[FAIL] límite de vaciado inválido");
+            if (flush_req !== 1'b0)
+                $fatal(1,"[FAIL] solicitud de vaciado ya activa fase=%s",phase);
+            #1; flush_req=1'b1; #1;
+            waited=0; released=0;
+            // X/Z no son ni espera normal ni éxito. Se informa antes de permitir
+            // cualquier dump, manteniendo el diagnóstico de la señal observable.
+            while (flush_done !== 1'b1) begin
+                if (flush_done !== 1'b0)
+                    $fatal(1,"[FAIL] flush_done desconocido fase=%s espera=%0d limite=%0d req=%b done=%b etapa=espera",
+                           phase,waited,flush_limit,flush_req,flush_done);
+                if (waited>=flush_limit)
+                    $fatal(1,"[FAIL] vaciado de caché no completado fase=%s espera=%0d limite=%0d req=%b done=%b etapa=espera",
+                           phase,waited,flush_limit,flush_req,flush_done);
+                @(posedge clk);
+                check_flush_quiescence(phase); // PRE: evita aceptar efectos del programa durante mantenimiento.
+                #1; waited++;
+            end
+            // Bajamos la solicitud después de confirmar persistencia. FL_DONE
+            // del productor vuelve a FL_IDLE en el siguiente posedge; en0/1 la
+            // respuesta baja combinacionalmente. No se agregan ciclos ficticios.
+            flush_req=1'b0; #1;
+            while (flush_done !== 1'b0) begin
+                if (flush_done !== 1'b1 || released>=flush_limit)
+                    $fatal(1,"[FAIL] retorno de vaciado inválido fase=%s espera=%0d limite=%0d req=%b done=%b etapa=salida",
+                           phase,released,flush_limit,flush_req,flush_done);
+                @(posedge clk); check_flush_quiescence(phase);
+                #1; released++;
+            end
+            $display("[FLUSH] fase=%s modo=%0d espera=%0d salida=%0d",phase,DUT.MEM_MODE,waited,released);
+        end
+    endtask
+
+
 // El archivo más grande (64 KB menos 0x200) necesita unos 165 000 ciclos por
 // programa; el watchdog de tb_utils.svh debe cubrir los dos programas.
 `define TB_TIMEOUT 50000000
@@ -58,7 +131,7 @@ logic reset;
 
 top DUT (
     .clk(clk),
-    .reset(reset),
+    .reset(reset), .flush_req(flush_req), .flush_done(flush_done),
     .debug_result(),
     .debug_rd(),
     .debug_write()
@@ -115,6 +188,10 @@ task automatic run_until_end(input string name, output int cycles);
         cycles++;
     end
 
+    // El criterio es el salto final observado en EX; no promete retiro de main.
+    // Si no llega, no se permite producir un dump ni reiniciar otra ejecución.
+    if (cycles>=max_cycles)
+        $fatal(1,"[FAIL] programa no alcanza fin fase=%s ciclos=%0d limite=%0d",name,cycles,max_cycles);
     check_true({name, ": llegó al final del programa"}, cycles < max_cycles);
     check({name, ": sin excepciones"}, DUT.trap_count, 32'd0);
 endtask
@@ -189,6 +266,9 @@ initial begin
 
         load_program(descifrar_file);
         run_until_end("descifrado", cycles_dec);
+        // También SOLO_DESCIFRAR necesita persistencia, aunque no haya una
+        // segunda ejecución. El fin del bucle no sustituye el handshake.
+        flush_cache("descifrado");
         $writememh("descifrado.mem", DUT.DMEM.mem);
 
         outside = 0;
@@ -205,6 +285,9 @@ initial begin
 
         load_program(cifrar_file);
         run_until_end("cifrado", cycles_enc);
+        // El cifrado puede seguir solo en líneas dirty. Confirmamos persistencia
+        // antes del dump y, especialmente, antes del reset que inicia descifrado.
+        flush_cache("cifrado");
         $writememh("cifrado.mem", DUT.DMEM.mem);
 
         changed = 0;
@@ -219,6 +302,9 @@ initial begin
 
         load_program(descifrar_file);
         run_until_end("descifrado", cycles_dec);
+        // Después del segundo programa también exigimos persistencia antes de
+        // comparar el round-trip; terminar el bucle no garantiza DMEM actualizada.
+        flush_cache("descifrado");
         $writememh("descifrado.mem", DUT.DMEM.mem);
 
 

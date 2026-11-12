@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Ensambla y ejecuta programas ALU/LSU/BRU/CRIPTO sobre top."""
+"""Ensambla y ejecuta programas ALU/LSU/BRU/CRIPTO sobre top.
+
+Issue #28: acepta dumps tras el handshake de vaciado confirmado por el banco;
+conserva diagnósticos y descarta capturas parciales si falla el mantenimiento.
+"""
 
 from __future__ import annotations
 
@@ -203,7 +207,26 @@ def run_program(source: Path, workdir: Path, expected: dict[int, int] | None = N
         command.append(f"+VCD={wave}")
     if trace:
         command.append(f"+TRACE={raw_trace}")
-    run_logged(command, workdir, sim_log, 10)
+    # El código0 por sí solo no confirma persistencia: exigimos el marcador
+    # del handshake y el cierre normal del banco en ESTA ejecución. El RTL
+    # distingue flancos del programa de mantenimiento; el timeout de pared da
+    # margen para flush, sin reemplazar el timeout de protocolo del testbench.
+    try:
+        output = run_logged(command, workdir, sim_log, 30)
+        flushed = re.search(r"^\[FLUSH\] fase=assembled modo=[012] espera=[0-9]+ salida=[0-9]+$",
+                            output, re.MULTILINE)
+        finished = f"[OK] programa ejecutado: {len(program.bundles)} bundles; 32 registros definidos"
+        if not flushed or finished not in output:
+            raise SimulationError(f"simulación sin confirmación de vaciado o finalización; consulte {sim_log}")
+        if not dump.is_file() or not memdump.is_file():
+            raise SimulationError(f"simulación sin dumps nuevos completos; consulte {sim_log}")
+    except (OSError, SimulationError):
+        # Puede existir un snapshot parcial de registros si el flush falla luego.
+        # Invalidamos solo nuestros dos dumps; conservamos logs, traza y ondas
+        # para diagnóstico y nunca aceptamos restos de una ejecución anterior.
+        dump.unlink(missing_ok=True)
+        memdump.unlink(missing_ok=True)
+        raise
     if trace:
         trace_file.write_text(trace_text(source.name, program, source_labels(source_text),
                                          raw_trace.read_text(encoding="ascii").splitlines()),
