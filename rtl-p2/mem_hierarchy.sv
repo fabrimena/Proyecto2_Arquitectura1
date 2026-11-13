@@ -33,7 +33,10 @@
 `include "cache_defs.sv"
 
 
-module mem_hierarchy (
+module mem_hierarchy #(
+    // Solo elimina monitores al elaborar; ARB, L1D y L2 son siempre los mismos.
+    parameter bit PERF_ENABLE = 1'b1
+) (
 
     input  logic         clk,           // reloj sin detener (no core_clk)
     input  logic         reset,
@@ -64,7 +67,11 @@ module mem_hierarchy (
     output logic [3:0]   m_be,
     output logic [31:0]  m_addr,
     output logic [31:0]  m_wdata,
-    input  logic [31:0]  m_rdata
+    input  logic [31:0]  m_rdata,
+
+    // Default habilitado para consumidores anteriores de la jerarquía.
+    // Ventana síncrona común; no regula demandas, grant, respuesta o flush.
+    input  logic         perf_measure_enable = 1'b1
 );
 
 
@@ -117,7 +124,19 @@ l1d_port_arbiter ARB (
     .c_stall(c_stall)
 );
 
-// Los eventos ev_* quedan para los contadores (L1D.ev_*)
+// Los diecinueve bits provienen exclusivamente de salidas públicas de L1D.
+// 0..3 clasifican demandas completadas; 4..6 son esperas, 7..18 auxiliares,
+// tráfico, fills, víctimas y MSHR. Un fill o un push de flush no es otra demanda.
+// Estas conexiones no reconstruyen hits mediante etiquetas privadas.
+wire [18:0] perf_events;
+wire [18:0][63:0] perf_event_counts;
+wire [4:0][63:0] perf_access_totals;
+wire [3:0][63:0] perf_completed_by_class, perf_service_by_class, perf_wait_by_class;
+wire [63:0] perf_completed_accesses, perf_completed_reads, perf_completed_writes;
+wire [63:0] perf_completed_hits, perf_completed_misses, perf_service_cycles, perf_wait_cycles;
+wire [63:0] perf_no_wait_accesses, perf_excluded_accesses, perf_protocol_errors;
+wire perf_pending, perf_pending_eligible;
+wire [63:0] perf_pending_wait_cycles;
 l1d_cache L1D (
     .clk(clk),
     .reset(reset),
@@ -139,7 +158,26 @@ l1d_cache L1D (
     .l2_gnt(l2_gnt),
     .l2_rvalid(l2_rvalid),
     .l2_rdirty(l2_rdirty),
-    .l2_rline(l2_rline)
+    .l2_rline(l2_rline),
+    .ev_rd_hit(perf_events[0]),
+    .ev_rd_miss(perf_events[1]),
+    .ev_wr_hit(perf_events[2]),
+    .ev_wr_miss(perf_events[3]),
+    .ev_stall(perf_events[4]),
+    .ev_wb_full_stall(perf_events[5]),
+    .ev_raw_stall(perf_events[6]),
+    .ev_raw_forward(perf_events[7]),
+    .ev_wb_push(perf_events[8]),
+    .ev_l2_read(perf_events[9]),
+    .ev_l2_write(perf_events[10]),
+    .ev_fill(perf_events[11]),
+    .ev_victim_dirty(perf_events[12]),
+    .ev_victim_clean(perf_events[13]),
+    .ev_mshr_alloc(perf_events[14]),
+    .ev_mshr_merge(perf_events[15]),
+    .ev_mshr_load(perf_events[16]),
+    .ev_hit_under_miss(perf_events[17]),
+    .ev_mshr_full_stall(perf_events[18])
 );
 
 l2_model L2 (
@@ -165,5 +203,108 @@ l2_model L2 (
 
 assign flush_done = l1_flush_done && l2_idle;
 
+
+// Ambos consumidores usan clk general: la caché continúa con el núcleo
+// detenido. Se muestrean eventos PRE y los acumulados cambian mediante NBA.
+// La habilitación y reset comunes no se devuelven a ARB/L1D/L2: solo reciben
+// los mismos controles de observación que los monitores del núcleo.
+generate if (PERF_ENABLE) begin : g_perf
+    // K1-A conserva su población por flanco habilitado. Los diecinueve eventos
+    // se conectan uno a uno; el productor decide clasificación y finalización.
+    // Un store puede terminar al reservar MSHR y su fill posterior solo suma
+    // actividad auxiliar. L2-read/write son inicios, no hits/misses de L2.
+    // La pausa retiene registros y omite eventos; reset borra con prioridad.
+    // Sus salidas no intervienen en stall, solicitudes, flush ni datos.
+    perf_cache_l1d PERF_K1A (
+        .clk(clk), .reset(reset), .measure_enable(perf_measure_enable),
+        .ev_rd_hit(perf_events[0]),
+        .ev_rd_miss(perf_events[1]),
+        .ev_wr_hit(perf_events[2]),
+        .ev_wr_miss(perf_events[3]),
+        .ev_stall(perf_events[4]),
+        .ev_wb_full_stall(perf_events[5]),
+        .ev_raw_stall(perf_events[6]),
+        .ev_raw_forward(perf_events[7]),
+        .ev_wb_push(perf_events[8]),
+        .ev_l2_read(perf_events[9]),
+        .ev_l2_write(perf_events[10]),
+        .ev_fill(perf_events[11]),
+        .ev_victim_dirty(perf_events[12]),
+        .ev_victim_clean(perf_events[13]),
+        .ev_mshr_alloc(perf_events[14]),
+        .ev_mshr_merge(perf_events[15]),
+        .ev_mshr_load(perf_events[16]),
+        .ev_hit_under_miss(perf_events[17]),
+        .ev_mshr_full_stall(perf_events[18]),
+        .read_hits(perf_event_counts[0]),
+        .read_misses(perf_event_counts[1]),
+        .write_hits(perf_event_counts[2]),
+        .write_misses(perf_event_counts[3]),
+        .stall_cycles(perf_event_counts[4]),
+        .wb_full_stall_cycles(perf_event_counts[5]),
+        .raw_stall_cycles(perf_event_counts[6]),
+        .raw_forward_events(perf_event_counts[7]),
+        .wb_push_events(perf_event_counts[8]),
+        .l2_read_requests(perf_event_counts[9]),
+        .l2_write_requests(perf_event_counts[10]),
+        .fill_events(perf_event_counts[11]),
+        .victim_dirty_events(perf_event_counts[12]),
+        .victim_clean_events(perf_event_counts[13]),
+        .mshr_alloc_events(perf_event_counts[14]),
+        .mshr_merge_events(perf_event_counts[15]),
+        .mshr_load_events(perf_event_counts[16]),
+        .hit_under_miss_events(perf_event_counts[17]),
+        .mshr_full_stall_cycles(perf_event_counts[18]),
+        .read_accesses(perf_access_totals[0]),
+        .write_accesses(perf_access_totals[1]),
+        .total_accesses(perf_access_totals[2]),
+        .total_hits(perf_access_totals[3]),
+        .total_misses(perf_access_totals[4])
+    );
+
+    // K1-B ve c_re/c_we/c_stall DESPUÉS del árbitro, exactamente la demanda
+    // del puerto único que recibe L1D. No suma simultáneamente A y B ni añade
+    // el tiempo de arbitraje al servicio interno de una demanda diferente.
+    // Cada fase B-read/A/B-write es otra demanda, aunque pertenezcan al mismo
+    // bundle. Su clase procede de los mismos cuatro eventos públicos de L1D.
+    // El seguimiento continúa en pausa y excluye el acceso que la atraviesa;
+    // K1-A puede contar su final habilitado, por lo que sus cohortes difieren.
+    // Reset desconoce inicios previos; reposo o fin recuperan frontera conocida.
+    // Mantenimiento sin demanda no añade servicio. pending/errores son
+    // diagnósticos independientes de la ventana, nunca controles del productor.
+    perf_cache_l1d_latency PERF_K1B (
+        .clk(clk), .reset(reset), .measure_enable(perf_measure_enable),
+        .re(c_re), .we(c_we), .stall(c_stall),
+        .ev_rd_hit(perf_events[0]), .ev_rd_miss(perf_events[1]),
+        .ev_wr_hit(perf_events[2]), .ev_wr_miss(perf_events[3]),
+        .completed_by_class(perf_completed_by_class),
+        .service_by_class(perf_service_by_class),
+        .wait_by_class(perf_wait_by_class),
+        .completed_accesses(perf_completed_accesses),
+        .completed_reads(perf_completed_reads),
+        .completed_writes(perf_completed_writes),
+        .completed_hits(perf_completed_hits),
+        .completed_misses(perf_completed_misses),
+        .service_cycles(perf_service_cycles),
+        .wait_cycles(perf_wait_cycles),
+        .no_wait_accesses(perf_no_wait_accesses),
+        .excluded_accesses(perf_excluded_accesses),
+        .protocol_errors(perf_protocol_errors),
+        .pending(perf_pending),
+        .pending_eligible(perf_pending_eligible),
+        .pending_wait_cycles(perf_pending_wait_cycles)
+    );
+end else begin : g_no_perf
+    // Mismos productores sin consumidores registrados. Ceros explícitos permiten
+    // observar la configuración desactivada sin leer instancias inexistentes.
+    assign perf_event_counts='0;
+    assign perf_access_totals='0;
+    assign {perf_completed_by_class,perf_service_by_class,perf_wait_by_class}='0;
+    assign {perf_completed_accesses,perf_completed_reads,perf_completed_writes,
+            perf_completed_hits,perf_completed_misses,perf_service_cycles,perf_wait_cycles,
+            perf_no_wait_accesses,perf_excluded_accesses,perf_protocol_errors,
+            perf_pending_wait_cycles}='0;
+    assign {perf_pending,perf_pending_eligible}=2'b00;
+end endgenerate
 
 endmodule
