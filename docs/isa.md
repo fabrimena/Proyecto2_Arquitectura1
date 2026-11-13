@@ -59,6 +59,7 @@
     - [Formato del bundle VLIW](#formato-del-bundle-vliw)
     - [Formato general de un slot de 32 bits](#formato-general-de-un-slot-de-32-bits)
   - [Green card del ISA](#green-card-de-la-isa-del-proyecto-vliw)
+  - [Extensión opcional de caché y medición — D18-A](#extensión-opcional-de-caché-y-medición--d18-a)
 
 ---
 
@@ -1194,5 +1195,129 @@ Todas las instrucciones miden 32 bits: **Tipo de operación** [31:25] (7 bits) +
 | x3 | gp | Puntero global |
 | x4–x15 | t0–t11 | Temporales |
 | x16–x31 | s0–s15 | Preservados entre llamadas |
+
+## Extensión opcional de caché y medición — D18-A
+
+Fuente normativa de esta extensión: [decisiones-importantes.md, sección 4.4](decisiones-importantes.md#44-instrucciones-de-control-de-caché-y-medición-javier-enganche-en-top-fabricio).
+Se conservan las 34 instrucciones del Proyecto I, sus pseudoinstrucciones y sus codificaciones.
+El tipo nuevo `1001101` solo corresponde al **slot LSU, índice 1**, en los bits [63:32]
+del bundle. No agrega una etapa ni una instrucción HALT. Es opcional para CE1108.
+
+**D18-A: componentes independientes implementados y probados. El soporte en el ensamblador
+no significa que `top` ya ejecute estas instrucciones.** El decoder LSU original no reconoce
+este tipo y lo deja inactivo. No se ha conectado el decoder nuevo ni su unidad al procesador.
+
+### Codificación y efectos
+
+| Instrucción | Tipo [31:25] | ID [24:21] | Campos restantes | Efectos contractuales |
+|:---|:---:|:---:|:---|:---|
+| `vaciarc` | `1001101` | `0000` | [20:0] = 0 | Solicita vaciado hasta RAM y espera confirmación; no escribe registros |
+| `medir imm` | `1001101` | `0001` | [20:1] = 0; imm [0] | 0 pausa contadores, 1 reanuda; no borra ni escribe registros |
+| `lcont rg, sel` | `1001101` | `0010` | [20:16] = 0; rg [15:11]; [10:6] = 0; sel [5:0] | Lee una mitad del contador en EX y registra resultado/destino para WB |
+
+Los bits reservados deben ser cero y los IDs 3–15 son inválidos. El decoder independiente
+también rechaza X/Z en tipo, ID, campos y operandos: una palabra inválida deja `valid=0`
+y todas las salidas normalizadas a cero. No confunde una palabra ilegal con `vaciarc`.
+La posición del slot la verifica el ensamblador; el decoder recibe una palabra de 32 bits,
+por lo que el integrador debe conectarle el slot 1 de ID.
+
+Ejemplos exactos: `vaciarc` = `9a000000`, `medir 0` = `9a200000`, `medir 1` = `9a200001`,
+`lcont x5,0` = `9a402800`, `lcont x31,63` = `9a40f83f`.
+
+`sel[4:0]` identifica el contador; `sel[5]=0` selecciona bits [31:0] y `sel[5]=1` bits [63:32].
+El inmediato admite 0–63; para la mitad alta se suma 32 al identificador.
+
+| ID | Contador de 64 bits |
+|:---:|:---|
+| 0 | Ciclos |
+| 1 | Bundles |
+| 2 | Instrucciones no NOP |
+| 3 | Ciclos de stall por memoria |
+| 4 | Ciclos perdidos por saltos |
+| 5 | Lecturas L1-D con hit |
+| 6 | Lecturas L1-D con miss |
+| 7 | Escrituras L1-D con hit |
+| 8 | Escrituras L1-D con miss |
+| 9 | Hits L2 |
+| 10 | Misses L2 |
+| 11 | Accesos RAM |
+| 12 | Ciclos de transferencia RAM |
+| 13–31 | Cero, reservado, en ambas mitades |
+
+Un selector reservado es una lectura válida de cero; **no** es un campo RSV ilegal.
+`lcont` no lee registros generales y escribe únicamente `rg`. Con `rg=x0` la codificación
+es válida y la escritura se suprime. No se interpreta la lectura cero como ausencia de productor:
+para cualquier otro destino se verifican RAW/WAW entre slots y N+3 en ambos caminos de saltos
+y ciclos del grafo. La lectura de su resultado exige dos bundles independientes entre productor
+y consumidor. No se insertan NOP automáticamente ni se modifica ningún programa anterior.
+
+```asm
+nop | lcont x4,0 | nop | nop
+nop
+nop
+mov x5,x4 | nop | nop | nop
+```
+
+Leer ambas mitades son dos instrucciones y dos instantáneas diferentes: no hay captura atómica
+de 64 bits. Pausar con `medir 0` permitirá obtener un par coherente cuando el enable esté integrado.
+El IPC continúa calculándose fuera del RTL: instrucciones/ciclos; con cero ciclos corresponde N/D.
+
+### Contrato de ejecución de la unidad independiente
+
+`cache_isa_unit` usa **clk general**, no `core_clk`. Entradas y controles deben ser estables
+antes del flanco positivo. Reset es síncrono y prioritario: habilita medición, borra respuesta
+y cancela cualquier solicitud pendiente. X/Z en reset se trata conservadoramente como reset.
+Cancelar un vaciado no acredita persistencia; la recuperación exige reinicio coordinado del proveedor.
+
+- Una emisión ocurre al flanco con `valid_in=1`, `ex_advance=1` e `issue_ready=1`.
+  `ex_advance` es un permiso explícito del futuro adaptador, **no una señal interna asumida de Fabricio**.
+  Durante freeze externo debe valer cero. Tras aceptar, el emisor debe avanzar a otra instrucción
+  o retirar su validez; un nivel sostenido no identifica por sí mismo una transacción nueva.
+- `medir` cambia `measure_enable` al aceptar. Otros bloques síncronos muestrean el enable anterior
+  en ese flanco; el nuevo rige después. La unidad no posee ni reinicia acumuladores externos:
+  se deberá conectar su enable a todos los contadores pertinentes. Pausar la medición no bloquea
+  `lcont` ni `vaciarc`. La atribución al retiro de bundles que ya estaban en vuelo queda pendiente
+  de validar con el adaptador del pipeline.
+- `lcont` captura el contador en ese flanco de EX y ofrece el resultado registrado en el ciclo
+  siguiente para WB, como el registro interno de una carga. Los contadores externos que se
+  incrementan en el mismo flanco se leen con su valor previo. La muestra no cambia durante stalls.
+  `complete_valid` se mantiene hasta que `complete_ready=1`; `wb_we` solo permite escribir al
+  consumir esa respuesta, si es `lcont` y `rg!=0`. El destino y dato se retienen junto con ella.
+  La integración deberá alinear esta ruta con LSU y WB para conservar N+3.
+- `pending` indica que hay una operación aceptada sin consumir; no equivale a un stall global.
+  Se permite consumir una respuesta y aceptar la siguiente en un mismo flanco para operaciones
+  consecutivas sin burbuja. El consumidor debe habilitar `complete_ready` únicamente cuando WB
+  pueda avanzar; X/Z en permisos no emite ni consume.
+
+La entrada `counters[0:12]` contiene las trece fuentes de 64 bits en el orden de la tabla.
+No se crean contadores L2/RAM ni se derivan hits de solicitudes. Al integrar, las fuentes aún no
+disponibles deben conectarse explícitamente a cero y registrarse como no disponibles en la
+configuración de medición; ese cero no demuestra que no hubo actividad. Un X/Z en un dato de
+contador disponible se propaga en la lectura y permite detectar una conexión incorrecta.
+
+### Vaciado: solicitud, confirmación y retirada
+
+El protocolo independiente es de cuatro fases y admite latencia variable:
+
+1. Antes de aceptar `vaciarc`, `flush_done` debe ser un cero conocido. Un ack previo o X/Z bloquea
+   esa operación, sin impedir `medir`/`lcont`.
+2. La aceptación registra el estado pendiente y eleva `flush_req`. La solicitud permanece alta
+   durante todos los ciclos de espera. `ex_advance` puede bajar sin detener el protocolo.
+3. Un `flush_done=1` conocido en un flanco retira la solicitud. Se acepta desde el primer ciclo
+   con req activo, por lo que un proveedor inmediato también funciona. X/Z nunca confirma.
+4. Se espera que el proveedor retire `flush_done` a cero antes de ofrecer la respuesta final.
+   Esto evita que dos vaciados consecutivos reutilicen una confirmación antigua. WB puede
+   retener después la respuesta sin volver a pedir el vaciado.
+
+El proveedor deberá interpretar el nivel retenido como **una transacción** y confirmar solo
+cuando se cumpla el contrato de persistencia. Un proveedor que use pulsos deberá adaptarse;
+no se presume que la interfaz definitiva ya coincida con este protocolo. No hay timeout hardware:
+sin confirmación o sin su retirada, la operación sigue pendiente.
+
+La semántica deseada es vaciar toda la jerarquía hasta RAM, pero **D18-A no demuestra que
+`vaciarc` vacíe la jerarquía completa**. La prueba aislada solo simula confirmaciones. Quedan
+pendientes el enganche a `top`, stall del procesador, control real de contadores, ruta LSU/WB,
+compatibilidad del handshake con Fabricio, persistencia L2 definitiva y pruebas del procesador
+completo con estas tres instrucciones. No se altera ningún módulo de esas rutas en este bloque.
 
 
