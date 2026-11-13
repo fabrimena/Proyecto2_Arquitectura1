@@ -107,7 +107,11 @@ module top #(
 
     // Memoria de instrucciones: 1 = ROM síncrona (por defecto), 0 = lectura
     // combinacional como en el proyecto 1
-    parameter bit ROM_SYNC     = 1'b1
+    parameter bit ROM_SYNC     = 1'b1,
+
+    // Elimina solo los observadores al elaborar con cero. No selecciona otra
+    // CPU, reloj o memoria: permite contrastar pasividad en hardware idéntico.
+    parameter bit PERF_ENABLE  = 1'b1
 ) (
 
     input  logic         clk,
@@ -119,7 +123,12 @@ module top #(
 
     output logic [31:0]  debug_result,
     output logic [4:0]   debug_rd,
-    output logic         debug_write
+    output logic         debug_write,
+
+    // Ventana común, activa por defecto para conservar instancias anteriores.
+    // Cambiarla solo pausa acumulación; metadatos y demandas siguen su curso.
+    // No implementa medir/lcont ni afecta core_en, reset o el vaciado.
+    input  logic         perf_measure_enable = 1'b1
 
 );
 
@@ -677,7 +686,7 @@ generate
     end
     else if (MEM_MODE == 2) begin : g_mem_cache
 
-        mem_hierarchy HIER (
+        mem_hierarchy #(.PERF_ENABLE(PERF_ENABLE)) HIER (
             .clk(clk),
             .reset(reset),
 
@@ -698,6 +707,7 @@ generate
 
             .flush_req(flush_req),
             .flush_done(flush_done),
+            .perf_measure_enable(perf_measure_enable),
 
             .m_we(dmem_we),
             .m_be(dmem_be),
@@ -896,5 +906,65 @@ assign debug_result = wb_wdata[0];
 assign debug_rd     = wb_waddr[0];
 assign debug_write  = wb_we[0];
 
+
+// Resultados de observación por puertos internos explícitos. Sus únicos
+// consumidores actuales son los bancos; una futura ruta lcont debe acordarse
+// con Fabricio. Ninguno participa en decisiones de ejecución o de memoria.
+wire [63:0] perf_cycle_count, perf_bundle_count, perf_instruction_count;
+wire [63:0] perf_memory_stall_count, perf_branch_penalty_count;
+wire perf_bundle_complete, perf_branch_recovery, perf_memory_stall, perf_wb_valid;
+wire [3:0] perf_wb_non_nop_mask;
+wire [63:0] perf_stage_measured_cycles;
+wire [3:0][63:0] perf_stage_occupied, perf_stage_bubbles;
+wire [3:0][63:0] perf_stage_stalls, perf_stage_stalled_occupied;
+
+generate if (PERF_ENABLE) begin : g_perf
+    // El productor real entrega ID y controles EX antes del posedge general.
+    // core_en ya contiene la decisión tomada con clk bajo: usar core_clk
+    // perdería las esperas, y usar cache_stall POST observaría otro ciclo.
+    // La excepción de CRYPTO permanece separada de branch_flush, nunca redirect.
+    // Reset común borra métricas y seguimiento; la ventana solo pausa sumas.
+    // PIPELINE transporta el bundle completo hasta WB: NOP cuenta un bundle,
+    // store no exige GPR y una operación cripto con dos salidas cuenta una vez.
+    // Sin avance retiene metadatos y no repite retiro, pero clk suma residencia.
+    // Todas las salidas son observación: ninguna vuelve al control del núcleo.
+    perf_vliw_monitor PERF_VLIW (
+        .clk(clk), .reset(reset), .measure_enable(perf_measure_enable),
+        .core_advance(core_en), .id_valid(id_valid), .id_bundle(id_bundle),
+        .ex_valid(id_ex_valid), .ex_branch_taken(branch_flush), .ex_exception(crypto_fault),
+        .cycle_count(perf_cycle_count), .bundle_count(perf_bundle_count),
+        .instruction_count(perf_instruction_count), .memory_stall_count(perf_memory_stall_count),
+        .branch_penalty_count(perf_branch_penalty_count), .bundle_complete(perf_bundle_complete),
+        .branch_recovery(perf_branch_recovery), .memory_stall(perf_memory_stall),
+        .wb_non_nop_mask(perf_wb_non_nop_mask), .wb_valid(perf_wb_valid)
+    );
+
+    // IF/ID/EX son validez completa real; WB reutiliza el único transportador
+    // del monitor anterior, sin un registro espejo ni referencias jerárquicas.
+    // ex_wb_valid pertenece al camino ALU y no define este contrato general.
+    // En EX se observa ocupación PRE, incluso si el bundle será anulado por
+    // excepción en este flanco. Un NOP ocupa; una posición descartada es burbuja.
+    // clk sigue durante stall y mide ocupación retenida, no retiros repetidos.
+    // Reset es síncrono prioritario; pausar conserva las cuatro categorías.
+    // El stall es global y se expone por etapa: no se suman sus cuatro copias.
+    perf_stage_counters PERF_STAGES (
+        .clk(clk), .reset(reset), .measure_enable(perf_measure_enable),
+        .core_advance(core_en), .if_valid(fetch_valid), .id_valid(id_valid),
+        .ex_valid(id_ex_valid), .wb_valid(perf_wb_valid),
+        .measured_cycles(perf_stage_measured_cycles),
+        .occupied_cycles(perf_stage_occupied), .bubble_cycles(perf_stage_bubbles),
+        .stall_cycles(perf_stage_stalls), .stalled_occupied_cycles(perf_stage_stalled_occupied)
+    );
+end else begin : g_no_perf
+    // Sin instrumentación no hay registros de métricas elaborados. Estos ceros
+    // dan un contrato de observación definido; no sustituyen eventos de CPU.
+    assign {perf_cycle_count,perf_bundle_count,perf_instruction_count,
+            perf_memory_stall_count,perf_branch_penalty_count}=320'd0;
+    assign {perf_bundle_complete,perf_branch_recovery,perf_memory_stall,perf_wb_valid}=4'd0;
+    assign perf_wb_non_nop_mask=4'd0;
+    assign perf_stage_measured_cycles=64'd0;
+    assign {perf_stage_occupied,perf_stage_bubbles,perf_stage_stalls,
+            perf_stage_stalled_occupied}=1024'd0;
+end endgenerate
 
 endmodule

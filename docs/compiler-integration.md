@@ -2,7 +2,8 @@
 
 Contrato de interfaz entre nuestro procesador y el compilador del grupo de Compiladores (CE1108), y
 evidencia de la validación conjunta (sección 6 del enunciado). Nuestro ensamblador funciona sin el
-compilador y cubre el 100 % del ISA.
+compilador y cubre las 34 instrucciones del ISA original. La extensión opcional de caché
+y medición tiene soporte de ensamblado y componentes independientes; su conexión a `top` está pendiente.
 
 ## Contrato
 
@@ -131,3 +132,55 @@ Reproducidos el 13 de octubre de 2026 con Icarus Verilog 12.0 y la rama `develop
 | `make compiladores-factorial` y `make test-compiladores-funciones` | PASS y 3 de 3 |
 | `division_residuo_potencia.bal` con `run_ce1108_source.py` | PASS |
 | `tools/run_ce1108.py` | PASS: (8 + 3) − 1 = 10 |
+
+## Extensión opcional de caché y medición: D18-A
+
+El contrato aprobado está en [decisiones-importantes.md, sección 4.4](decisiones-importantes.md#44-instrucciones-de-control-de-caché-y-medición-javier-enganche-en-top-fabricio).
+La codificación y el protocolo completo se describen en
+[isa.md](isa.md#extensión-opcional-de-caché-y-medición--d18-a). No cambia el formato de bundle,
+la ISA original, los alias, las pseudoinstrucciones ni la regla N+3. CE1108 **no necesita generar**
+estas instrucciones para conservar su compatibilidad; no se modificó su repositorio.
+
+| Mnemónico | Slot | Tipo [31:25] / ID [24:21] | Operandos y campos |
+|:---|:---:|:---|:---|
+| `vaciarc` | 1 LSU | `1001101` / `0000` | Sin operandos; [20:0] cero |
+| `medir imm` | 1 LSU | `1001101` / `0001` | imm 0–1 en [0]; [20:1] cero |
+| `lcont rg, sel` | 1 LSU | `1001101` / `0010` | rg x0–x31 en [15:11], sel 0–63 en [5:0]; resto cero |
+
+`sel[5]` elige mitad baja (0) o alta (1); `sel[4:0]` el contador:
+0 ciclos, 1 bundles, 2 instrucciones no NOP, 3 stall de memoria, 4 penalización de saltos,
+5/6 lecturas L1-D hit/miss, 7/8 escrituras L1-D hit/miss, 9/10 hits/misses L2,
+11 accesos RAM y 12 ciclos de transferencia RAM. IDs 13–31 leen cero en ambas mitades.
+No son nuevas métricas: L2/RAM deben suministrarse cuando existan; fuentes no disponibles
+deberán conectarse a cero y declararse no disponibles, sin interpretar ese cero como ausencia de tráfico.
+
+El ensamblador valida aridad, registros, inmediatos, slot, RAW/WAW y N+3. `lcont` es productor
+del registro aunque lea un selector reservado. Captura en EX y conserva resultado/destino
+para WB; el consumidor debe ir a partir de N+3. x0 descarta la escritura. No lee registros fuente.
+Los controles `medir`/`vaciarc` no escriben registros. No se reescriben programas ni se insertan
+bundles para acomodar los riesgos. Las palabras exactas y los errores se prueban por separado
+de los casos originales, que conservan sus expectativas.
+
+`medir 0` pausa sin borrar y `medir 1` reanuda; reset habilita medición. El nuevo enable rige
+después del flanco de aceptación en EX. Dos lecturas alta/baja no son atómicas; pausar permitirá
+leer el acumulado estable una vez integrada la habilitación. IPC = instrucciones/ciclos se calcula
+externamente; para cero ciclos se informa N/D.
+
+La unidad usa reloj general. Una emisión requiere validez, permiso explícito `ex_advance`
+y `issue_ready`; una respuesta registrada se consume con `complete_valid`/`complete_ready`.
+Durante freeze se retienen resultado/destino y no se repite la escritura. Tras emitir, el
+adaptador debe avanzar EX o retirar la validez para evitar volver a emitir el mismo bundle.
+Estos son puertos del componente independiente y requieren coordinarse con Fabricio.
+
+`vaciarc` acepta con ack bajo, retiene `flush_req` hasta `flush_done=1`, retira req y espera
+que done vuelva a cero antes de responder. X/Z no confirma. Un proveedor inmediato puede
+confirmar el primer ciclo activo de req; uno retardado mantiene la espera. El adaptador debe
+detener el avance del procesador sin detener el reloj de la unidad. Reset cancela la operación,
+por lo que exige reinicio coordinado; no acredita persistencia. No hay HALT ni timeout implícito.
+
+**D18-A: componentes independientes implementados y probados. El soporte en el ensamblador
+no significa que `top` ya ejecute estas instrucciones.** El LSU actual deja este tipo inactivo.
+Quedan pendientes: conexión del decoder y la unidad a `top`, enable real de contadores, ruta de
+escritura LSU/WB para `lcont`, stall por `vaciarc`, handshake definitivo con Fabricio, L2 y garantía
+de persistencia hasta RAM. Las pruebas aisladas no sustituyen pruebas de las tres instrucciones
+en el procesador completo, y no demuestran vaciado completo de la jerarquía.

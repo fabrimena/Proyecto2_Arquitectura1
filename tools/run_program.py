@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""Ensambla y ejecuta programas ALU/LSU/BRU/CRIPTO sobre top."""
+"""Ensambla y ejecuta programas ALU/LSU/BRU/CRIPTO sobre top.
+
+Issue #28: acepta dumps tras el handshake de vaciado confirmado por el banco;
+conserva diagnósticos y descarta capturas parciales si falla el mantenimiento.
+Issue #9: selecciona MEM_MODE al elaborar y acredita modo, horizonte y medidas
+del banco; execution.json complementa los formatos anteriores sin cambiarlos.
+"""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -156,9 +163,72 @@ def trace_text(name: str, program, labels: dict[int, str], raw: list[str]) -> st
     return "\n".join(header + body + [footer]) + "\n"
 
 
+def execution_metadata(output: str, mode: int, bundles: int, advances: int) -> dict:
+    """Valida testimonios del banco real y devuelve sus medidas sin archivos.
+
+    Recibe stdout de esta ejecución y el modo/horizonte que solicitó la API.
+    Exige una sola línea completa por marcador; rechaza duplicados, X/Z, valores
+    incompatibles y respuestas de otro binario con SimulationError. Los flancos
+    proceden del RTL, no de reloj de pared; los bundles son tamaño estático.
+    La función no modifica salida, archivos ni estado del DUT.
+    """
+    def marker(prefix: str, pattern: str):
+        """Extrae un Match único de output para el prefijo/patrón recibidos.
+
+        Usa solo el texto capturado por la función exterior. SimulationError
+        identifica ausencia, repetición o formato inválido; no modifica recursos.
+        """
+        # Contar antes de parsear impide aceptar el primero de dos testimonios
+        # contradictorios o ignorar un marcador mal formado junto a uno válido.
+        lines = [line for line in output.splitlines() if line.startswith(prefix)]
+        if len(lines) != 1 or not (match := re.fullmatch(pattern, lines[0])):
+            raise SimulationError(f"marcador {prefix} ausente, duplicado o mal formado")
+        return match
+
+    selected = marker("[MEM_MODE]", r"\[MEM_MODE\] solicitado=([012]) efectivo=([012])")
+    if tuple(map(int, selected.groups())) != (mode, mode):
+        raise SimulationError(f"modo de memoria distinto: solicitado={mode}, confirmado={selected.groups()}")
+    flushed = marker("[FLUSH]", r"\[FLUSH\] fase=assembled modo=([012]) espera=([0-9]+) salida=([0-9]+)")
+    flush_mode, waited, released = map(int, flushed.groups())
+    if flush_mode != mode:
+        raise SimulationError("modo de flush distinto del solicitado")
+    keys = ("bundles", "avances", "flancos", "stalls", "flush", "inicio_flancos",
+            "total_flancos", "inicio_ns", "ejecucion_ns", "mantenimiento_ns", "total_ns")
+    pattern = r"\[EXEC_STATS\] " + " ".join(k+r"=([0-9]+)" for k in keys)
+    stats = dict(zip(keys, map(int, marker("[EXEC_STATS]", pattern).groups())))
+    # Igualdad temporal no se exige entre modos. Sí se exige que cada ejecución
+    # cierre sus propias cuentas y mantenga el horizonte lógico solicitado.
+    if stats["bundles"] != bundles or stats["avances"] != advances:
+        raise SimulationError("punto de ejecución distinto del solicitado")
+    if (stats["flancos"] < advances or stats["stalls"] != stats["flancos"]-advances or
+        stats["flush"] != waited+released or
+        stats["total_flancos"] != stats["inicio_flancos"]+stats["flancos"]+stats["flush"] or
+        stats["total_ns"] != stats["inicio_ns"]+stats["ejecucion_ns"]+stats["mantenimiento_ns"]):
+        raise SimulationError("estadísticas de ejecución y flush incoherentes")
+    if (mode < 2 and stats["flush"] != 0) or (mode == 2 and stats["flush"] == 0):
+        raise SimulationError("flancos de flush incompatibles con el modo")
+    cache = "[CACHE_CONFIG] write=WB alloc=WA inclusion=EXCLUSIVE replacement=LRU wb_depth=4 mshr=2 bus_v2=1 l2=MODEL"
+    if mode == 2:
+        marker("[CACHE_CONFIG]", re.escape(cache))
+    elif any(line.startswith("[CACHE_CONFIG]") for line in output.splitlines()):
+        raise SimulationError("configuración de caché presente en modo sin caché")
+    return dict(requested_mode=mode, effective_mode=mode, stats=stats)
+
+
 def run_program(source: Path, workdir: Path, expected: dict[int, int] | None = None,
                 vcd: bool = True, expected_memory: dict[int, int] | None = None,
-                cycles: int | None = None, trace: bool = False) -> dict[int, int]:
+                cycles: int | None = None, trace: bool = False,
+                mem_mode: int = 0) -> dict[int, int]:
+    """Ejecuta la fuente con un modo elaborado y conserva el retorno GPR previo.
+
+    mem_mode es el último argumento opcional para mantener llamadas posicionales.
+    Solo admite enteros 0/1/2 (no bool). El directorio recibe los mismos archivos
+    históricos y execution.json con medidas RTL y argv; el llamador posee esos
+    recursos. SimulationError rechaza configuración, mantenimiento, dumps o
+    expectativas inválidas; OSError conserva el contrato de acceso a archivos.
+    """
+    if type(mem_mode) is not int or mem_mode not in (0, 1, 2):
+        raise SimulationError("mem_mode debe ser un entero 0, 1 o 2; no admite bool")
     source = source.resolve()
     source_text = source.read_text(encoding="utf-8")
     program = assemble_source(source_text)
@@ -176,14 +246,15 @@ def run_program(source: Path, workdir: Path, expected: dict[int, int] | None = N
     generated = [workdir / name for name in
                  ("program.mem", "program.lst", "sim.vvp", "compile.log",
                   "sim.log", "registers.txt", "program.vcd", "memory.txt",
-                  "trace_raw.txt", "trace.txt")]
+                  "trace_raw.txt", "trace.txt", "execution.json")]
     if source in generated:
         raise SimulationError("el archivo fuente no puede ser una salida dentro del directorio de trabajo")
     workdir.mkdir(parents=True, exist_ok=True)
-    memory, listing, binary, compile_log, sim_log, dump, wave, memdump, raw_trace, trace_file = generated
+    memory, listing, binary, compile_log, sim_log, dump, wave, memdump, raw_trace, trace_file, metadata_path = generated
     memory.write_text(program.memory_text(), encoding="ascii")
     listing.write_text(program.listing_text(), encoding="utf-8")
     # Evitar aceptar un dump viejo si una ejecución nueva no lo produce.
+    metadata_path.unlink(missing_ok=True)
     memdump.unlink(missing_ok=True)
     dump.unlink(missing_ok=True)
     wave.unlink(missing_ok=True)
@@ -191,19 +262,45 @@ def run_program(source: Path, workdir: Path, expected: dict[int, int] | None = N
     trace_file.unlink(missing_ok=True)
     # rtl/: procesador del proyecto 1; rtl-p2/: módulos del proyecto 2 (y top.sv)
     rtl = [str(p) for d in ("rtl", "rtl-p2") for p in sorted((ROOT / d).glob("*.sv"))]
-    run_logged([compiler, "-g2012", "-Wall", "-Wno-timescale",
+    # Cada ejecución se elabora desde sus fuentes con -P del módulo raíz.
+    # No hay caché de binarios que pueda mezclar modos o versiones de RTL.
+    compile_command = [compiler, "-g2012", "-Wall", "-Wno-timescale",
                 "-I", str(ROOT / "rtl"), "-I", str(ROOT / "rtl-p2"), "-I", str(ROOT / "tb"),
-                "-s", "tb_assembled_program", "-o", str(binary), *rtl,
-                str(ROOT / "tests/rtl/tb_assembled_program.sv")],
-               ROOT, compile_log, 30)
+                "-s", "tb_assembled_program", f"-Ptb_assembled_program.MEM_MODE={mem_mode}",
+                "-o", str(binary), *rtl, str(ROOT / "tests/rtl/tb_assembled_program.sv")]
+    run_logged(compile_command, ROOT, compile_log, 30)
     command = [simulator, "-n", str(binary), f"+MEM={memory}",
                f"+REGDUMP={dump}", f"+BUNDLES={len(program.bundles)}",
-               f"+MEMDUMP={memdump}", f"+CYCLES={cycles or len(program.bundles) + 4}"]
+               f"+MEMDUMP={memdump}", f"+CYCLES={cycles or len(program.bundles) + 4}",
+               f"+REQUESTED_MEM_MODE={mem_mode}"]
     if vcd:
         command.append(f"+VCD={wave}")
     if trace:
         command.append(f"+TRACE={raw_trace}")
-    run_logged(command, workdir, sim_log, 10)
+    # El código0 por sí solo no confirma persistencia: exigimos el marcador
+    # del handshake y el cierre normal del banco en ESTA ejecución. El RTL
+    # distingue flancos del programa de mantenimiento; el timeout de pared da
+    # margen para flush, sin reemplazar el timeout de protocolo del testbench.
+    try:
+        output = run_logged(command, workdir, sim_log, 30)
+        flushed = re.search(r"^\[FLUSH\] fase=assembled modo=[012] espera=[0-9]+ salida=[0-9]+$",
+                            output, re.MULTILINE)
+        finished = f"[OK] programa ejecutado: {len(program.bundles)} bundles; 32 registros definidos"
+        if not flushed or finished not in output:
+            raise SimulationError(f"simulación sin confirmación de vaciado o finalización; consulte {sim_log}")
+        if not dump.is_file() or not memdump.is_file():
+            raise SimulationError(f"simulación sin dumps nuevos completos; consulte {sim_log}")
+        # Primero mantenemos los errores históricos de proceso/flush/dumps.
+        # Después acreditamos modo y fronteras: un rc=0 nunca sustituye esto.
+        metadata = execution_metadata(output, mem_mode, len(program.bundles),
+                                      cycles or len(program.bundles)+4)
+    except (OSError, SimulationError):
+        # Puede existir un snapshot parcial de registros si el flush falla luego.
+        # Invalidamos solo nuestros dos dumps; conservamos logs, traza y ondas
+        # para diagnóstico y nunca aceptamos restos de una ejecución anterior.
+        dump.unlink(missing_ok=True)
+        memdump.unlink(missing_ok=True)
+        raise
     if trace:
         trace_file.write_text(trace_text(source.name, program, source_labels(source_text),
                                          raw_trace.read_text(encoding="ascii").splitlines()),
@@ -230,10 +327,23 @@ def run_program(source: Path, workdir: Path, expected: dict[int, int] | None = N
             mismatches.append(f"mem[0x{address:04x}]: obtenido 0x{actual:08x}, esperado 0x{value:08x}")
     if mismatches:
         raise SimulationError("resultados incorrectos:\n" + "\n".join(mismatches))
+    # Se publica el reporte solo después de validar TODAS las salidas y oráculos.
+    # Los hashes complementan la comparación de bytes; no acreditan corrección.
+    metadata.update(schema=1, image_sha256=hashlib.sha256(memory.read_bytes()).hexdigest(),
+                    binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
+                    compile_command=compile_command, simulation_command=command)
+    metadata_path.write_text(json.dumps(metadata, indent=2)+"\n", encoding="utf-8")
     return registers
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Convierte argumentos CLI en la misma API, con modo cero predeterminado.
+
+    argv opcional permite consumidores existentes. Retorna cero al ejecutar y
+    validar, uno ante error de archivo/ensamblado/simulación; argparse conserva
+    su salida dos para opciones inválidas. El workdir sigue bajo control del
+    llamador y recibe reportes nuevos junto a los formatos históricos.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True, type=Path, help="programa ensamblador")
     parser.add_argument("--workdir", type=Path, help="salidas; por defecto build/program_<nombre>")
@@ -243,6 +353,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cycles", type=int, help="ciclos de ejecución para programas con saltos")
     parser.add_argument("--trace", action="store_true",
                         help="traza dinámica en trace.txt: cada cambio de registro o memoria, ciclo a ciclo")
+    parser.add_argument("--mem-mode", type=int, choices=(0, 1, 2), default=0,
+                        help="memoria elaborada: 0 directa, 1 stalls, 2 L1-D exclusiva")
     args = parser.parse_args(argv)
     workdir = args.workdir or ROOT / "build" / f"program_{args.input.stem}"
     try:
@@ -261,7 +373,7 @@ def main(argv: list[str] | None = None) -> int:
                     raise SimulationError("dirección de memoria repetida")
                 expected_memory[number] = integer(value) if isinstance(value, str) else value
         registers = run_program(args.input, workdir, expected, not args.no_vcd, expected_memory, args.cycles,
-                                args.trace)
+                                args.trace, args.mem_mode)
     except (OSError, UnicodeError, ValueError, SimulationError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
