@@ -7,7 +7,11 @@
 // el mantenimiento; el protocolo no detiene por sí solo el procesador.
 `include "isa_defs.sv"
 
-module tb_assembled_program;
+// MEM_MODE se resuelve al elaborar: -P del módulo raíz llega a top. Cero
+// conserva los consumidores anteriores; un plusarg solo verifica lo elaborado.
+module tb_assembled_program #(
+    parameter int MEM_MODE = 0
+);
 
     // El límite protege la simulación sin sustituir el protocolo por un retardo.
     // Se configura solo para pruebas/diagnóstico; la persistencia siempre exige done=1.
@@ -88,11 +92,52 @@ module tb_assembled_program;
     string mem_path, dump_path, wave_path, data_dump_path;
     integer bundles, dump_fd, cycles, data_fd;
 
-    top DUT (
+    top #(.MEM_MODE(MEM_MODE)) DUT (
         .clk(clk), .reset(reset), .flush_req(flush_req), .flush_done(flush_done),
         .debug_result(debug_result), .debug_rd(debug_rd),
         .debug_write(debug_write)
     );
+
+    // Acreditamos la instancia real antes de ejecutar. REQUESTED_MEM_MODE no
+    // configura hardware: detecta un binario reutilizado del otro modo.
+    integer requested_mode;
+    initial begin
+        requested_mode=MEM_MODE;
+        if ($value$plusargs("REQUESTED_MEM_MODE=%d",requested_mode)) begin end
+        #1;
+        if (MEM_MODE<0 || MEM_MODE>2 || requested_mode!==MEM_MODE || DUT.MEM_MODE!==MEM_MODE)
+            $fatal(1,"[FAIL] modo de memoria distinto solicitado=%0d banco=%0d efectivo=%0d",requested_mode,MEM_MODE,DUT.MEM_MODE);
+        $display("[MEM_MODE] solicitado=%0d efectivo=%0d",requested_mode,DUT.MEM_MODE);
+    end
+
+    // Solo se elaboran estas referencias en modo 2. Revisamos parámetros
+    // públicos de la caché, nunca etiquetas o MSHR para construir un oráculo.
+    // La L2 vigente sigue siendo el modelo: esta prueba no acredita la real.
+    generate if (MEM_MODE==2) begin : verify_cache_config
+        initial begin
+            #1;
+            if (DUT.g_mem_cache.HIER.L1D.WRITE_POLICY !== 1'b1 ||
+                DUT.g_mem_cache.HIER.L1D.ALLOC_POLICY !== 1'b1 ||
+                DUT.g_mem_cache.HIER.L1D.INCL_POLICY !== 2'd2 ||
+                DUT.g_mem_cache.HIER.L1D.REPL_POLICY !== 2'd0 ||
+                DUT.g_mem_cache.HIER.L1D.WB_DEPTH != 4 ||
+                DUT.g_mem_cache.HIER.L1D.N_MSHR != 2 ||
+                DUT.g_mem_cache.HIER.L1D.L2_BUS_V2 !== 1'b1)
+                $fatal(1,"[FAIL] configuración de caché distinta de WB/WA/EXCLUSIVA/LRU/WB4/MSHR2/v2");
+            $display("[CACHE_CONFIG] write=WB alloc=WA inclusion=EXCLUSIVE replacement=LRU wb_depth=4 mshr=2 bus_v2=1 l2=MODEL");
+        end
+    end endgenerate
+
+    // Contamos todos los posedge de clk, incluso reset y mantenimiento. La
+    // diferencia entre dos capturas POST-NBA mide flush sin modificar su tarea.
+    // Los tres intervalos permiten detectar que mantenimiento se sumó por error
+    // a la ejecución. Ninguno de estos observadores controla el procesador.
+    longint unsigned clock_edges=0, start_edges, flush_start_edges;
+    integer execution_advances, execution_edges;
+    // time usa unidades de 1 ns por timescale. Imprimir %0d evita confundir
+    // estos enteros con %t, que Icarus puede presentar en precisión de 1 ps.
+    time start_ns, execution_ns, maintenance_start_ns, maintenance_ns;
+    always @(posedge clk) clock_edges <= clock_edges+1;
 
     always #5 clk = ~clk;
 
@@ -169,6 +214,7 @@ module tb_assembled_program;
 
         repeat (2) @(negedge clk);
         reset = 0;
+        start_edges=clock_edges; start_ns=$time;
         // CYCLES delimita avances efectivos, incluidos saltos y NOP: los stalls
         // no completan el pipeline. En modo0 coincide con el presupuesto anterior.
         // El límite general evita colgarse si core_en nunca permite avanzar.
@@ -183,6 +229,11 @@ module tb_assembled_program;
             end
             if (advanced<cycles) $fatal(1,"[FAIL] programa no alcanza presupuesto avances=%0d generales=%0d",advanced,elapsed);
             #1; // Snapshot del banco una vez consumidas las NBA del último avance.
+            // Conservamos las medidas del mismo horizonte usado por GPR/traza.
+            // elapsed-advanced son flancos observados con core_en=0, no saltos
+            // ni instrucciones retiradas. Los saltos también consumen avances.
+            execution_advances=advanced; execution_edges=elapsed;
+            execution_ns=$time-start_ns;
         end
         dump_fd = $fopen(dump_path, "w");
         if (!dump_fd) $fatal(1, "[FAIL] no se puede escribir el dump de registros");
@@ -195,13 +246,23 @@ module tb_assembled_program;
         // Cerramos la traza en el mismo horizonte que los registros. El reloj
         // sigue durante mantenimiento, pero esos flancos no son ejecución medida.
         if (trace_fd) begin $fclose(trace_fd); trace_fd=0; end
+        // Capturamos el contador general a ambos lados del handshake existente.
+        // Su diferencia incluye espera y retorno a IDLE, y vale cero en modo 0/1.
+        flush_start_edges=clock_edges; maintenance_start_ns=$time;
         flush_cache("assembled");
+        maintenance_ns=$time-maintenance_start_ns;
         data_fd = $fopen(data_dump_path, "w");
         if (!data_fd) $fatal(1, "[FAIL] no se puede escribir el dump de memoria");
         for (int m = 0; m < 16384; m++) $fdisplay(data_fd, "%08x", DUT.DMEM.mem[m]);
         $fclose(data_fd);
         if (DUT.REGFILE.regs[0] !== 32'b0)
             $fatal(1, "[FAIL] x0 dejó de ser cero");
+        // bundles es tamaño estático de IMEM; no representa bundles retirados.
+        // Publicamos unidades y fronteras explícitas para comprobar identidades
+        // de ejecución/mantenimiento sin estimarlas a partir del tiempo de Python.
+        $display("[EXEC_STATS] bundles=%0d avances=%0d flancos=%0d stalls=%0d flush=%0d inicio_flancos=%0d total_flancos=%0d inicio_ns=%0d ejecucion_ns=%0d mantenimiento_ns=%0d total_ns=%0d",
+                 bundles,execution_advances,execution_edges,execution_edges-execution_advances,
+                 clock_edges-flush_start_edges,start_edges,clock_edges,start_ns,execution_ns,maintenance_ns,$time);
         $display("[OK] programa ejecutado: %0d bundles; 32 registros definidos", bundles);
         if (trace_fd) $fclose(trace_fd);
         $finish;

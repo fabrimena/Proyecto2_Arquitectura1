@@ -167,6 +167,14 @@ test-programs: check-tools
 	IVERILOG=$(IVERILOG) VVP=$(VVP) python3 -m unittest discover -s tests -p 'test_cpu_program.py' -v
 
 
+# Regresión del issue #9: ambos modos ejecutan el mismo programa y se comparan
+# 32 GPR y toda DMEM después del flush. No se agrega como dependencia de sim.
+.PHONY: test-memory-modes
+test-memory-modes: check-tools
+	@command -v $(VVP) > /dev/null || { echo "No se encontró $(VVP)"; exit 1; }
+	PYTHONDONTWRITEBYTECODE=1 IVERILOG=$(IVERILOG) VVP=$(VVP) python3 -m unittest discover -s tests -p 'test_memory_modes.py' -v
+
+
 # ------------------------------------------------------------------------------
 #  make archivo ARCHIVO=<ruta>
 #

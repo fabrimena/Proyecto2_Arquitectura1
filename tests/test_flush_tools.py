@@ -203,8 +203,9 @@ class FlushToolsTests(unittest.TestCase):
     def runner_root(self, mode, mutant=None):
         """Prepara solo el adaptador temporal que necesita la API existente.
 
-        run_program no añade selección de modo al CLI del issue9. Aquí la copia
-        del banco usa instanciación parametrizada con sustitución verificada;
+        El runner del issue9 selecciona el parámetro público al elaborar. Aquí
+        la copia conserva el adaptador externo del #28 con sustitución verificada;
+        la llamada a la API declara el mismo modo para verificarlo en el DUT;
         RTL y utilidades se enlazan en lectura. El assert dentro del banco prueba
         el modo elaborado incluso cuando el script invoca Icarus sin cfg externo.
         """
@@ -213,7 +214,8 @@ class FlushToolsTests(unittest.TestCase):
             (work/d).symlink_to(ROOT/d, target_is_directory=True)
         (work/'tests/rtl').mkdir(parents=True)
         text = (ROOT/'tests/rtl/tb_assembled_program.sv').read_text()
-        text = replace_once(text, '    top DUT (', f'    top #(.MEM_MODE({mode})) DUT (')
+        text = replace_once(text, '    parameter int MEM_MODE = 0',
+                            f'    parameter int MEM_MODE = {mode}')
         text = replace_once(text, '    always #5 clk = ~clk;', f'''    initial begin #1;
             if(DUT.MEM_MODE!={mode}) $fatal(1,"[FAIL] modo efectivo runner");
             $display("[CONFIG_P28] runner modo={mode}");
@@ -235,7 +237,7 @@ class FlushToolsTests(unittest.TestCase):
                 root = self.runner_root(mode)
                 source = root/'input.asm'; source.write_text(asm)
                 with mock.patch.object(runner, 'ROOT', root):
-                    regs = runner.run_program(source, root/'out', {4:77, 5:77}, vcd=False, trace=True)
+                    regs = runner.run_program(source, root/'out', {4:77, 5:77}, vcd=False, trace=True, mem_mode=mode)
                 # Solo x4 y x5 deben cambiar; también comprobamos los otros
                 # 30 registros para detectar escrituras ajenas al programa.
                 self.assertEqual(regs, {r:77 if r in (4,5) else 0 for r in range(32)})
@@ -428,7 +430,7 @@ class FlushToolsTests(unittest.TestCase):
         root=self.runner_root(2);source=root/'active.asm'
         source.write_text('sumai x4,x0,7 | nop | nop | nop\nnop\nnop\nloop: nop | guardap x0,x4,256 | sye x0,loop | nop\n')
         with mock.patch.object(runner,'ROOT',root),self.assertRaisesRegex(runner.SimulationError,'no quiescente'):
-            runner.run_program(source,root/'out',vcd=False,cycles=12)
+            runner.run_program(source,root/'out',vcd=False,cycles=12,mem_mode=2)
         self.assertFalse((root/'out/memory.txt').exists())
 
     def test_09_reset_before_encryption_persistence(self):
