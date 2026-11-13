@@ -146,5 +146,83 @@ class IsaTests(unittest.TestCase):
                 assemble_source(path.read_text())
 
 
+class CacheIsaTests(unittest.TestCase):
+    """Comprueba que lcont participa de los riesgos del VLIW como un load."""
+
+    def test_cache_only_in_lsu_slot(self):
+        # Todos los mnemónicos nuevos se rechazan en los otros tres slots.
+        for instruction in ('vaciarc', 'medir 1', 'lcont x4,0'):
+            for slot in range(4):
+                slots = ['nop'] * 4
+                slots[slot] = instruction
+                with self.subTest(instruction=instruction, slot=slot):
+                    if slot == 1:
+                        self.assertEqual(len(assemble_source(' | '.join(slots)).bundles), 1)
+                    else:
+                        with self.assertRaisesRegex(AssemblyError, 'slot 1'):
+                            assemble_source(' | '.join(slots))
+
+    def test_lcont_same_bundle_raw_waw(self):
+        # Incluye la mitad alta de un par Feistel: una lectura cero reservada
+        # sigue siendo productora y no puede eludir los conflictos del bundle.
+        cases = [('sumai x4,x0,1 | lcont x4,0 | nop | nop', 'WAW'),
+                 ('mov x5,x4 | lcont x4,13 | nop | nop', 'RAW'),
+                 ('nop | lcont x4,0 | igualsi x4,x0,0 | nop', 'RAW'),
+                 ('nop | lcont x3,0 | nop | fsl x6,x2,0,0', 'RAW'),
+                 ('nop | lcont x7,0 | nop | fsl x6,x2,0,0', 'WAW')]
+        for source, error in cases:
+            with self.subTest(source=source), self.assertRaisesRegex(AssemblyError, error):
+                assemble_source(source)
+
+    def test_lcont_n_plus_three(self):
+        # A distancia 1/2 la lectura es prematura; 3/4 conservan N+3.
+        for selector in (0, 12, 13, 31, 32, 63):
+            for distance in (1, 2, 3, 4):
+                source = 'nop | lcont x4,%d | nop | nop\n' % selector
+                source += 'nop\n' * (distance - 1) + 'mov x5,x4 | nop | nop | nop'
+                with self.subTest(selector=selector, distance=distance):
+                    if distance < 3:
+                        with self.assertRaisesRegex(AssemblyError, 'RAW en x4'):
+                            assemble_source(source)
+                    else:
+                        self.assertEqual(len(assemble_source(source).bundles), distance + 1)
+
+    def test_lcont_dependencies_across_control_flow(self):
+        # El calendario sigue el salto tomado, aunque haya NOP en el camino omitido.
+        source = ('nop | lcont x4,0 | sye x0,target | nop\nnop\nnop\n'
+                  'target: mov x5,x4 | nop | nop | nop')
+        with self.assertRaisesRegex(AssemblyError, 'RAW'):
+            assemble_source(source)
+        source = ('nop | lcont x4,0 | sye x0,target | nop\n'
+                  'target: nop\nnop\nmov x5,x4 | nop | nop | nop')
+        self.assertEqual(len(assemble_source(source).bundles), 4)
+
+    def test_lcont_dependencies_on_conditional_paths_and_backedge(self):
+        # Se revisan el camino secuencial, el tomado y el retorno a un ciclo.
+        cases = [
+            'nop | lcont x4,0 | igualno x0,x0,far | nop\nmov x5,x4 | nop | nop | nop\nfar: nop',
+            'nop | lcont x4,0 | igualno x0,x0,far | nop\nnop\nnop\nfar: mov x5,x4 | nop | nop | nop',
+            'loop: mov x5,x4 | nop | nop | nop\nnop | lcont x4,0 | sye x0,loop | nop',
+        ]
+        for source in cases:
+            with self.subTest(source=source), self.assertRaisesRegex(AssemblyError, 'RAW'):
+                assemble_source(source)
+
+    def test_lcont_x0_and_effect_free_controls(self):
+        # x0 no crea dependencias. medir/vaciarc no escriben registros ocultos.
+        program = assemble_source('sumai x0,x0,1 | lcont x0,0 | nop | nop\n'
+                                  'mov x4,x0 | medir 0 | nop | nop\n'
+                                  'sumai x5,x0,1 | vaciarc | nop | nop')
+        self.assertEqual(len(program.bundles), 3)
+        self.assertEqual(program.bundles[0].instructions[1].writes, ())
+
+    def test_lcont_unknown_mnemonic_and_bad_bundle_rejected(self):
+        # No se agrega una vía de escape para emitir palabras crudas o IDs desconocidos.
+        for source in ('nop | vaciarc 1 | nop | nop', 'nop | medir 1,0 | nop | nop',
+                       'nop | lcont x1,64 | nop | nop', 'nop | cache 0 | nop | nop'):
+            with self.subTest(source=source), self.assertRaises(AssemblyError):
+                assemble_source(source)
+
+
 if __name__ == '__main__':
     unittest.main()
