@@ -175,6 +175,22 @@ test-memory-modes: check-tools
 	PYTHONDONTWRITEBYTECODE=1 IVERILOG=$(IVERILOG) VVP=$(VVP) python3 -m unittest discover -s tests -p 'test_memory_modes.py' -v
 
 
+# Issue #29: suite independiente; no agrega trabajo a sim ni cambia sus targets.
+# Sin P29_EVIDENCE_DIR usa temporales externos; con ella exige un destino nuevo.
+.PHONY: test-memory-benchmarks bench-memory
+test-memory-benchmarks: check-tools
+	@command -v $(VVP) > /dev/null || { echo "No se encontró $(VVP)"; exit 1; }
+	PYTHONDONTWRITEBYTECODE=1 IVERILOG=$(IVERILOG) VVP=$(VVP) python3 -m unittest discover -s tests -p 'test_memory_benchmarks.py' -v
+
+# El llamador elige un directorio externo NUEVO para conservar CSV, JSON y dumps.
+# El runner rechaza rutas internas, destinos existentes y repeticiones inválidas.
+BENCH_OUTPUT ?=
+BENCH_REPETITIONS ?= 1
+bench-memory: check-tools
+	@test -n "$(BENCH_OUTPUT)" || { echo "Use BENCH_OUTPUT=<directorio externo nuevo>"; exit 1; }
+	PYTHONDONTWRITEBYTECODE=1 IVERILOG=$(IVERILOG) VVP=$(VVP) python3 tools/run_memory_benchmarks.py --output "$(BENCH_OUTPUT)" --repeat "$(BENCH_REPETITIONS)"
+
+
 # ------------------------------------------------------------------------------
 #  make archivo ARCHIVO=<ruta>
 #
