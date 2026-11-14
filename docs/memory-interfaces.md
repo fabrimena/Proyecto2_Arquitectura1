@@ -2,14 +2,14 @@
 
 > Curso: CE4301 – Arquitectura de Computadores I, II Semestre 2026  
 > Profesor: Dr.-Ing. Jeferson González Gómez  
-> Estado: interfaces de núcleo y L1-D documentadas; controlador de memoria y eviction buffer implementados y probados por separado; integración con L2 real pendiente 
+> Estado: interfaces de núcleo y L1-D documentadas; controlador de memoria y eviction buffer implementados y probados por separado; L2 real implementada y verificada (`rtl-p2/l2_cache.sv`); su integración en `mem_hierarchy.sv` pendiente 
 > Equipo: Dylan Guerrero González, José García Izaguirre, Javier Hernández Castillo, Alejandro Vásquez Oviedo, Fabricio Mena Mejia
 
 Cómo se conectan el núcleo del proyecto 1, la L1-D, la L2 y la memoria principal. La idea es que cada
 uno pueda hacer y probar su módulo por separado contra un modelo simple y que después todo encaje. Las
 secciones 2 a 4 están en `rtl-p2/top.sv` y `rtl-p2/mem_stall_model.sv`; la 5, la 7 y la 8 en
 `rtl-p2/mem_hierarchy.sv`, la L1-D de José y la L2 de prueba (`rtl-p2/l2_model.sv`). La sección 6 documenta los puertos implementados de memoria principal y eviction buffer.
-La conexión de estos módulos con la L2 real todavía está pendiente en `mem_hierarchy.sv`. Las decisiones de
+La L2 real ya está implementada y verificada (`rtl-p2/l2_cache.sv`); lo que sigue pendiente es conectarla en `mem_hierarchy.sv` en lugar de la L2 de prueba, y conectar ahí el eviction buffer y el controlador. Las decisiones de
 diseño están en [`decisiones-importantes.md`](decisiones-importantes.md).
 
 ## 1. Regla de partida
@@ -143,7 +143,7 @@ en la L1-D por José, ver [`l1d-cache.md`](l1d-cache.md)):
 - Write buffer de 4 entradas (2 a 8) con el mismo formato que una escritura del bus. Riesgo RAW: con
   NINE se reenvían los bytes pendientes; con exclusiva se espera a que la entrada llegue a la L2.
 
-**L2 de prueba** (`rtl-p2/l2_model.sv`). Mientras no está la L2 real, `mem_hierarchy` conecta este
+**L2 de prueba** (`rtl-p2/l2_model.sv`). Mientras la L2 real no se conecta en `mem_hierarchy`, la jerarquía sigue instanciando este
 modelo: siempre acierta, no guarda líneas y lee o escribe DMEM una palabra por ciclo, así que una
 lectura tarda exactamente 8 ciclos (las 8 palabras de la línea). Una escritura ocupa el modelo 8
 ciclos. `l2_rdirty` siempre es 0 porque lo que entrega ya está en la RAM; con la política exclusiva se
