@@ -314,7 +314,16 @@ El buffer utiliza `clk` del dominio CPU y `reset`. La integración de buffer, co
 
 ### 6.7.1. Estado real de integración con la jerarquía
 
-En la versión revisada de `rtl-p2/mem_hierarchy.sv`, las solicitudes de la L1-D llegan a `l2_model`, que sigue conectado directamente a DMEM mediante `m_we`, `m_be`, `m_addr`, `m_wdata` y `m_rdata`. La L2 real, el eviction buffer y el controlador no están instanciados allí. Por tanto, **las interfaces del buffer y del controlador están definidas y verificadas por separado, pero su conexión con la L2 real está pendiente**. El bus L1-D ↔ L2 de la sección 5 permanece como contrato de integración; no debe confundirse con los puertos `evict_*` y `read_*` del buffer.
+En la versión revisada de `rtl-p2/mem_hierarchy.sv`, las solicitudes de la L1-D llegan a `l2_model`, que sigue conectado directamente a DMEM mediante `m_we`, `m_be`, `m_addr`, `m_wdata` y `m_rdata`. El eviction buffer y el controlador no están instanciados ahí. Por tanto, **el intercambio con la jerarquía sigue pendiente**: sustituir `l2_model` por la L2 real en `mem_hierarchy.sv` es el issue #27, que no es de este bloque. El bus L1-D ↔ L2 de la sección 5 permanece como contrato de integración; no debe confundirse con los puertos `evict_*` y `read_*` del buffer.
+
+**La L2 real ya existe y habla con estos puertos.** `rtl-p2/l2_cache.sv` (rama `feat/l2-cache`) es la L2 unificada write-back del proyecto: 16 KB, 4 vías, líneas de 32 B, hit de 8 ciclos y write-back. Su bus hacia abajo usa **exactamente** los nombres y la polaridad de la sección 6.7, sin adaptadores:
+
+- Desalojo: `evict_valid`, `evict_addr`, `evict_line` hacia el buffer, y `evict_ready` de vuelta.
+- Lectura de línea: `read_req`, `read_addr` hacia el buffer, y `read_ready`, `read_line`, `read_forwarded` de vuelta.
+
+El handshake de desalojo es `evict_valid && evict_ready`, con `evict_valid` como pulso de un ciclo. Cuando el buffer responde con `read_forwarded`, la línea viene sucia, porque el buffer solo guarda líneas sucias: la L2 la marca como tal en sus metadatos (`wr_dirty`) y, en modo EXCLUSIVE (el de por defecto), también la entrega al nivel superior como sucia (`l2_rdirty`). Con NINE la entrega limpia (`l2_rdirty = 0`) y guarda su propia copia de la línea.
+
+La compatibilitía está verificada con `tb-p2/tb_l2_cache_integracion.sv`, que corre la L2 real contra el `eviction_buffer.sv` y el `mem_controller.sv` **reales**, con una RAM simulada de 16384 palabras: comprueba que la línea sucia desalojada llega a la RAM con sus datos, y que una línea reenviada por el buffer se entrega sucia y termina en la RAM.
 
 ### 6.8. Verificación
 
