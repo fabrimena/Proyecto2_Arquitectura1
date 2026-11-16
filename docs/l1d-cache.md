@@ -160,8 +160,8 @@ escriben registros, así que pueden seguir.
 | Vaciado | Empieza cuando no queda ningún MSHR ocupado |
 
 Los MSHR forman una cola: se piden y se llenan en orden de llegada. Hay **una lectura a la L2 en vuelo a la
-vez**. Con la L2 bloqueante no se pierde nada; con la L2 de 4 etapas (Fabricio) se podrían superponer
-lecturas, y eso queda como mejora. Con `N_MSHR` = 1 la caché es exactamente la bloqueante.
+vez**. La L2 en 4 etapas podría atender varias lecturas superpuestas, pero la L1-D pide una a la vez;
+superponerlas queda como mejora. Con `N_MSHR` = 1 la caché es exactamente la bloqueante.
 
 ### Latencias (medidas en `tb_l1d_cache`, `tb_l1d_writeback` y `tb_l1d_mshr`, L2 de 8 ciclos)
 
