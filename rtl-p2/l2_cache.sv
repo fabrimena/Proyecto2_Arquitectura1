@@ -47,6 +47,39 @@
  Política de escritura: write-back. Una línea solo baja a la RAM cuando sale
  sucia de la L2 (por el eviction buffer) o en el vaciado.
 
+ Vaciado (D16)
+ ------------------------------------------------------------------------------
+ La L2 sabe vaciarse. La interfaz es la misma que usa la L1-D (l1d_cache.sv):
+     flush_req      pedido de vaciado (el testbench o la instrucción vaciarc).
+     flush_done     1 cuando TODAS las líneas sucias de la L2 ya llegaron a la
+                    RAM; se mantiene mientras flush_req siga en 1.
+     lower_drained  1 cuando el nivel inferior no tiene líneas sucias
+                    pendientes: el eviction buffer está vacío, o sea, la RAM ya
+                    confirmó las escrituras.
+
+ Cómo funciona:
+     1. La L2 recorre sus 512 líneas (128 conjuntos x 4 vías) buscando las
+        sucias. Cada línea sucia se le entrega al eviction buffer con el mismo
+        handshake de siempre (evict_valid y evict_ready) y su copia en la L2
+        queda limpia: a partir de ahí la L2 y la RAM tienen lo mismo.
+     2. Cuando ya no quedan líneas sucias, la L2 espera a que el nivel
+        inferior se vacíe (lower_drained = 1) y entonces pone flush_done = 1.
+
+ Contrato con el nivel de arriba (quien cablea esto es issue #27):
+     - El pedido de vaciado de la L2 se sube DESPUÉS de que la L1-D haya
+       terminado su propio vaciado (su flush_done). Así las líneas sucias de
+       la L1-D ya están dentro de la L2 y el vaciado de la L2 las alcanza.
+     - Mientras dura el vaciado la L2 no acepta peticiones (l2_gnt = 0), así
+       que el núcleo queda detenido. Como la L2 es bloqueante, una petición que
+       ya estaba en curso se termina antes de empezar el barrido.
+     - Igual que en la L1-D, flush_done es un NIVEL: se levanta cuando el
+       vaciado termina y se mantiene mientras flush_req siga en alto. La L2
+       sigue detenida hasta que flush_req baja, y entonces vuelve a estar
+       libre y a aceptar peticiones.
+     - Si hay una petición pendiente en el instante en que llega flush_req, la
+       L2 la acepta primero (la señal l2_gnt ya está en alto y no se puede
+       cancelar una aceptación) y el barrido empieza al terminar.
+
  Política de reemplazo (REPL_POLICY): la decide rtl-p2/l2_replacement.sv.
      RP2_PLRU (por defecto) es un pseudo-LRU de árbol: una APROXIMACIÓN del LRU
      exacto, no el LRU exacto. RP2_RANDOM usa un LFSR.
@@ -118,7 +151,18 @@ module l2_cache #(
     output logic [31:0]            read_addr,
     input  logic                   read_ready,
     input  logic [LINE_W-1:0]      read_line,
-    input  logic                   read_forwarded
+    input  logic                   read_forwarded,
+
+    // ------------------------------------------------------------------
+    // Vaciado (D16). Misma convención que la L1-D (l1d_cache.sv).
+    // ------------------------------------------------------------------
+    //   flush_req      pedido de vaciado.
+    //   flush_done     1 cuando las líneas sucias de la L2 ya están en la RAM.
+    //   lower_drained  1 cuando el nivel inferior no tiene líneas sucias
+    //                  pendientes (el eviction buffer está vacío).
+    input  logic                   flush_req,
+    output logic                   flush_done,
+    input  logic                   lower_drained
 );
 
 
@@ -149,14 +193,22 @@ end
 //   S_WR_FETCH espera la línea del nivel inferior (write-allocate)
 //   S_WR_STORE escribe la línea en la L2
 //   S_WR_COMMIT deja pasar un ciclo para que los arreglos queden actualizados
+//   S_FL_SCAN  vaciado: recorre las 512 líneas buscando las sucias
+//   S_FL_EVICT vaciado: está sacando una línea sucia al eviction buffer
+//   S_FL_WAIT  vaciado: espera a que el nivel inferior se vacíe
+//   S_FL_DONE  vaciado terminado (flush_done = 1 mientras flush_req siga en 1)
 
-localparam logic [2:0] S_IDLE       = 3'd0;
-localparam logic [2:0] S_EVICT      = 3'd1;
-localparam logic [2:0] S_RD_WAIT    = 3'd2;
-localparam logic [2:0] S_RD_FETCH   = 3'd3;
-localparam logic [2:0] S_WR_FETCH   = 3'd4;
-localparam logic [2:0] S_WR_STORE   = 3'd5;
-localparam logic [2:0] S_WR_COMMIT  = 3'd6;
+localparam logic [3:0] S_IDLE       = 4'd0;
+localparam logic [3:0] S_EVICT      = 4'd1;
+localparam logic [3:0] S_RD_WAIT    = 4'd2;
+localparam logic [3:0] S_RD_FETCH   = 4'd3;
+localparam logic [3:0] S_WR_FETCH   = 4'd4;
+localparam logic [3:0] S_WR_STORE   = 4'd5;
+localparam logic [3:0] S_WR_COMMIT  = 4'd6;
+localparam logic [3:0] S_FL_SCAN    = 4'd7;
+localparam logic [3:0] S_FL_EVICT   = 4'd8;
+localparam logic [3:0] S_FL_WAIT    = 4'd9;
+localparam logic [3:0] S_FL_DONE    = 4'd10;
 
 
 // ============================================================================
@@ -204,6 +256,10 @@ generate
                 tag_mem[wr_set]    <= wr_tag;
                 data_mem[wr_set]   <= wr_line;
             end
+            else if (clr_dirty_en && (clr_dirty_way == WAY_ID)) begin
+                // Solo el bit sucio: la etiqueta y los datos no se tocan.
+                dirty_bits[clr_dirty_set] <= 1'b0;
+            end
         end
 
         // Valores iniciales (solo para no ver X en las ondas)
@@ -230,6 +286,14 @@ logic [LINE_W-1:0]     wr_line;
 logic                   wr_dirty;
 logic                   wr_valid;
 
+// Puerto para limpiar SOLO el bit sucio de una línea, sin tocar la etiqueta ni
+// los datos. Lo usa el vaciado: cuando una línea sucia baja al eviction
+// buffer, la copia de la L2 pasa a estar limpia (ya está en la RAM) pero sigue
+// siendo válida y sigue teniendo los mismos datos.
+logic                   clr_dirty_en;
+logic [L2_INDEX_W-1:0] clr_dirty_set;
+logic [L2_WAY_W-1:0]   clr_dirty_way;
+
 
 // ============================================================================
 // Decodificación de la dirección del bus
@@ -238,8 +302,9 @@ logic                   wr_valid;
 logic [L2_INDEX_W-1:0] bus_set;
 logic [L2_TAG_W-1:0]   addr_tag;   // etiqueta de la dirección del bus
 
-assign bus_set  = l2_addr[L2_INDEX_MSB:L2_INDEX_LSB];
-assign addr_tag = l2_addr[L2_TAG_MSB:L2_TAG_LSB];
+// El valor de bus_set lo fija el barrido de vaciado (ver más abajo): durante
+// el barrido, la lectura de los arreglos apunta al conjunto que se está
+// revisando y no a la dirección de la petición.
 
 
 // ============================================================================
@@ -326,7 +391,10 @@ l2_replacement #(.REPL_POLICY(REPL_POLICY)) REPL (
 // Estado de la máquina
 // ============================================================================
 
-logic [2:0]           state;
+// Ojo: la máquina de estados tiene once estados (0..10), así que el estado
+// necesita CUATRO bits. Con tres bits los estados del vaciado (7..10) no
+// entrarían y la FSM caería en el caso por defecto.
+logic [3:0]           state;
 logic [7:0]           cnt;          // cuenta los 8 ciclos del acceso
 
 logic                 is_read_q;    // la petición en curso es una lectura
@@ -350,6 +418,48 @@ logic [LINE_MASK_W-1:0] w_be;
 logic [LINE_W-1:0]     store_line;  // línea que se va a escribir en la L2
 logic                 store_dirty;
 logic [LINE_W-1:0]     fetch_line;  // línea vieja + escritura parcial
+
+
+// ============================================================================
+// Vaciado (D16): el barrido de las 512 líneas
+// ============================================================================
+//
+// El puntero recorre las 512 líneas de la L2 (128 conjuntos x 4 vías):
+//     scan_ptr[8:2] = conjunto (7 bits)
+//     scan_ptr[1:0] = vía (2 bits)
+//
+// Durante el barrido, el puerto de lectura de los arreglos se apunta al
+// conjunto que se está revisando. Es el mismo truco que usa la L1-D con su
+// puerto B: un solo puerto de lectura, multiplexado.
+
+logic [8:0]            scan_ptr;
+logic [L2_INDEX_W-1:0] scan_set;
+logic [L2_WAY_W-1:0]   scan_way;
+logic                  flush_scanning;
+
+localparam logic [8:0] SCAN_LAST = 9'h1FF;
+
+assign scan_set      = scan_ptr[L2_INDEX_W+1:2];
+assign scan_way      = scan_ptr[L2_WAY_W-1:0];
+
+// El barrido también cubre el estado en que la línea sucia está saliendo:
+// durante los dos estados el puerto de lectura sigue apuntando al conjunto
+// que se está revisando.
+assign flush_scanning = (state == S_FL_SCAN) || (state == S_FL_EVICT);
+
+assign bus_set  = flush_scanning ? scan_set
+                                 : l2_addr[L2_INDEX_MSB:L2_INDEX_LSB];
+assign addr_tag = l2_addr[L2_TAG_MSB:L2_TAG_LSB];
+
+// La línea sucia que se está sacando al eviction buffer.
+logic [LINE_W-1:0]     flush_line_q;
+logic [L2_TAG_W-1:0]   flush_tag_q;
+logic [L2_INDEX_W-1:0] flush_set_q;
+logic [L2_WAY_W-1:0]   flush_way_q;
+
+// El vaciado terminó: se avisa al nivel de arriba. El aviso se mantiene
+// mientras flush_req siga en alto, igual que hace la L1-D.
+assign flush_done = (state == S_FL_DONE);
 
 
 // ============================================================================
@@ -398,6 +508,7 @@ always @(posedge clk) begin
     touch_pulse <= 1'b0;
     fill_pulse  <= 1'b0;
     wr_en       <= 1'b0;
+    clr_dirty_en<= 1'b0;
     l2_gnt      <= 1'b0;
 
     if (reset) begin
@@ -410,6 +521,11 @@ always @(posedge clk) begin
         wr_hit_q  <= 1'b0;
         w_fetch_q <= 1'b0;
         req_way   <= '0;
+        scan_ptr  <= 9'd0;
+        flush_line_q <= '0;
+        flush_tag_q  <= '0;
+        flush_set_q  <= '0;
+        flush_way_q  <= '0;
     end
     else begin
 
@@ -419,8 +535,6 @@ always @(posedge clk) begin
         // S_IDLE: libre. Se acepta una petición como máximo por ciclo.
         // ------------------------------------------------------------------
         S_IDLE: begin
-
-            l2_gnt <= 1'b1;
 
             if (accept) begin
 
@@ -559,6 +673,26 @@ always @(posedge clk) begin
                         end
                     end
                 end
+            end
+            else if (flush_req) begin
+
+                // Empieza el vaciado. La L2 no acepta más peticiones hasta
+                // que termine: el permiso se retira y el núcleo se detiene.
+                //
+                // Ojo: esta rama solo se toma si NO había una petición en
+                // curso (si la hubiera, el if (accept) de arriba ya la habría
+                // atendido). La señal l2_gnt ya está en alto en este ciclo,
+                // así que no se puede dejar a medias una aceptación.
+                scan_ptr <= 9'd0;
+                state    <= S_FL_SCAN;
+                l2_gnt   <= 1'b0;
+
+            end
+            else begin
+
+                // Libre: se da el permiso para la siguiente petición.
+                l2_gnt <= 1'b1;
+
             end
         end
 
@@ -727,6 +861,110 @@ always @(posedge clk) begin
             l2_gnt <= 1'b1;
         end
 
+        // ------------------------------------------------------------------
+        // S_FL_SCAN: el vaciado recorre las 512 líneas buscando las sucias.
+        // ------------------------------------------------------------------
+        //
+        // El barrido usa el mismo puerto de lectura que los accesos: durante
+        // el barrido, bus_set apunta al conjunto que se está revisando (ver
+        // el multiplexor de bus_set).
+
+        S_FL_SCAN: begin
+
+            l2_gnt <= 1'b0;
+
+            if (bus_valid[scan_way] && bus_dirty[scan_way]) begin
+
+                // La línea sucia baja al eviction buffer. Se copian aquí los
+                // tres datos que hacen falta después (la línea, su etiqueta y
+                // su posición) porque el puntero del barrido va a seguir
+                // avanzando.
+                flush_line_q <= bus_line[scan_way*LINE_W +: LINE_W];
+                flush_tag_q  <= bus_tag[scan_way*L2_TAG_W +: L2_TAG_W];
+                flush_set_q  <= scan_set;
+                flush_way_q  <= scan_way;
+                state        <= S_FL_EVICT;
+
+            end
+            else begin
+
+                if (scan_ptr == SCAN_LAST) begin
+                    // Ya se han revisado todas las líneas.
+                    state <= S_FL_WAIT;
+                end
+                else begin
+                    scan_ptr <= scan_ptr + 9'd1;
+                end
+
+            end
+        end
+
+        // ------------------------------------------------------------------
+        // S_FL_EVICT: la línea sucia sale al eviction buffer.
+        // ------------------------------------------------------------------
+        //
+        // El handshake es el mismo que usa el desalojo por reemplazo
+        // (S_EVICT): evict_valid se pone en alto y el handshake se mira en el
+        // ciclo SIGUIENTE, con el valor ya registrado. Si se comprobara
+        // evict_ready en el ciclo de entrada, el pulso se cancelaría solo y el
+        // buffer nunca vería la línea.
+
+        S_FL_EVICT: begin
+
+            evict_valid <= 1'b1;
+
+            if (evict_valid && evict_ready) begin
+
+                // La línea ya está en el buffer: su copia en la L2 queda
+                // limpia, porque a partir de ahora la L2 y la RAM tienen lo
+                // mismo. La etiqueta y los datos no se tocan.
+                evict_valid  <= 1'b0;
+                clr_dirty_en <= 1'b1;
+                clr_dirty_set<= flush_set_q;
+                clr_dirty_way<= flush_way_q;
+
+                scan_ptr <= scan_ptr + 9'd1;
+
+                if (scan_ptr == SCAN_LAST)
+                    state <= S_FL_WAIT;
+                else
+                    state <= S_FL_SCAN;
+
+            end
+        end
+
+        // ------------------------------------------------------------------
+        // S_FL_WAIT: ya no quedan líneas sucias en la L2.
+        // ------------------------------------------------------------------
+        //
+        // Falta que el nivel inferior termine: las líneas que se le entregaron
+        // al eviction buffer tienen que llegar a la RAM. lower_drained lo dice
+        // (el buffer está vacío, o sea, la RAM ya confirmó las escrituras).
+
+        S_FL_WAIT: begin
+
+            l2_gnt <= 1'b0;
+
+            if (lower_drained) begin
+                state <= S_FL_DONE;
+            end
+        end
+
+        // ------------------------------------------------------------------
+        // S_FL_DONE: el vaciado terminó.
+        // ------------------------------------------------------------------
+        //
+        // flush_done está en alto mientras flush_req siga en 1 (igual que en
+        // la L1-D). Cuando flush_req baja, la L2 vuelve a estar libre.
+
+        S_FL_DONE: begin
+
+            if (!flush_req) begin
+                state  <= S_IDLE;
+                l2_gnt <= 1'b1;
+            end
+        end
+
         default: begin
             state  <= S_IDLE;
             l2_gnt <= 1'b1;
@@ -746,6 +984,13 @@ always @(*) begin
     if (state == S_EVICT) begin
         evict_addr = {{(32-PADDR_W){1'b0}}, vic_tag, req_set, {L2_INDEX_LSB{1'b0}}};
         evict_line = vic_line;
+    end
+    else if (state == S_FL_EVICT) begin
+        // Vaciado: la dirección es la de la línea sucia que se está sacando,
+        // la que quedó capturada en S_FL_SCAN. No se puede usar scan_set
+        // porque el puntero del barrido ya ha avanzado.
+        evict_addr = {{(32-PADDR_W){1'b0}}, flush_tag_q, flush_set_q, {L2_INDEX_LSB{1'b0}}};
+        evict_line = flush_line_q;
     end
     else begin
         evict_addr = 32'b0;

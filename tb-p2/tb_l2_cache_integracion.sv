@@ -134,6 +134,15 @@ module tb_l2_cache_integracion;
     // Permite retener la RAM para dejar una línea pendiente en el buffer.
     logic                   mem_hold = 1'b0;
 
+    // ------------------------------------------------------------------
+    // Vaciado (D16): aquí no se ejercita (lo hace tb_l2_cache_flush.sv),
+    // pero los puertos tienen que estar conectados.
+    // ------------------------------------------------------------------
+
+    logic                   flush_req     = 1'b0;
+    logic                   flush_done;
+    logic                   lower_drained;
+
     logic [31:0]            memory [0:MEM_WORDS-1];
 
     integer i;
@@ -168,12 +177,20 @@ module tb_l2_cache_integracion;
         .read_addr(read_addr),
         .read_ready(read_ready),
         .read_line(read_line),
-        .read_forwarded(read_forwarded)
+        .read_forwarded(read_forwarded),
+
+        .flush_req(flush_req),
+        .flush_done(flush_done),
+        .lower_drained(lower_drained)
     );
 
     // ------------------------------------------------------------------
     // El eviction buffer real
     // ------------------------------------------------------------------
+
+    // El nivel inferior está drenado cuando el buffer no tiene nada
+    // pendiente: ni líneas en la FIFO ni una transferencia en curso.
+    assign lower_drained = !busy;
 
     eviction_buffer #(
         .EB_DEPTH(4)

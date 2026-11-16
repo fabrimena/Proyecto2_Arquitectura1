@@ -237,6 +237,16 @@ module `L2_TB_MODULE;
 
     logic                   force_forwarded = 1'b0;
 
+    // ------------------------------------------------------------------
+    // Vaciado (D16). Aquí el vaciado no se ejercita: eso lo hace el
+    // testbench tb_l2_cache_flush.sv. El pedido se deja en 0 y el nivel
+    // inferior se declara siempre drenado.
+    // ------------------------------------------------------------------
+
+    logic                   flush_req    = 1'b0;
+    logic                   flush_done;
+    logic                   lower_drained = 1'b1;
+
     // Observabilidad del nivel inferior.
     integer                 lower_evict_count;
     logic [31:0]            lower_evict_addr;
@@ -277,7 +287,11 @@ module `L2_TB_MODULE;
         .read_addr(read_addr),
         .read_ready(read_ready),
         .read_line(read_line),
-        .read_forwarded(read_forwarded)
+        .read_forwarded(read_forwarded),
+
+        .flush_req(flush_req),
+        .flush_done(flush_done),
+        .lower_drained(lower_drained)
     );
 
     // ------------------------------------------------------------------

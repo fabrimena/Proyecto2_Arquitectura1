@@ -325,6 +325,8 @@ El handshake de desalojo es `evict_valid && evict_ready`, con `evict_valid` como
 
 La compatibilitía está verificada con `tb-p2/tb_l2_cache_integracion.sv`, que corre la L2 real contra el `eviction_buffer.sv` y el `mem_controller.sv` **reales**, con una RAM simulada de 16384 palabras: comprueba que la línea sucia desalojada llega a la RAM con sus datos, y que una línea reenviada por el buffer se entrega sucia y termina en la RAM.
 
+La L2 real también trae su parte del vaciado (`flush_req`, `flush_done` y `lower_drained`): está en la sección 7.1.
+
 ### 6.8. Verificación
 
 Las interfaces del controlador se han probado mediante testbenches de temporización, lectura, escritura, CDC, estrés, timeout, reintentos y confirmaciones atrasadas.
@@ -359,6 +361,45 @@ flush_req = 1'b0;
 
 Adaptar los testbenches de las herramientas es el issue #28 (Javier). La instrucción `vaciarc` (crédito
 extra, `decisiones-importantes.md` 4.4) va a usar la misma cadena.
+
+### 7.1. Vaciado de la L2 (D16)
+
+`rtl-p2/l2_cache.sv` implementa su parte de la cadena de vaciado. La interfaz es la misma que usa la
+L1-D (`rtl-p2/l1d_cache.sv`), sin adaptadores:
+
+| Señal | Dirección | Bits | Contrato |
+|---|---|---:|---|
+| `flush_req` | Entrada | 1 | Pedido de vaciado: la L2 baja todas sus líneas sucias a la RAM |
+| `flush_done` | Salida | 1 | 1 cuando las líneas sucias de la L2 ya están en la RAM; se mantiene mientras `flush_req` siga en 1 |
+| `lower_drained` | Entrada | 1 | 1 cuando el nivel inferior no tiene líneas sucias pendientes: el eviction buffer está vacío y no hay transferencia en curso |
+
+Cómo funciona:
+
+1. La L2 recorre sus 512 líneas (128 conjuntos × 4 vías) con un puntero de 9 bits, buscando las sucias.
+   Cada línea sucia se le entrega al eviction buffer con el handshake de siempre (`evict_valid` y
+   `evict_ready`, con `evict_valid` como pulso de un ciclo). Su copia en la L2 pasa a **limpia**: solo se
+   toca el bit sucio, ni la etiqueta ni los datos, porque a partir de ahí la L2 y la RAM tienen lo mismo.
+2. Cuando ya no quedan líneas sucias, la L2 espera a que el nivel inferior se vacíe
+   (`lower_drained = 1`) y entonces levanta `flush_done`.
+
+El barrido multiplexa el puerto de lectura de los arreglos, igual que hace la L1-D con su puerto B:
+durante el barrido la lectura apunta al conjunto que se está revisando y no a la dirección de la
+petición.
+
+**Secuenciación.** El pedido de vaciado de la L2 se sube **después** de que la L1-D haya terminado el
+suyo (su `flush_done`), para que las líneas sucias de la L1-D ya estén dentro de la L2 y el vaciado de la
+L2 las alcance. Mientras dura el vaciado la L2 no acepta peticiones (`l2_gnt = 0`): el núcleo queda
+detenido. Igual que en la L1-D, `flush_done` es un nivel y la L2 sigue detenida hasta que `flush_req` baja;
+entonces vuelve a estar libre y a aceptar peticiones.
+
+**Cableado (issue #27, de Fabricio).** `lower_drained` se conecta con `!busy` del eviction buffer: el
+nivel inferior está drenado cuando el buffer no tiene líneas en la FIFO ni una transferencia en curso.
+
+La evidencia está en `tb-p2/tb_l2_cache_flush.sv`, que corre la L2 real contra el `eviction_buffer.sv` y el
+`mem_controller.sv` **reales**, con una RAM simulada de 16384 palabras. Comprueba que antes del vaciado la
+RAM no tiene las líneas sucias (la L2 es write-back), que después del vaciado sí, que `flush_done` se
+levanta y se mantiene con `flush_req` en alto, que las copias de la L2 quedan limpias (`l2_rdirty = 0` al
+releerlas) y que la L2 vuelve a aceptar peticiones cuando `flush_req` baja.
 
 ## 8. Puerto B (cripto)
 
@@ -400,6 +441,7 @@ accesos en los dos, se atienden en fases y el núcleo sigue congelado hasta la �
    que mantiene los tiempos de IF y no afecta al compilador.
 6. Puerto B a través de la L1-D: listo (sección 8).
 7. Testbenches de las herramientas con el vaciado (#28, Javier).
+8. Vaciado de la L2: implementado y probado en la L2 real (sección 7.1). Falta el cableado de la L2 real en `mem_hierarchy.sv` y el encadenado del vaciado de la L1-D con el de la L2 (#27, de Fabricio).
 
 ## 10. Pruebas
 
@@ -412,6 +454,7 @@ accesos en los dos, se atienden en fases y el núcleo sigue congelado hasta la �
   CE1108 dan lo mismo que en el proyecto 1: mismas trazas, mismos volcados y mismos ciclos.
 - `make archivo` con `imagen.bmp` en modo 1 con 4 ciclos (usando el `defparam` de la sección 3) da el
   mismo `cifrado.bin` en 41757 ciclos en vez de 23189: la diferencia, 18568, es 4 × 4642 accesos.
+- `make tb_l2_cache_flush` prueba el vaciado de la L2 real contra el eviction buffer y el controlador de memoria reales: antes del vaciado la RAM no tiene las líneas sucias, después sí, `flush_done` se levanta y se mantiene con `flush_req` en alto, las copias de la L2 quedan limpias y la L2 vuelve a aceptar peticiones al bajar `flush_req`.
 - `make tb_mem_hierarchy` prueba la jerarquía del modo 2 sin el procesador, contra un modelo de la
   memoria del proyecto 1: un miss tarda 8 ciclos, un hit y un store con un MSHR libre 0, y los casos del
   puerto B de la sección 8 (incluidos `vcr` y `camcon` sobre palabras que solo están sucias en la L1-D).
