@@ -9,22 +9,39 @@
  cache_stall y el vaciado, y por dentro:
 
      puerto A (LSU) ----+
-                        +--> l1d_port_arbiter --> l1d_cache --> l2_model --> DMEM
-     puerto B (cripto) -+
+                        +--> l1d_port_arbiter --> l1d_cache --> l2_cache
+     puerto B (cripto) -+                                          |
+                                                                   v
+                        DMEM <-- mem_controller <-- eviction_buffer
+                     (clk_mem)    (cruce de relojes)
 
- La L1-D va sin parámetros, con su configuración por defecto (cache_defs.sv):
- write-back, write-allocate, exclusiva, LRU, write buffer de 4 entradas,
- 2 MSHR y bus versión 2. Mientras no esté la L2 real, l2_model hace de L2:
- siempre acierta en 8 ciclos y lee y escribe DMEM. Después se conectan aquí
- la L2, el eviction buffer y el controlador de memoria, sin cambiar top.
+ Con L2_MODEL = 0 (por defecto) es la jerarquía completa del enunciado:
+   - L1-D (José): write-back, write-allocate, exclusiva, LRU, write buffer de
+     4 entradas, 2 MSHR y bus versión 2. Va sin parámetros: usa los valores
+     por defecto de cache_defs.sv.
+   - L2 (Alejandro, l2_cache.sv): 16 KB, 4 vías, hit de 8 ciclos,
+     write-back, exclusiva y PLRU por defecto (también desde cache_defs.sv,
+     así las dos cachés usan siempre la misma política de inclusión).
+   - Eviction buffer de EB_DEPTH líneas y controlador de memoria (Dylan): la
+     RAM trabaja con su propio reloj, clk_mem = clk / MEM_DIV (25 MHz con
+     MEM_DIV = 4), y una línea tarda Tmem = 25 + 7 × MEM_DIV ciclos (53).
+     m_clk lleva clk_mem a DMEM, que top instancia y los testbenches leen.
+ Con L2_MODEL = 1 queda la L2 de prueba (l2_model.sv), que siempre acierta
+ en 8 ciclos y lee y escribe DMEM con clk. Sirve para comparar y depurar.
 
- Vaciado: con flush_req = 1 la L1-D manda sus líneas sucias a la L2.
- flush_done = 1 cuando la L1-D terminó y la L2 de prueba ya escribió todo en
- DMEM, y se mantiene mientras flush_req siga en 1. Lo usan los testbenches
- antes de leer DUT.DMEM.mem.
+ Vaciado (D16, docs/memory-interfaces.md sección 7), con flush_req = 1:
+   1. la L1-D manda sus líneas sucias a la L2 (write buffer incluido);
+   2. cuando la L1-D termina, la L2 recibe su flush_req y manda sus líneas
+      sucias al eviction buffer;
+   3. la L2 levanta flush_done cuando además el nivel inferior quedó vacío
+      (lower_drained: buffer sin líneas y controlador sin transferencias).
+ La L2 recibe su pedido recién al final del paso 1 porque, mientras vacía,
+ no atiende peticiones, y la L1-D necesita mandarle sus víctimas.
+ flush_done se mantiene mientras flush_req siga en 1. Lo usan los
+ testbenches y las herramientas antes de leer DUT.DMEM.mem.
 
  Todo trabaja con clk, no con core_clk: la caché sigue mientras el núcleo
- está detenido.
+ está detenido. Solo la RAM usa clk_mem.
 ================================================================================
 */
 
@@ -35,7 +52,12 @@
 
 module mem_hierarchy #(
     // Solo elimina monitores al elaborar; ARB, L1D y L2 son siempre los mismos.
-    parameter bit PERF_ENABLE = 1'b1
+    parameter bit PERF_ENABLE = 1'b1,
+
+    // 0 = L2 real, eviction buffer y controlador; 1 = L2 de prueba (l2_model)
+    parameter bit L2_MODEL    = 1'b0,
+    parameter int MEM_DIV     = 4,      // clk_mem = clk / MEM_DIV (2 a 5; D12)
+    parameter int EB_DEPTH    = 4       // líneas del eviction buffer (4 a 16; D15)
 ) (
 
     input  logic         clk,           // reloj sin detener (no core_clk)
@@ -62,7 +84,8 @@ module mem_hierarchy #(
     input  logic         flush_req,
     output logic         flush_done,
 
-    // Memoria de datos (puerto A de rtl/memory.sv)
+    // Memoria de datos (puerto A de rtl/memory.sv) y su reloj
+    output logic         m_clk,         // clk_mem con la L2 real; clk con l2_model
     output logic         m_we,
     output logic [3:0]   m_be,
     output logic [31:0]  m_addr,
@@ -180,28 +203,199 @@ l1d_cache L1D (
     .ev_mshr_full_stall(perf_events[18])
 );
 
-l2_model L2 (
-    .clk(clk),
-    .reset(reset),
-    .l2_req(l2_req),
-    .l2_we(l2_we),
-    .l2_addr(l2_addr),
-    .l2_wline(l2_wline),
-    .l2_be(l2_be),
-    .l2_wdirty(l2_wdirty),
-    .l2_gnt(l2_gnt),
-    .l2_rvalid(l2_rvalid),
-    .l2_rline(l2_rline),
-    .l2_rdirty(l2_rdirty),
-    .idle(l2_idle),
-    .m_we(m_we),
-    .m_be(m_be),
-    .m_addr(m_addr),
-    .m_wdata(m_wdata),
-    .m_rdata(m_rdata)
-);
+generate if (L2_MODEL) begin : g_l2_model
 
-assign flush_done = l1_flush_done && l2_idle;
+    // L2 de prueba: siempre acierta y lee y escribe DMEM con clk
+    l2_model L2 (
+        .clk(clk),
+        .reset(reset),
+        .l2_req(l2_req),
+        .l2_we(l2_we),
+        .l2_addr(l2_addr),
+        .l2_wline(l2_wline),
+        .l2_be(l2_be),
+        .l2_wdirty(l2_wdirty),
+        .l2_gnt(l2_gnt),
+        .l2_rvalid(l2_rvalid),
+        .l2_rline(l2_rline),
+        .l2_rdirty(l2_rdirty),
+        .idle(l2_idle),
+        .m_we(m_we),
+        .m_be(m_be),
+        .m_addr(m_addr),
+        .m_wdata(m_wdata),
+        .m_rdata(m_rdata)
+    );
+
+    assign m_clk      = clk;
+    assign flush_done = l1_flush_done && l2_idle;
+end
+else begin : g_l2_real
+
+    // L2 <-> eviction buffer
+    logic              evict_valid;
+    logic [31:0]       evict_addr;
+    logic [LINE_W-1:0] evict_line;
+    logic              evict_ready;
+    logic              read_req;
+    logic [31:0]       read_addr;
+    logic              read_ready;
+    logic [LINE_W-1:0] read_line;
+    logic              read_forwarded;
+
+    // Eviction buffer <-> controlador de memoria
+    logic              ram_req;
+    logic              ram_we;
+    logic [31:0]       ram_addr;
+    logic [LINE_W-1:0] ram_wline;
+    logic              ram_ready;
+    logic [LINE_W-1:0] ram_rline;
+    logic              ram_error;
+
+    // Controlador <-> RAM (una palabra por flanco de clk_mem)
+    logic              clk_mem;
+    logic [13:0]       mem_word_addr;
+    logic [31:0]       mem_word_wdata;
+    logic              mem_word_we;
+
+    logic              eb_busy;
+    logic              l2_flush_done;
+
+    l2_cache L2 (
+        .clk(clk),
+        .reset(reset),
+        .l2_req(l2_req),
+        .l2_we(l2_we),
+        .l2_addr(l2_addr),
+        .l2_wline(l2_wline),
+        .l2_be(l2_be),
+        .l2_wdirty(l2_wdirty),
+        .l2_gnt(l2_gnt),
+        .l2_rvalid(l2_rvalid),
+        .l2_rline(l2_rline),
+        .l2_rdirty(l2_rdirty),
+        .idle(l2_idle),
+        .evict_valid(evict_valid),
+        .evict_addr(evict_addr),
+        .evict_line(evict_line),
+        .evict_ready(evict_ready),
+        .read_req(read_req),
+        .read_addr(read_addr),
+        .read_ready(read_ready),
+        .read_line(read_line),
+        .read_forwarded(read_forwarded),
+        .flush_req(flush_req && l1_flush_done),     // paso 2: después de la L1-D
+        .flush_done(l2_flush_done),
+        .lower_drained(!eb_busy)                    // paso 3: buffer y controlador vacíos
+    );
+
+    eviction_buffer #(.EB_DEPTH(EB_DEPTH)) EB (
+        .clk(clk),
+        .reset(reset),
+        .evict_valid(evict_valid),
+        .evict_addr(evict_addr),
+        .evict_line(evict_line),
+        .evict_ready(evict_ready),
+        .read_req(read_req),
+        .read_addr(read_addr),
+        .read_ready(read_ready),
+        .read_line(read_line),
+        .read_forwarded(read_forwarded),
+        .ram_req(ram_req),
+        .ram_we(ram_we),
+        .ram_addr(ram_addr),
+        .ram_wline(ram_wline),
+        .ram_ready(ram_ready),
+        .ram_rline(ram_rline),
+        .ram_error(ram_error),
+        .clear_write_error(1'b0),
+        .busy(eb_busy)
+    );
+
+    mem_controller #(
+        .MEM_DIV(MEM_DIV),
+        .MEM_TIMEOUT(256),
+        .TMEM(25 + 7 * MEM_DIV)
+    ) MC (
+        .clk(clk),
+        .reset(reset),
+        .ram_req(ram_req),
+        .ram_we(ram_we),
+        .ram_addr(ram_addr),
+        .ram_wline(ram_wline),
+        .ram_ready(ram_ready),
+        .ram_rline(ram_rline),
+        .mem_error(ram_error),
+        .mem_hold(1'b0),
+        .clk_mem(clk_mem),
+        .mem_word_addr(mem_word_addr),
+        .mem_word_wdata(mem_word_wdata),
+        .mem_word_we(mem_word_we),
+        .mem_word_rdata(m_rdata)
+    );
+
+    // DMEM pasa a ser la RAM del controlador: palabras completas con clk_mem
+    assign m_clk   = clk_mem;
+    assign m_we    = mem_word_we;
+    assign m_be    = 4'b1111;
+    assign m_addr  = {16'b0, mem_word_addr, 2'b00};
+    assign m_wdata = mem_word_wdata;
+
+    assign flush_done = l1_flush_done && l2_flush_done;
+
+`ifndef SYNTHESIS
+    // Checker de exclusividad (D3), solo en simulación: le pasa los bits de
+    // validez y las etiquetas de las dos cachés. Con NINE no se instancia,
+    // porque ahí una línea puede estar en los dos niveles.
+    if (L1D_DEFAULT_INCL_POLICY == INCL_EXCLUSIVE &&
+        L2_DEFAULT_INCL_POLICY  == INCL_EXCLUSIVE) begin : g_excl
+
+        logic [L1D_WAYS*L1D_SETS-1:0]           x_l1_valid;
+        logic [L1D_WAYS*L1D_SETS*L1D_TAG_W-1:0] x_l1_tag;
+        logic [L2_WAYS*L2_SETS-1:0]             x_l2_valid;
+        logic [L2_WAYS*L2_SETS*L2_TAG_W-1:0]    x_l2_tag;
+
+        genvar xw, xs;
+
+        for (xw = 0; xw < L1D_WAYS; xw++) begin : g_l1_way
+            assign x_l1_valid[xw*L1D_SETS +: L1D_SETS] = L1D.ARRAYS.g_way[xw].valid_bits;
+            for (xs = 0; xs < L1D_SETS; xs++) begin : g_set
+                assign x_l1_tag[(xw*L1D_SETS + xs)*L1D_TAG_W +: L1D_TAG_W] =
+                       L1D.ARRAYS.g_way[xw].tag_mem[xs];
+            end
+        end
+
+        for (xw = 0; xw < L2_WAYS; xw++) begin : g_l2_way
+            assign x_l2_valid[xw*L2_SETS +: L2_SETS] = L2.ARRAYS.g_way[xw].valid_bits;
+            for (xs = 0; xs < L2_SETS; xs++) begin : g_set
+                assign x_l2_tag[(xw*L2_SETS + xs)*L2_TAG_W +: L2_TAG_W] =
+                       L2.ARRAYS.g_way[xw].tag_mem[xs];
+            end
+        end
+
+        excl_checker EXCL (
+            .clk(clk),
+            .reset(reset),
+            .l1_valid(x_l1_valid),
+            .l1_tag(x_l1_tag),
+            .l2_valid(x_l2_valid),
+            .l2_tag(x_l2_tag),
+            .violations(),
+            .checked_cycles()
+        );
+    end
+`endif
+
+    // D14: después del reintento, un error de memoria se avisa en la simulación
+    // (una vez por error: mem_error se mantiene hasta la siguiente petición)
+    logic ram_error_q;
+
+    always @(posedge clk) begin
+        ram_error_q <= !reset && ram_error;
+        if (!reset && ram_error && !ram_error_q)
+            $error("mem_hierarchy: error de la memoria principal (timeout después del reintento)");
+    end
+end endgenerate
 
 
 // Ambos consumidores usan clk general: la caché continúa con el núcleo
