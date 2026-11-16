@@ -26,7 +26,7 @@ El proyecto 2 no cambia la ISA ni los tiempos que ve el software. Agrega piezas 
 | Memoria de datos | `memory.sv` conectada directo a la LSU y a la cripto, 1 ciclo | L1-D, L2, eviction buffer, controlador y RAM a 25 MHz |
 | Stalls | Ninguno | Stall estructural por memoria: se congela el bundle completo |
 | Tiempos que ve el software | Regla N+3, saltos de 2 ciclos, bóveda N+1, ESTADO N+3 | Iguales: un stall solo agrega ciclos |
-| Medición | Ninguna | Contadores de ciclos, bundles, instrucciones, stalls, etapas y L1-D |
+| Medición | Ninguna | Contadores de ciclos, bundles, instrucciones, stalls, etapas y L1-D, e instrucciones opcionales `vaciarc`, `medir` y `lcont` (D18) |
 
 Regla del grupo: los módulos del proyecto 1 (`rtl/` y `tb/`) no se modifican. Lo nuevo está en `rtl-p2/` y
 `tb-p2/`, y `rtl-p2/top.sv` lo conecta. El parámetro `MEM_MODE` de `top` elige la memoria de datos:
@@ -49,7 +49,8 @@ están afuera, y el núcleo se comunica con ellas por buses separados (organizac
 - **Bus de instrucciones:** el núcleo entrega `next_pc` y la ROM devuelve el bundle de 128 bits.
 - **Puerto A de datos (LSU):** `re`, `we`, `be`, `addr`, `wdata` y `rdata`, una palabra de 32 bits.
 - **Puerto B de datos (cripto):** `re_b`, `we_b`, `addr_b`, `wdata_b` y `rdata_b`, para `vcr` y `camcon`.
-- **`cache_stall`:** la jerarquía avisa que el acceso de este ciclo no terminó.
+- **`cache_stall`:** la jerarquía avisa que el acceso de este ciclo no terminó (también sube mientras
+  `vaciarc` espera el vaciado, sección 10).
 
 Dentro de la jerarquía los niveles se pasan líneas completas de 32 bytes: el bus versión 2 entre la L1-D
 y la L2, `evict_*` y `read_*` entre la L2 y el eviction buffer, y `ram_*` hasta el controlador, que lee y
@@ -60,7 +61,7 @@ Hay tres relojes:
 | Reloj | Frecuencia | Lo usan |
 |:---|:---|:---|
 | `core_clk` | `clk` sin los ciclos de stall | PC, ROM, IF/ID, ID/EX, EX/WB, banco de registros, LSU, BRU, unidad cripto (bóveda y ESTADO), `trap_pc` y `trap_count` |
-| `clk` | 100 MHz, nunca se detiene | Árbitro, L1-D, L2, eviction buffer, controlador y contadores |
+| `clk` | 100 MHz, nunca se detiene | Árbitro, L1-D, L2, eviction buffer, controlador, contadores y `cache_isa_unit` |
 | `clk_mem` | `clk / MEM_DIV` = 25 MHz | RAM (`DMEM`) |
 
 Todos los bloques se instancian en `rtl-p2/top.sv`, como se acordó con el profesor; la separación está en
@@ -242,8 +243,9 @@ assign core_clk = clk & core_en;
 
 `core_en` se toma mientras `clk` está en 0, así que un cambio de `cache_stall` con `clk` en 1 no produce
 flancos falsos. `cache_stall` depende solo del acceso (que sale de ID/EX) y de registros de la jerarquía,
-así que está estable antes del flanco de bajada. Con `MEM_MODE = 0`, `cache_stall` es 0 y `core_clk` es
-igual a `clk`.
+así que está estable antes del flanco de bajada. `cache_stall` también sube mientras dura el vaciado de
+`vaciarc` (sección 10). Con `MEM_MODE = 0` y sin `vaciarc`, `cache_stall` es 0 y `core_clk` es igual a
+`clk`.
 
 **Qué pasa durante el stall.** Sin flancos de `core_clk`, el PC, la ROM, los registros de segmentación,
 el banco y las unidades mantienen su valor: los 4 bundles se quedan en sus etapas y el de EX mantiene su
@@ -292,7 +294,8 @@ Las columnas de los modos 0 y 2 son los ciclos del programa de cifrado; el vacia
 ## 8. Vaciado de la caché (D16)
 
 Con write-back, la RAM no tiene los últimos valores hasta que las líneas sucias bajan. Antes de leer
-`DUT.DMEM.mem`, un testbench pone `flush_req = 1` y espera `flush_done`:
+`DUT.DMEM.mem`, un testbench pone `flush_req = 1` y espera `flush_done`; un programa puede pedir lo mismo
+con `vaciarc` (sección 10):
 
 1. La L1-D manda sus líneas sucias a la L2 (incluidas las del write buffer).
 2. Cuando la L1-D termina, la L2 recibe su pedido de vaciado y manda sus líneas sucias al eviction buffer.
@@ -316,16 +319,49 @@ salida vuelve al control del núcleo ni de la caché.
 | `perf_cache_l1d` | `mem_hierarchy` | Eventos de la L1-D: lecturas y escrituras con hit y miss, llenados, víctimas limpias y sucias, MSHR, write buffer y riesgos RAW |
 | `perf_cache_l1d_latency` | `mem_hierarchy` | Ciclos de servicio de cada acceso a la L1-D por tipo (lectura o escritura, hit o miss), para la AMAT |
 
-`perf_measure_enable` pausa la cuenta sin borrarla y `PERF_ENABLE = 0` quita los contadores al elaborar.
-La L2 entrega diez eventos `ev_l2_*` de un ciclo y `rtl-p2/perf_memory.sv` mide la memoria principal;
-estos contadores todavía no están conectados en `mem_hierarchy` (#26).
+La entrada `perf_measure_enable` de `top` y la instrucción `medir` pausan la cuenta sin borrarla (cuentan
+si las dos están en 1), y `PERF_ENABLE = 0` quita los contadores al elaborar. Un programa los lee con
+`lcont` (sección 10). La L2 entrega diez eventos `ev_l2_*` de un ciclo y `rtl-p2/perf_memory.sv` mide la
+memoria principal; estos contadores todavía no están conectados en `mem_hierarchy` (#26) y `lcont` los lee
+como 0.
 
-## 10. Riesgos y excepción de privilegio
+## 10. Instrucciones de caché y medición (D18)
+
+Es la extensión opcional que permite el enunciado: el tipo `1001101`, solo en el slot 1 (codificación y
+selectores en [`isa.md`](isa.md)). `decoder_lsu` no conoce el tipo y deja la LSU sin hacer nada. En `top`,
+`decoder_cache_isa` lo decodifica en ID, un registro con las mismas reglas de ID/EX lo lleva a EX y
+`cache_isa_unit` (con `clk`) lo ejecuta en el flanco en que el bundle sale de EX. Un salto tomado o una
+excepción la anulan, igual que al resto del bundle.
+
+| Instrucción | Qué hace en el procesador | Costo |
+|:---|:---|:---|
+| `medir imm` | 0 pausa los contadores sin borrarlos y 1 los reanuda. Cuentan si `medir` y la entrada `perf_measure_enable` están en 1; después del reset cuentan | 0 ciclos |
+| `lcont rg, sel` | Toma el contador `sel` cuando el bundle sale de EX y lo escribe en `rg` en WB por el carril de la LSU, como una carga: se ve desde el bundle N+3 | 0 ciclos |
+| `vaciarc` | Pide el vaciado de toda la jerarquía (sección 8) y el núcleo queda congelado hasta que termina | 2 ciclos en los modos 0 y 1; en el modo 2, el recorrido de las 640 líneas de las dos cachés (699 ciclos en `tb_cache_isa`) |
+
+Los contadores de `lcont` son: 0 a 4 de `perf_vliw_monitor` (ciclos, bundles, instrucciones, stalls por
+memoria y ciclos perdidos por saltos), 5 a 8 de `perf_cache_l1d` (lecturas y escrituras de la L1-D con hit
+y miss; 0 en los modos 0 y 1) y 9 a 12 (L2 y RAM), que se leen como 0 hasta que se conecten sus contadores
+(#26).
+
+**`vaciarc` y el bundle siguiente.** Cuando `vaciarc` sale de EX, el bundle siguiente entra a EX y el
+núcleo se congela (`cisa_hold` entra a `cache_stall`). Mientras dura el vaciado, los accesos a memoria de
+ese bundle se retienen: si llegaran a la memoria durante la espera, un store se repetiría en cada ciclo y
+`camcon` rotaría la palabra varias veces. Su acceso empieza cuando termina el vaciado. Así, `vaciarc` deja
+en la RAM todo lo que escribieron los bundles anteriores y el suyo. Los ciclos del vaciado cuentan como
+stall por memoria.
+
+`tb_cache_isa` las prueba sobre `top` en los modos 0, 1 y 2: dos `lcont` seguidos difieren en 1, el
+resultado se ve desde el bundle N+3, `medir 0` detiene la cuenta, `vaciarc` deja la RAM al día, el store y
+el `camcon` del bundle siguiente se hacen una sola vez, un salto o una excepción las anulan y los
+contadores de la L1-D coinciden con `perf_cache_l1d`.
+
+## 11. Riesgos y excepción de privilegio
 
 - **Sin forwarding ni scoreboarding.** El banco no tiene bypass: el valor que escribe el bundle N se lee
   desde el N+3. La calendarización la hace el software, y `tools/assembler.py` rechaza los programas que
-  no la cumplen. El único stall es el estructural de la memoria (sección 6); el hardware sigue sin
-  detectar riesgos de datos.
+  no la cumplen. Los únicos stalls son el estructural de la memoria (sección 6) y el de `vaciarc`; el
+  hardware sigue sin detectar riesgos de datos.
 - **Conflictos estructurales.** En el núcleo cada slot tiene sus puertos del banco (2 de lectura; 1 de
   escritura, 2 para la cripto) y la memoria tiene un puerto para la LSU y otro para la cripto. Con la
   jerarquía, los dos puertos comparten el puerto único de la L1-D: el árbitro los atiende uno después del
@@ -340,7 +376,7 @@ estos contadores todavía no están conectados en `mem_hierarchy` (#26).
   para observación). Como ESTADO se escribe en WB y se valida en ID, después de `vcr` la instrucción
   que necesita AUTH = 1 va 3 bundles después.
 
-## 11. Componentes
+## 12. Componentes
 
 | Componente | Organización |
 |:---|:---|
@@ -369,7 +405,7 @@ Parámetros de `top`:
 `make test-memory-modes` corre los mismos programas en los modos 0 y 2 y compara los registros y la
 memoria después del vaciado.
 
-## 12. Módulos SystemVerilog
+## 13. Módulos SystemVerilog
 
 | Bloque | Archivos |
 |---|---|
@@ -380,8 +416,6 @@ memoria después del vaciado.
 | Jerarquía de datos | `rtl-p2/mem_hierarchy.sv`, `rtl-p2/l1d_port_arbiter.sv`, `rtl-p2/l1d_cache.sv`, `rtl-p2/l1d_arrays.sv`, `rtl-p2/l1d_replacement.sv`, `rtl-p2/l1d_write_buffer.sv`, `rtl-p2/l2_cache.sv`, `rtl-p2/l2_arrays.sv`, `rtl-p2/l2_replacement.sv`, `rtl-p2/eviction_buffer.sv`, `rtl-p2/mem_controller.sv` y `rtl/memory.sv` (RAM) |
 | Modelos de prueba | `rtl-p2/mem_stall_model.sv` (modo 1), `rtl-p2/l2_model.sv` (`L2_MODEL = 1`), `rtl-p2/excl_checker.sv` (solo simulación) |
 | Contadores | `rtl-p2/perf_vliw_monitor.sv`, `rtl-p2/perf_slot_mask.sv`, `rtl-p2/perf_pipeline_monitor.sv`, `rtl-p2/perf_counters.sv`, `rtl-p2/perf_stage_counters.sv`, `rtl-p2/perf_cache_l1d.sv`, `rtl-p2/perf_cache_l1d_latency.sv`, `rtl-p2/perf_memory.sv` |
+| Instrucciones de caché (D18) | `rtl-p2/decoder_cache_isa.sv` (ID) y `rtl-p2/cache_isa_unit.sv` (EX y WB) |
 | Integración | `rtl-p2/top.sv` (conexiones, flush, excepción, reloj del núcleo y `MEM_MODE`), `rtl/isa_defs.sv` y `rtl-p2/cache_defs.sv` (códigos y parámetros) |
-| Pruebas | Un testbench por módulo en `tb/` y `tb-p2/`, más los de sistema: `tb_top`, `tb_pipeline_integracion` y `tb_pipeline_cripto` (proyecto 1); `tb_pipeline_stall`, `tb_rom_sync`, `tb_port_b` y `tb_mem_hierarchy` (proyecto 2). Detalle en [simulation.md](simulation.md) |
-
-`rtl-p2/decoder_cache_isa.sv` y `rtl-p2/cache_isa_unit.sv` implementan las instrucciones opcionales
-`vaciarc`, `medir` y `lcont` (D18); todavía no están conectadas en `top`.
+| Pruebas | Un testbench por módulo en `tb/` y `tb-p2/`, más los de sistema: `tb_top`, `tb_pipeline_integracion` y `tb_pipeline_cripto` (proyecto 1); `tb_pipeline_stall`, `tb_rom_sync`, `tb_port_b`, `tb_mem_hierarchy` y `tb_cache_isa` (proyecto 2). Detalle en [simulation.md](simulation.md) |
