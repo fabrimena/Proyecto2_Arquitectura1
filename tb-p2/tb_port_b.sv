@@ -12,8 +12,8 @@
 
      REF   MEM_MODE = 0, el procesador del proyecto 1
      DUT1  MEM_MODE = 1, STALL_CYCLES = 4 (modelo de stalls)
-     DUT2  MEM_MODE = 2, jerarquía de caché: los dos puertos pasan por la
-           L1-D (l1d_port_arbiter) y la L2 de prueba
+     DUT2  MEM_MODE = 2, jerarquía completa: los dos puertos pasan por la
+           L1-D (l1d_port_arbiter), la L2, el eviction buffer y la RAM
 
  El programa se autentica con setpwd y vcr, y mezcla vcr y camcon con cargas
  y stores de la LSU en el mismo bundle, incluso sobre la misma palabra.
@@ -401,6 +401,8 @@ initial begin
           M_DUT2.trap_cycle - M_REF.trap_cycle, M_DUT2.stall_cycles);
     check("DUT1: PC, IF/ID e ID/EX quietos en cada stall", M_DUT1.freeze_errors, 0);
     check("DUT2: PC, IF/ID e ID/EX quietos en cada stall", M_DUT2.freeze_errors, 0);
+    check("DUT2: ninguna línea en la L1-D y en la L2 a la vez (excl_checker)",
+          DUT2.g_mem_cache.HIER.g_l2_real.g_excl.EXCL.violations, 0);
 
     $display("    REF llega al manejador en el ciclo %0d, DUT1 en el %0d y DUT2 en el %0d; vaciado en %0d ciclos",
              M_REF.trap_cycle, M_DUT1.trap_cycle, M_DUT2.trap_cycle, fl_cycles);
