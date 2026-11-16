@@ -2,14 +2,14 @@
 
 > Curso: CE4301 – Arquitectura de Computadores I, II Semestre 2026  
 > Profesor: Dr.-Ing. Jeferson González Gómez  
-> Estado: interfaces de núcleo y L1-D documentadas; controlador de memoria y eviction buffer implementados y probados por separado; integración con L2 real pendiente 
+> Estado: interfaces de núcleo y L1-D documentadas; controlador de memoria y eviction buffer implementados y probados por separado; L2 real implementada y verificada (`rtl-p2/l2_cache.sv`); su integración en `mem_hierarchy.sv` pendiente 
 > Equipo: Dylan Guerrero González, José García Izaguirre, Javier Hernández Castillo, Alejandro Vásquez Oviedo, Fabricio Mena Mejia
 
 Cómo se conectan el núcleo del proyecto 1, la L1-D, la L2 y la memoria principal. La idea es que cada
 uno pueda hacer y probar su módulo por separado contra un modelo simple y que después todo encaje. Las
 secciones 2 a 4 están en `rtl-p2/top.sv` y `rtl-p2/mem_stall_model.sv`; la 5, la 7 y la 8 en
 `rtl-p2/mem_hierarchy.sv`, la L1-D de José y la L2 de prueba (`rtl-p2/l2_model.sv`). La sección 6 documenta los puertos implementados de memoria principal y eviction buffer.
-La conexión de estos módulos con la L2 real todavía está pendiente en `mem_hierarchy.sv`. Las decisiones de
+La L2 real ya está implementada y verificada (`rtl-p2/l2_cache.sv`); lo que sigue pendiente es conectarla en `mem_hierarchy.sv` en lugar de la L2 de prueba, y conectar ahí el eviction buffer y el controlador. Las decisiones de
 diseño están en [`decisiones-importantes.md`](decisiones-importantes.md).
 
 ## 1. Regla de partida
@@ -143,7 +143,7 @@ en la L1-D por José, ver [`l1d-cache.md`](l1d-cache.md)):
 - Write buffer de 4 entradas (2 a 8) con el mismo formato que una escritura del bus. Riesgo RAW: con
   NINE se reenvían los bytes pendientes; con exclusiva se espera a que la entrada llegue a la L2.
 
-**L2 de prueba** (`rtl-p2/l2_model.sv`). Mientras no está la L2 real, `mem_hierarchy` conecta este
+**L2 de prueba** (`rtl-p2/l2_model.sv`). Mientras la L2 real no se conecta en `mem_hierarchy`, la jerarquía sigue instanciando este
 modelo: siempre acierta, no guarda líneas y lee o escribe DMEM una palabra por ciclo, así que una
 lectura tarda exactamente 8 ciclos (las 8 palabras de la línea). Una escritura ocupa el modelo 8
 ciclos. `l2_rdirty` siempre es 0 porque lo que entrega ya está en la RAM; con la política exclusiva se
@@ -314,7 +314,18 @@ El buffer utiliza `clk` del dominio CPU y `reset`. La integración de buffer, co
 
 ### 6.7.1. Estado real de integración con la jerarquía
 
-En la versión revisada de `rtl-p2/mem_hierarchy.sv`, las solicitudes de la L1-D llegan a `l2_model`, que sigue conectado directamente a DMEM mediante `m_we`, `m_be`, `m_addr`, `m_wdata` y `m_rdata`. La L2 real, el eviction buffer y el controlador no están instanciados allí. Por tanto, **las interfaces del buffer y del controlador están definidas y verificadas por separado, pero su conexión con la L2 real está pendiente**. El bus L1-D ↔ L2 de la sección 5 permanece como contrato de integración; no debe confundirse con los puertos `evict_*` y `read_*` del buffer.
+En la versión revisada de `rtl-p2/mem_hierarchy.sv`, las solicitudes de la L1-D llegan a `l2_model`, que sigue conectado directamente a DMEM mediante `m_we`, `m_be`, `m_addr`, `m_wdata` y `m_rdata`. El eviction buffer y el controlador no están instanciados ahí. Por tanto, **el intercambio con la jerarquía sigue pendiente**: sustituir `l2_model` por la L2 real en `mem_hierarchy.sv` es el issue #27, que no es de este bloque. El bus L1-D ↔ L2 de la sección 5 permanece como contrato de integración; no debe confundirse con los puertos `evict_*` y `read_*` del buffer.
+
+**La L2 real ya existe y habla con estos puertos.** `rtl-p2/l2_cache.sv` (rama `feat/l2-cache`) es la L2 unificada write-back del proyecto: 16 KB, 4 vías, líneas de 32 B, hit de 8 ciclos y write-back. Su bus hacia abajo usa **exactamente** los nombres y la polaridad de la sección 6.7, sin adaptadores:
+
+- Desalojo: `evict_valid`, `evict_addr`, `evict_line` hacia el buffer, y `evict_ready` de vuelta.
+- Lectura de línea: `read_req`, `read_addr` hacia el buffer, y `read_ready`, `read_line`, `read_forwarded` de vuelta.
+
+El handshake de desalojo es `evict_valid && evict_ready`, con `evict_valid` como pulso de un ciclo. Cuando el buffer responde con `read_forwarded`, la línea viene sucia, porque el buffer solo guarda líneas sucias: la L2 la marca como tal en sus metadatos (`wr_dirty`) y, en modo EXCLUSIVE (el de por defecto), también la entrega al nivel superior como sucia (`l2_rdirty`). Con NINE la entrega limpia (`l2_rdirty = 0`) y guarda su propia copia de la línea.
+
+La compatibilitía está verificada con `tb-p2/tb_l2_cache_integracion.sv`, que corre la L2 real contra el `eviction_buffer.sv` y el `mem_controller.sv` **reales**, con una RAM simulada de 16384 palabras: comprueba que la línea sucia desalojada llega a la RAM con sus datos, y que una línea reenviada por el buffer se entrega sucia y termina en la RAM.
+
+La L2 real también trae su parte del vaciado (`flush_req`, `flush_done` y `lower_drained`): está en la sección 7.1.
 
 ### 6.8. Verificación
 
@@ -325,6 +336,20 @@ Se verificaron las configuraciones de memoria de 20 MHz, 25 MHz y 50 MHz.
 Las pruebas de integración comprobaron el intercambio de líneas completas entre el eviction buffer y memoria principal.
 
 Estas pruebas proporcionan evidencia de comportamiento funcional y temporal en simulación. No sustituyen una revisión de las restricciones de reloj y CDC para síntesis.
+
+**Comprobación del contrato contra el RTL (revisión del 15 de noviembre de 2026).** Los nombres, las
+direcciones y los anchos de la sección 6 se contrastaron uno por uno con la lista de puertos de
+`rtl-p2/mem_controller.sv`, y coinciden: `ram_req`, `ram_we`, `ram_addr[31:0]`, `ram_wline[255:0]`,
+`ram_ready`, `ram_rline[255:0]`, `mem_error`, `ram_word_valid`, `ram_word_data[31:0]`,
+`ram_word_index[2:0]`, `req_accept`, `req_we_accepted`, `transfer_busy`, `timeout_event`,
+`error_event`, `mem_hold`, `clk_mem`, `mem_word_addr[13:0]`, `mem_word_wdata[31:0]`, `mem_word_we` y
+`mem_word_rdata[31:0]`. Los parámetros por defecto del módulo son `MEM_DIV = 4`, `MEM_TIMEOUT = 256` y
+`TMEM = 25 + 7 × MEM_DIV`, que es el valor de 53 ciclos usado en toda la jerarquía.
+
+El reenvío de líneas sucias (*forwarding*) es el único camino por el que una línea vuelve a la L2 sin
+pasar por la RAM: lo anuncia `read_forwarded` en alto (sección 6.7) y la L2 real lo respeta (sección
+6.7.1). Con ese camino, un fallo de lectura que coincide con una línea pendiente en el buffer no paga
+los 53 ciclos de la memoria.
 
 ## 7. Vaciado de líneas sucias
 
@@ -350,6 +375,45 @@ flush_req = 1'b0;
 
 Adaptar los testbenches de las herramientas es el issue #28 (Javier). La instrucción `vaciarc` (crédito
 extra, `decisiones-importantes.md` 4.4) va a usar la misma cadena.
+
+### 7.1. Vaciado de la L2 (D16)
+
+`rtl-p2/l2_cache.sv` implementa su parte de la cadena de vaciado. La interfaz es la misma que usa la
+L1-D (`rtl-p2/l1d_cache.sv`), sin adaptadores:
+
+| Señal | Dirección | Bits | Contrato |
+|---|---|---:|---|
+| `flush_req` | Entrada | 1 | Pedido de vaciado: la L2 baja todas sus líneas sucias a la RAM |
+| `flush_done` | Salida | 1 | 1 cuando las líneas sucias de la L2 ya están en la RAM; se mantiene mientras `flush_req` siga en 1 |
+| `lower_drained` | Entrada | 1 | 1 cuando el nivel inferior no tiene líneas sucias pendientes: el eviction buffer está vacío y no hay transferencia en curso |
+
+Cómo funciona:
+
+1. La L2 recorre sus 512 líneas (128 conjuntos × 4 vías) con un puntero de 9 bits, buscando las sucias.
+   Cada línea sucia se le entrega al eviction buffer con el handshake de siempre (`evict_valid` y
+   `evict_ready`, con `evict_valid` como pulso de un ciclo). Su copia en la L2 pasa a **limpia**: solo se
+   toca el bit sucio, ni la etiqueta ni los datos, porque a partir de ahí la L2 y la RAM tienen lo mismo.
+2. Cuando ya no quedan líneas sucias, la L2 espera a que el nivel inferior se vacíe
+   (`lower_drained = 1`) y entonces levanta `flush_done`.
+
+El barrido multiplexa el puerto de lectura de los arreglos, igual que hace la L1-D con su puerto B:
+durante el barrido la lectura apunta al conjunto que se está revisando y no a la dirección de la
+petición.
+
+**Secuenciación.** El pedido de vaciado de la L2 se sube **después** de que la L1-D haya terminado el
+suyo (su `flush_done`), para que las líneas sucias de la L1-D ya estén dentro de la L2 y el vaciado de la
+L2 las alcance. Mientras dura el vaciado la L2 no acepta peticiones (`l2_gnt = 0`): el núcleo queda
+detenido. Igual que en la L1-D, `flush_done` es un nivel y la L2 sigue detenida hasta que `flush_req` baja;
+entonces vuelve a estar libre y a aceptar peticiones.
+
+**Cableado (issue #27, de Fabricio).** `lower_drained` se conecta con `!busy` del eviction buffer: el
+nivel inferior está drenado cuando el buffer no tiene líneas en la FIFO ni una transferencia en curso.
+
+La evidencia está en `tb-p2/tb_l2_cache_flush.sv`, que corre la L2 real contra el `eviction_buffer.sv` y el
+`mem_controller.sv` **reales**, con una RAM simulada de 16384 palabras. Comprueba que antes del vaciado la
+RAM no tiene las líneas sucias (la L2 es write-back), que después del vaciado sí, que `flush_done` se
+levanta y se mantiene con `flush_req` en alto, que las copias de la L2 quedan limpias (`l2_rdirty = 0` al
+releerlas) y que la L2 vuelve a aceptar peticiones cuando `flush_req` baja.
 
 ## 8. Puerto B (cripto)
 
@@ -383,14 +447,24 @@ accesos en los dos, se atienden en fases y el núcleo sigue congelado hasta la �
    y Random como parámetros.
 2. Riesgo RAW: write buffer de la L1-D implementado; eviction buffer con forwarding implementado y
    probado por separado (Dylan). Falta conectarlo a la L2 real en la jerarquía.
-3. Inclusión: exclusiva por defecto y NINE como parámetro (D3), mientras el profesor la confirma; falta
-   la parte de la L2 (Alejandro).
+3. Inclusión: exclusiva por defecto y NINE como parámetro, **en las dos cachés** (D3), y el profesor ya
+   confirmó la exclusiva como crédito extra. La L2 implementa los dos modos: en exclusiva la línea se
+   mueve a la L1-D y la L2 invalida su copia; en NINE la L2 guarda la suya (sección 4 de
+   `docs/memory-hierarchy.md`). Falta el checker de exclusividad de Fabricio (`rtl-p2/excl_checker.sv`).
 4. Cruce de dominios de reloj, timeout y reintento: implementados y probados en `mem_controller.sv`
    (Dylan). Pendiente la integración con la L2 real y la revisión CDC para síntesis.
 5. Memoria de instrucciones: listo. ROM síncrona leída con el siguiente PC (`rtl-p2/rom_sync.sv`, D1),
    que mantiene los tiempos de IF y no afecta al compilador.
 6. Puerto B a través de la L1-D: listo (sección 8).
 7. Testbenches de las herramientas con el vaciado (#28, Javier).
+8. Vaciado de la L2: implementado y probado en la L2 real (sección 7.1). Falta el cableado de la L2 real en `mem_hierarchy.sv` y el encadenado del vaciado de la L1-D con el de la L2 (#27, de Fabricio).
+9. Eventos de la L2: los diez pulsos `ev_l2_*` de un ciclo están implementados en `rtl-p2/l2_cache.sv`
+   y verificados con los contadores de los testbenches (#23, Alejandro). Con eso `perf_cache_l2.sv`
+   puede contar sin interpretar el bus (#26, Javier); falta su implementación.
+10. Documento de jerarquía: `docs/memory-hierarchy.md` creado (#34, Alejandro) con las políticas de las
+    dos cachés justificadas, los diagramas L1/L2, la cadena de vaciado y las latencias.
+11. Reemplazo de la L2: pseudo-LRU de árbol (por defecto) y Random con LFSR, ambos implementados y
+    probados (#22, Alejandro). El pseudo-LRU es una **aproximación** del LRU, no un LRU exacto.
 
 ## 10. Pruebas
 
@@ -403,6 +477,18 @@ accesos en los dos, se atienden en fases y el núcleo sigue congelado hasta la �
   CE1108 dan lo mismo que en el proyecto 1: mismas trazas, mismos volcados y mismos ciclos.
 - `make archivo` con `imagen.bmp` en modo 1 con 4 ciclos (usando el `defparam` de la sección 3) da el
   mismo `cifrado.bin` en 41757 ciclos en vez de 23189: la diferencia, 18568, es 4 × 4642 accesos.
+- `make tb_l2_cache` prueba la L2 real en modo EXCLUSIVE: acierto en 8 ciclos, fallo hasta la RAM,
+  víctima sucia al eviction buffer y vaciado. 65 verificaciones correctas.
+- `make tb_l2_cache_nine` prueba el mismo banco en modo NINE: la L2 guarda su copia, no hay
+  invalidación hacia atrás y el número de rellenos cambia. 73 verificaciones correctas.
+- `make tb_l2_cache_integracion` corre la L2 real contra el `eviction_buffer.sv` y el
+  `mem_controller.sv` reales: comprueba que la línea sucia desalojada llega a la RAM con sus datos y
+  que una línea reenviada por el buffer se entrega sucia. 29 verificaciones correctas.
+- `make tb_l2_replacement` prueba el pseudo-LRU de árbol y el Random con LFSR contra un modelo del
+  árbol. 245 verificaciones correctas.
+- Los cinco testbenches de la L2, junto con el resto del proyecto, dan **63 PASS y 0 FAIL** en
+  `make sim`.
+- `make tb_l2_cache_flush` prueba el vaciado de la L2 real contra el eviction buffer y el controlador de memoria reales: antes del vaciado la RAM no tiene las líneas sucias, después sí, `flush_done` se levanta y se mantiene con `flush_req` en alto, las copias de la L2 quedan limpias y la L2 vuelve a aceptar peticiones al bajar `flush_req`.
 - `make tb_mem_hierarchy` prueba la jerarquía del modo 2 sin el procesador, contra un modelo de la
   memoria del proyecto 1: un miss tarda 8 ciclos, un hit y un store con un MSHR libre 0, y los casos del
   puerto B de la sección 8 (incluidos `vcr` y `camcon` sobre palabras que solo están sucias en la L1-D).
