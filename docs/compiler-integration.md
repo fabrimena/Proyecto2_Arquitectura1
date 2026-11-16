@@ -178,9 +178,8 @@ confirmar el primer ciclo activo de req; uno retardado mantiene la espera. El ad
 detener el avance del procesador sin detener el reloj de la unidad. Reset cancela la operación,
 por lo que exige reinicio coordinado; no acredita persistencia. No hay HALT ni timeout implícito.
 
-**D18-A: componentes independientes implementados y probados. El soporte en el ensamblador
-no significa que `top` ya ejecute estas instrucciones.** El LSU actual deja este tipo inactivo.
-Quedan pendientes: conexión del decoder y la unidad a `top`, enable real de contadores, ruta de
-escritura LSU/WB para `lcont`, stall por `vaciarc`, handshake definitivo con Fabricio, L2 y garantía
-de persistencia hasta RAM. Las pruebas aisladas no sustituyen pruebas de las tres instrucciones
-en el procesador completo, y no demuestran vaciado completo de la jerarquía.
+**D18-A: conectadas en `top` (PR #62).** `balc` no tiene que generarlas: el procesador las
+ejecuta si aparecen en el slot 1 y ningún programa anterior cambia. `medir` pausa los contadores,
+`lcont` escribe su registro como una carga (regla N+3) y `vaciarc` vacía la jerarquía completa hasta
+la RAM antes de que el bundle siguiente acceda a memoria. `tb_cache_isa` las prueba sobre el
+procesador completo. Los contadores 9 a 12 (L2 y RAM) se leen como 0 hasta que se conecten (#26).
