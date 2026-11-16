@@ -147,6 +147,6 @@ pasos, el contrato y los resultados están en
 | Documento | Contenido |
 |:---|:---|
 | [docs/isa.md](docs/isa.md) | Especificación del ISA, codificación de cada instrucción y green card |
-| [docs/microarchitecture.md](docs/microarchitecture.md) | Diagrama de bloques, pipeline y módulos SystemVerilog |
+| [docs/microarchitecture.md](docs/microarchitecture.md) | Diagramas del sistema y del núcleo, pipeline, ROM síncrona, jerarquía de datos, congelamiento, tiempos y módulos SystemVerilog |
 | [docs/simulation.md](docs/simulation.md) | Simulación, modelo de cada componente, memoria, ensamblador y testbenches |
 | [docs/compiler-integration.md](docs/compiler-integration.md) | Contrato con CE1108 y evidencia de la validación conjunta |
