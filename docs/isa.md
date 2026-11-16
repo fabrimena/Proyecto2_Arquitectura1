@@ -1203,9 +1203,11 @@ Se conservan las 34 instrucciones del Proyecto I, sus pseudoinstrucciones y sus 
 El tipo nuevo `1001101` solo corresponde al **slot LSU, índice 1**, en los bits [63:32]
 del bundle. No agrega una etapa ni una instrucción HALT. Es opcional para CE1108.
 
-**D18-A: componentes independientes implementados y probados. El soporte en el ensamblador
-no significa que `top` ya ejecute estas instrucciones.** El decoder LSU original no reconoce
-este tipo y lo deja inactivo. No se ha conectado el decoder nuevo ni su unidad al procesador.
+**D18-A: conectadas en `top` (PR #62).** El decoder LSU original no reconoce este tipo y lo
+deja inactivo; `rtl-p2/decoder_cache_isa.sv` lo decodifica en ID y `rtl-p2/cache_isa_unit.sv` lo
+ejecuta cuando el bundle sale de EX. `tb_cache_isa` las prueba sobre el procesador completo en los
+modos 0, 1 y 2. Los contadores 9 a 12 (L2 y RAM) se leen como 0 hasta que se conecten (#26). El
+enganche está en [`microarchitecture.md`](microarchitecture.md), sección 10.
 
 ### Codificación y efectos
 
