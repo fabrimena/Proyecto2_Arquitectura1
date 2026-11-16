@@ -61,20 +61,12 @@ terminan en la L2, sin duplicarse. Es el motivo de que el archivo de prueba de 1
 
 ### 1.3 Estado de integración (a 15 de noviembre de 2026)
 
-Este documento describe el diseño, que es lo que está implementado y probado. Lo que **todavía no**
-está conectado en el RTL es lo siguiente, y conviene decirlo claro:
-
-| Lo que hay | Lo que falta |
-|:---|:---|
-| `rtl-p2/l1d_cache.sv`, `rtl-p2/l1d_arrays.sv`, `rtl-p2/l1d_write_buffer.sv`, `rtl-p2/l1d_replacement.sv`, `rtl-p2/l1d_port_arbiter.sv` | — |
-| `rtl-p2/l2_cache.sv` y `rtl-p2/l2_arrays.sv` (L2 real, completa y probada) | su instancia en `mem_hierarchy.sv` (issue #27, de Fabricio) |
-| `rtl-p2/mem_controller.sv`, `rtl-p2/eviction_buffer.sv` | su instancia en `mem_hierarchy.sv` (issue #27) |
-| `rtl-p2/top.sv` con `MEM_MODE = 2` y `flush_req`/`flush_done` | — |
-
-Hoy, con `MEM_MODE = 2`, `mem_hierarchy.sv` instancia `l1d_port_arbiter` → `l1d_cache` → **`l2_model`**
-(la L2 de prueba de Fabricio, que siempre acierta) → `DMEM`. La L2 real, el eviction buffer y el
-controlador de memoria **no están todavía en el camino del procesador**: existen, están probados por
-separado y son sustituibles por `l2_model` sin cambiar la interfaz, pero el cambio es el issue #27.
+Este documento describe el diseño, que es lo que está implementado y probado. Con `MEM_MODE = 2`,
+`mem_hierarchy.sv` instancia la jerarquía completa en el camino del procesador (issue #27):
+`l1d_port_arbiter` → `l1d_cache` → `l2_cache` → `eviction_buffer` → `mem_controller` → `DMEM`, con la
+RAM en su propio reloj (`clk_mem`, 25 MHz). La L2 de prueba (`l2_model`) queda como opción con
+`L2_MODEL = 1`. Latencias medidas en `tb_mem_hierarchy`: hit en la L1-D 0 ciclos, hit en la L2 8, falla
+en las dos 64 (8 + Tmem = 53 + 3 del eviction buffer y del cruce de relojes).
 
 ---
 
@@ -410,8 +402,6 @@ RAM).
 
 | Pendiente | Quién | Referencia |
 |:---|:---|:---|
-| Instanciar la L2 real (y el eviction buffer y el controlador) en `mem_hierarchy.sv`, sustituyendo `l2_model` | Fabricio | issue #27 |
-| Checker de exclusividad: que ninguna línea esté válida en la L1-D y en la L2 a la vez | Fabricio | `rtl-p2/excl_checker.sv` |
 | L2 en 4 etapas con valid/ready (la L2 bloqueante ya existe) | Fabricio | decisión 11 |
 | Contadores de la L2 con los eventos `ev_l2_*` | Javier | issue #26, sección 4 |
 | Cerrar la cadena de vaciado de extremo a extremo con la jerarquía conectada | Fabricio | sección 6 |
