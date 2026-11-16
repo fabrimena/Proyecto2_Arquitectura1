@@ -94,7 +94,11 @@ module mem_hierarchy #(
 
     // Default habilitado para consumidores anteriores de la jerarquía.
     // Ventana síncrona común; no regula demandas, grant, respuesta o flush.
-    input  logic         perf_measure_enable = 1'b1
+    input  logic         perf_measure_enable = 1'b1,
+
+    // Para lcont (D18): lecturas con hit [0] y con miss [1], escrituras con
+    // hit [2] y con miss [3] de la L1-D (perf_cache_l1d; cero sin PERF_ENABLE)
+    output logic [3:0][63:0] perf_l1d_counts
 );
 
 
@@ -153,6 +157,9 @@ l1d_port_arbiter ARB (
 // Estas conexiones no reconstruyen hits mediante etiquetas privadas.
 wire [18:0] perf_events;
 wire [18:0][63:0] perf_event_counts;
+
+assign perf_l1d_counts = {perf_event_counts[3], perf_event_counts[2],
+                          perf_event_counts[1], perf_event_counts[0]};
 wire [4:0][63:0] perf_access_totals;
 wire [3:0][63:0] perf_completed_by_class, perf_service_by_class, perf_wait_by_class;
 wire [63:0] perf_completed_accesses, perf_completed_reads, perf_completed_writes;
