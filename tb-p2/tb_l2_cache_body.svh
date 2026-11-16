@@ -516,8 +516,9 @@ module `L2_TB_MODULE;
 
             reads_accepted = reads_accepted + 1;
 
-            check("la L2 no acepta otra petición mientras está ocupada",
-                  l2_gnt, 32'd0);
+            // L2 en 4 etapas: la cola de S1 sigue teniendo lugar
+            check("la L2 en etapas acepta otra petición en el ciclo siguiente",
+                  l2_gnt, 32'd1);
 
             @(negedge clk);
             l2_req = 1'b0;
@@ -572,8 +573,9 @@ module `L2_TB_MODULE;
             if (be != {LINE_MASK_W{1'b1}})
                 partial_writes = partial_writes + 1;
 
-            check("la L2 no acepta otra petición mientras está ocupada",
-                  l2_gnt, 32'd0);
+            // L2 en 4 etapas: la cola de S1 sigue teniendo lugar
+            check("la L2 en etapas acepta otra petición en el ciclo siguiente",
+                  l2_gnt, 32'd1);
 
             @(negedge clk);
             l2_req = 1'b0;
