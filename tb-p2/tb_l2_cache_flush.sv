@@ -95,6 +95,50 @@ module tb_l2_cache_flush;
     logic                   lower_drained;
 
     // ------------------------------------------------------------------
+    // Eventos de la L2 (issue #23 / #26)
+    // ------------------------------------------------------------------
+    //
+    // Pulsos de un ciclo, contados en el flanco negativo del reloj para no
+    // competir con los registros de la L2.
+
+    logic                   ev_l2_rd_hit;
+    logic                   ev_l2_rd_miss;
+    logic                   ev_l2_wr_hit;
+    logic                   ev_l2_wr_miss;
+    logic                   ev_l2_fill;
+    logic                   ev_l2_evict;
+    logic                   ev_l2_writeback;
+    logic                   ev_l2_invalid;
+    logic                   ev_l2_read_req;
+    logic                   ev_l2_write_req;
+
+    integer                 n_rd_hit    = 0;
+    integer                 n_rd_miss   = 0;
+    integer                 n_wr_hit    = 0;
+    integer                 n_wr_miss   = 0;
+    integer                 n_fill      = 0;
+    integer                 n_evict     = 0;
+    integer                 n_writeback = 0;
+    integer                 n_invalid   = 0;
+    integer                 n_read_req  = 0;
+    integer                 n_write_req = 0;
+
+    always @(negedge clk) begin
+        if (!reset) begin
+            if (ev_l2_rd_hit)    n_rd_hit    = n_rd_hit    + 1;
+            if (ev_l2_rd_miss)   n_rd_miss   = n_rd_miss   + 1;
+            if (ev_l2_wr_hit)    n_wr_hit    = n_wr_hit    + 1;
+            if (ev_l2_wr_miss)   n_wr_miss   = n_wr_miss   + 1;
+            if (ev_l2_fill)      n_fill      = n_fill      + 1;
+            if (ev_l2_evict)     n_evict     = n_evict     + 1;
+            if (ev_l2_writeback) n_writeback = n_writeback + 1;
+            if (ev_l2_invalid)   n_invalid   = n_invalid   + 1;
+            if (ev_l2_read_req)  n_read_req  = n_read_req  + 1;
+            if (ev_l2_write_req) n_write_req = n_write_req + 1;
+        end
+    end
+
+    // ------------------------------------------------------------------
     // Señales del eviction buffer
     // ------------------------------------------------------------------
 
@@ -173,7 +217,18 @@ module tb_l2_cache_flush;
 
         .flush_req(flush_req),
         .flush_done(flush_done),
-        .lower_drained(lower_drained)
+        .lower_drained(lower_drained),
+
+        .ev_l2_rd_hit(ev_l2_rd_hit),
+        .ev_l2_rd_miss(ev_l2_rd_miss),
+        .ev_l2_wr_hit(ev_l2_wr_hit),
+        .ev_l2_wr_miss(ev_l2_wr_miss),
+        .ev_l2_fill(ev_l2_fill),
+        .ev_l2_evict(ev_l2_evict),
+        .ev_l2_writeback(ev_l2_writeback),
+        .ev_l2_invalid(ev_l2_invalid),
+        .ev_l2_read_req(ev_l2_read_req),
+        .ev_l2_write_req(ev_l2_write_req)
     );
 
     // El nivel inferior está drenado cuando el buffer no tiene nada
@@ -565,6 +620,17 @@ module tb_l2_cache_flush;
         check_ram_line("la línea D vaciada llegó a la RAM",
                        ADDR_D, written_pattern(ADDR_D));
 
+        // Los eventos cuentan lo mismo que se comprobó arriba: cuatro
+        // líneas sucias bajaron a la RAM durante el vaciado.
+        check("el vaciado avisó de cuatro líneas bajadas",
+              n_writeback, 4);
+        check("el vaciado no desalojó por reemplazo",
+              n_evict, 0);
+        check("cada línea bajada ofreció el bus al nivel inferior",
+              (n_write_req >= n_writeback) ? 32'd1 : 32'd0, 32'd1);
+        check("las cuatro escrituras rellenaron la L2",
+              n_fill, 4);
+
         // ------------------------------------------------------------------
         tb_section("3. Al bajar flush_req la L2 vuelve a estar libre");
         // ------------------------------------------------------------------
@@ -618,12 +684,35 @@ module tb_l2_cache_flush;
         check_ram_line("la línea nueva también bajó a la RAM",
                        ADDR_C, rewritten_pattern(ADDR_C));
 
+        check("el segundo vaciado bajó la línea nueva",
+              n_writeback, 5);
+
         @(negedge clk);
         flush_req = 1'b0;
 
         repeat (4) @(posedge clk); #1;
 
         check_true("la L2 vuelve a estar libre", idle);
+
+        // ------------------------------------------------------------------
+        tb_section("6. Resumen de los eventos");
+        // ------------------------------------------------------------------
+        //
+        // La caché está en exclusiva (la de por defecto): un acierto de
+        // lectura invalida la copia de la L2, porque la línea se mueve a la
+        // L1-D. En este testbench no hubo fallos de lectura, así que la L2
+        // nunca pidió una línea al nivel inferior.
+
+        check("hubo un acierto de lectura", n_rd_hit, 1);
+        check("no hubo fallos de lectura", n_rd_miss, 0);
+        check("en exclusiva ese acierto invalidó la copia de la L2",
+              n_invalid, 1);
+        check("no se pidió ninguna línea al nivel inferior",
+              n_read_req, 0);
+        check("las cuatro escrituras nuevas fallaron", n_wr_miss, 4);
+        check("la escritura sobre la línea ya presente acertó", n_wr_hit, 1);
+        check("los rellenos son solo los de las escrituras nuevas",
+              n_fill, 4);
 
         tb_finish("tb_l2_cache_flush");
     end

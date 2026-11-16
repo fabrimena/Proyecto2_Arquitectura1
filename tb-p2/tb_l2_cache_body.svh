@@ -247,6 +247,43 @@ module `L2_TB_MODULE;
     logic                   flush_done;
     logic                   lower_drained = 1'b1;
 
+    // ------------------------------------------------------------------
+    // Eventos de la L2 (issue #23 / #26)
+    // ------------------------------------------------------------------
+    //
+    // La L2 expone diez eventos, todos pulsos de UN ciclo. Se cuentan
+    // muestreando en el flanco NEGATIVO del reloj: en el flanco positivo la
+    // L2 actualiza sus propios registros, así que leerlos ahí competiría
+    // con esa escritura. En el flanco negativo el valor ya está asentado.
+
+    logic                   ev_l2_rd_hit;
+    logic                   ev_l2_rd_miss;
+    logic                   ev_l2_wr_hit;
+    logic                   ev_l2_wr_miss;
+    logic                   ev_l2_fill;
+    logic                   ev_l2_evict;
+    logic                   ev_l2_writeback;
+    logic                   ev_l2_invalid;
+    logic                   ev_l2_read_req;
+    logic                   ev_l2_write_req;
+
+    integer                 n_rd_hit    = 0;
+    integer                 n_rd_miss   = 0;
+    integer                 n_wr_hit    = 0;
+    integer                 n_wr_miss   = 0;
+    integer                 n_fill      = 0;
+    integer                 n_evict     = 0;
+    integer                 n_writeback = 0;
+    integer                 n_invalid   = 0;
+    integer                 n_read_req  = 0;
+    integer                 n_write_req = 0;
+
+    // Peticiones aceptadas por el bus y escrituras parciales: los necesita
+    // la comprobación de los eventos.
+    integer                 reads_accepted  = 0;
+    integer                 writes_accepted = 0;
+    integer                 partial_writes  = 0;
+
     // Observabilidad del nivel inferior.
     integer                 lower_evict_count;
     logic [31:0]            lower_evict_addr;
@@ -291,8 +328,41 @@ module `L2_TB_MODULE;
 
         .flush_req(flush_req),
         .flush_done(flush_done),
-        .lower_drained(lower_drained)
+        .lower_drained(lower_drained),
+
+        .ev_l2_rd_hit(ev_l2_rd_hit),
+        .ev_l2_rd_miss(ev_l2_rd_miss),
+        .ev_l2_wr_hit(ev_l2_wr_hit),
+        .ev_l2_wr_miss(ev_l2_wr_miss),
+        .ev_l2_fill(ev_l2_fill),
+        .ev_l2_evict(ev_l2_evict),
+        .ev_l2_writeback(ev_l2_writeback),
+        .ev_l2_invalid(ev_l2_invalid),
+        .ev_l2_read_req(ev_l2_read_req),
+        .ev_l2_write_req(ev_l2_write_req)
     );
+
+    // ------------------------------------------------------------------
+    // Conteo de los eventos
+    // ------------------------------------------------------------------
+    //
+    // Un evento es un pulso de un ciclo: se cuenta una vez por flanco
+    // negativo en el que está en alto.
+
+    always @(negedge clk) begin
+        if (!reset) begin
+            if (ev_l2_rd_hit)    n_rd_hit    = n_rd_hit    + 1;
+            if (ev_l2_rd_miss)   n_rd_miss   = n_rd_miss   + 1;
+            if (ev_l2_wr_hit)    n_wr_hit    = n_wr_hit    + 1;
+            if (ev_l2_wr_miss)   n_wr_miss   = n_wr_miss   + 1;
+            if (ev_l2_fill)      n_fill      = n_fill      + 1;
+            if (ev_l2_evict)     n_evict     = n_evict     + 1;
+            if (ev_l2_writeback) n_writeback = n_writeback + 1;
+            if (ev_l2_invalid)   n_invalid   = n_invalid   + 1;
+            if (ev_l2_read_req)  n_read_req  = n_read_req  + 1;
+            if (ev_l2_write_req) n_write_req = n_write_req + 1;
+        end
+    end
 
     // ------------------------------------------------------------------
     // El nivel inferior simulado
@@ -444,6 +514,8 @@ module `L2_TB_MODULE;
 
             @(posedge clk); #1;                 // ciclo de aceptación
 
+            reads_accepted = reads_accepted + 1;
+
             check("la L2 no acepta otra petición mientras está ocupada",
                   l2_gnt, 32'd0);
 
@@ -492,6 +564,13 @@ module `L2_TB_MODULE;
             l2_wdirty = wdirty;
 
             @(posedge clk); #1;                 // ciclo de aceptación
+
+            writes_accepted = writes_accepted + 1;
+
+            // Una escritura parcial necesita la línea vieja (write-allocate),
+            // así que la L2 pide una línea al nivel inferior.
+            if (be != {LINE_MASK_W{1'b1}})
+                partial_writes = partial_writes + 1;
 
             check("la L2 no acepta otra petición mientras está ocupada",
                   l2_gnt, 32'd0);
@@ -693,6 +772,53 @@ module `L2_TB_MODULE;
         wait_idle();
         check_true("la L2 está libre", idle);
         check_true("y acepta peticiones", l2_gnt);
+
+        // ------------------------------------------------------------------
+        tb_section("8. Eventos de la L2");
+        // ------------------------------------------------------------------
+        //
+        // Los diez eventos son pulsos de un ciclo. Aquí se comprueba que
+        // cuadran con lo que la L2 hizo de verdad: se comparan contra las
+        // peticiones que se aceptaron por el bus y contra los handshakes que
+        // el nivel inferior contó por su cuenta.
+        //
+        // Si un evento se quedara en alto más de un ciclo, los conteos
+        // saltarían y estos chequeos fallarían.
+
+        check("cada lectura aceptada es un acierto o un fallo",
+              n_rd_hit + n_rd_miss, reads_accepted);
+
+        check("cada escritura aceptada es un acierto o un fallo",
+              n_wr_hit + n_wr_miss, writes_accepted);
+
+        check("cada línea desalojada por reemplazo genera un evento de desalojo",
+              n_evict, lower_evict_count);
+
+        check("cada fallo de lectura y cada escritura parcial pide la línea al nivel inferior",
+              n_read_req, n_rd_miss + partial_writes);
+
+        check("cada línea que sale al nivel inferior ofrece el bus al menos un ciclo",
+              (n_write_req >= n_evict) ? 32'd1 : 32'd0, 32'd1);
+
+        check("este testbench no vacía la caché: no hay write-back",
+              n_writeback, 0);
+
+        if (IS_EXCL) begin
+
+            check("en exclusiva cada acierto de lectura invalida la copia de la L2",
+                  n_invalid, n_rd_hit);
+
+            check("en exclusiva solo entran líneas por escritura",
+                  n_fill, n_wr_miss);
+        end
+        else begin
+
+            check("en NINE no hay invalidación hacia atrás",
+                  n_invalid, 0);
+
+            check("en NINE entra una línea por cada fallo de lectura y de escritura",
+                  n_fill, n_rd_miss + n_wr_miss);
+        end
 
         tb_finish(`L2_TB_NAME);
     end

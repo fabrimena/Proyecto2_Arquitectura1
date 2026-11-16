@@ -84,6 +84,15 @@
      RP2_PLRU (por defecto) es un pseudo-LRU de árbol: una APROXIMACIÓN del LRU
      exacto, no el LRU exacto. RP2_RANDOM usa un LFSR.
 
+ Almacenamiento: está en rtl-p2/l2_arrays.sv, como el de la L1-D
+ (l1d_arrays.sv). La L2 tiene un solo puerto de lectura, multiplexado: durante
+ el vaciado apunta al conjunto que se está revisando.
+
+ Eventos (Javier, issue #26): pulsos de un ciclo con lo que hizo la L2:
+     ev_l2_rd_hit, ev_l2_rd_miss, ev_l2_wr_hit, ev_l2_wr_miss, ev_l2_fill,
+     ev_l2_evict, ev_l2_writeback, ev_l2_invalid, ev_l2_read_req,
+     ev_l2_write_req. La convención es la misma que usa la L1-D.
+
  Tiempos:
      Acierto: la petición se acepta en el ciclo t y l2_rvalid sale en t+8.
      Fallo:   la petición se acepta en t, la L2 pide la línea en t+5, el nivel
@@ -162,7 +171,36 @@ module l2_cache #(
     //                  pendientes (el eviction buffer está vacío).
     input  logic                   flush_req,
     output logic                   flush_done,
-    input  logic                   lower_drained
+    input  logic                   lower_drained,
+
+    // ------------------------------------------------------------------
+    // Eventos para los contadores (Javier, issue #26)
+    // ------------------------------------------------------------------
+    // Pulsos de UN ciclo, con la misma convención que usa la L1-D (l1d_cache.sv).
+    // Son la única forma de que un módulo de contadores externo sepa qué hizo
+    // la L2 sin tener que mirar el bus.
+    //
+    //   ev_l2_rd_hit      una lectura aceptada acertó
+    //   ev_l2_rd_miss     una lectura aceptada falló
+    //   ev_l2_wr_hit      una escritura aceptada acertó
+    //   ev_l2_wr_miss     una escritura aceptada falló
+    //   ev_l2_fill        una línea entró en la L2 (relleno o víctima de la L1-D)
+    //   ev_l2_evict       una línea sucia salió por reemplazo al eviction buffer
+    //   ev_l2_writeback   una línea sucia salió al eviction buffer en el vaciado
+    //   ev_l2_invalid     invalidación hacia atrás: la L2 tira su copia porque
+    //                     la línea se MUEVE a la L1-D (política exclusiva)
+    //   ev_l2_read_req    la L2 pidió una línea al nivel inferior
+    //   ev_l2_write_req   la L2 entregó una línea al nivel inferior
+    output logic                   ev_l2_rd_hit,
+    output logic                   ev_l2_rd_miss,
+    output logic                   ev_l2_wr_hit,
+    output logic                   ev_l2_wr_miss,
+    output logic                   ev_l2_fill,
+    output logic                   ev_l2_evict,
+    output logic                   ev_l2_writeback,
+    output logic                   ev_l2_invalid,
+    output logic                   ev_l2_read_req,
+    output logic                   ev_l2_write_req
 );
 
 
@@ -212,66 +250,19 @@ localparam logic [3:0] S_FL_DONE    = 4'd10;
 
 
 // ============================================================================
-// Arreglos de la caché
+// Arreglos de la caché (rtl-p2/l2_arrays.sv)
 // ============================================================================
 //
-// Una tabla de 128 conjuntos por 4 vías. Cada vía tiene sus propios arreglos de
-// 128 posiciones (como l1d_arrays.sv): es la forma que no dispara los avisos
-// de Icarus Verilog por "@* sensible a todo un arreglo".
+// El almacenamiento está en un módulo aparte, como el de la L1-D
+// (l1d_arrays.sv): 128 conjuntos por 4 vías, con sus propios arreglos de
+// 128 posiciones por vía. Solo guarda y entrega; las decisiones están arriba.
+//
+// La L2 tiene UN SOLO puerto de lectura, multiplexado: durante el vaciado,
+// bus_set apunta al conjunto que está revisando el barrido y no al de la
+// petición (ver el multiplexor de bus_set, más abajo).
 
-wire [L2_WAYS-1:0]          bus_valid;   // V de cada vía del conjunto mirado
-wire [L2_WAYS*L2_TAG_W-1:0] bus_tag;     // vía w en [w*TAG_W +: TAG_W]
-wire [L2_WAYS*LINE_W-1:0]   bus_line;    // vía w en [w*LINE_W +: LINE_W]
-wire [L2_WAYS-1:0]          bus_dirty;   // D de cada vía del conjunto mirado
-
-genvar gw;
-generate
-    for (gw = 0; gw < L2_WAYS; gw = gw + 1) begin : g_way
-
-        // Ojo: hay que darle ancho explícito. "logic" a secas es de UN bit,
-        // y con 4 vías las vías 2 y 3 se quedarían con WAY_ID = 0 y 1.
-        localparam logic [L2_WAY_W-1:0] WAY_ID = gw;
-
-        logic [L2_SETS-1:0]  valid_bits;
-        logic [L2_SETS-1:0]  dirty_bits;
-        logic [L2_TAG_W-1:0] tag_mem  [0:L2_SETS-1];
-        logic [LINE_W-1:0]    data_mem [0:L2_SETS-1];
-
-        // ---- Lectura combinacional del conjunto que se está mirando ------
-        assign bus_valid[WAY_ID]                       = valid_bits[bus_set];
-        assign bus_tag  [WAY_ID*L2_TAG_W +: L2_TAG_W]  = tag_mem[bus_set];
-        assign bus_line [WAY_ID*LINE_W    +: LINE_W]   = data_mem[bus_set];
-        assign bus_dirty[WAY_ID]                       = dirty_bits[bus_set];
-
-        // ---- Escritura de una vía completa ------------------------------
-        always @(posedge clk) begin
-
-            if (reset) begin
-                valid_bits <= '0;
-                dirty_bits <= '0;
-            end
-            else if (wr_en && (wr_way == WAY_ID)) begin
-                valid_bits[wr_set] <= wr_valid;
-                dirty_bits[wr_set] <= wr_dirty;
-                tag_mem[wr_set]    <= wr_tag;
-                data_mem[wr_set]   <= wr_line;
-            end
-            else if (clr_dirty_en && (clr_dirty_way == WAY_ID)) begin
-                // Solo el bit sucio: la etiqueta y los datos no se tocan.
-                dirty_bits[clr_dirty_set] <= 1'b0;
-            end
-        end
-
-        // Valores iniciales (solo para no ver X en las ondas)
-        integer s;
-        initial begin
-            for (s = 0; s < L2_SETS; s = s + 1) begin
-                tag_mem[s]  = '0;
-                data_mem[s] = '0;
-            end
-        end
-    end
-endgenerate
+logic [L2_INDEX_W-1:0] bus_set;
+logic [L2_TAG_W-1:0]   addr_tag;   // etiqueta de la dirección del bus
 
 
 // ============================================================================
@@ -298,13 +289,42 @@ logic [L2_WAY_W-1:0]   clr_dirty_way;
 // ============================================================================
 // Decodificación de la dirección del bus
 // ============================================================================
-
-logic [L2_INDEX_W-1:0] bus_set;
-logic [L2_TAG_W-1:0]   addr_tag;   // etiqueta de la dirección del bus
-
+//
 // El valor de bus_set lo fija el barrido de vaciado (ver más abajo): durante
 // el barrido, la lectura de los arreglos apunta al conjunto que se está
 // revisando y no a la dirección de la petición.
+//
+// La instancia de los arreglos.
+// ============================================================================
+
+logic [L2_WAYS-1:0]          bus_valid;   // V de cada vía del conjunto mirado
+logic [L2_WAYS*L2_TAG_W-1:0] bus_tag;     // vía w en [w*TAG_W +: TAG_W]
+logic [L2_WAYS*LINE_W-1:0]   bus_line;    // vía w en [w*LINE_W +: LINE_W]
+logic [L2_WAYS-1:0]          bus_dirty;   // D de cada vía del conjunto mirado
+
+l2_arrays ARRAYS (
+
+    .clk           (clk),
+    .reset         (reset),
+
+    .rd_set        (bus_set),
+    .rd_valid      (bus_valid),
+    .rd_tag        (bus_tag),
+    .rd_line       (bus_line),
+    .rd_dirty      (bus_dirty),
+
+    .wr_en         (wr_en),
+    .wr_set        (wr_set),
+    .wr_way        (wr_way),
+    .wr_tag        (wr_tag),
+    .wr_line       (wr_line),
+    .wr_dirty      (wr_dirty),
+    .wr_valid      (wr_valid),
+
+    .clr_dirty_en  (clr_dirty_en),
+    .clr_dirty_set (clr_dirty_set),
+    .clr_dirty_way (clr_dirty_way)
+);
 
 
 // ============================================================================
@@ -511,6 +531,18 @@ always @(posedge clk) begin
     clr_dirty_en<= 1'b0;
     l2_gnt      <= 1'b0;
 
+    // Los eventos son pulsos de un ciclo: se limpian al principio de cada ciclo.
+    ev_l2_rd_hit    <= 1'b0;
+    ev_l2_rd_miss   <= 1'b0;
+    ev_l2_wr_hit    <= 1'b0;
+    ev_l2_wr_miss   <= 1'b0;
+    ev_l2_fill      <= 1'b0;
+    ev_l2_evict     <= 1'b0;
+    ev_l2_writeback <= 1'b0;
+    ev_l2_invalid   <= 1'b0;
+    ev_l2_read_req  <= 1'b0;
+    ev_l2_write_req <= 1'b0;
+
     if (reset) begin
 
         state     <= S_IDLE;
@@ -556,6 +588,8 @@ always @(posedge clk) begin
                         resp_line  <= hit_line;
                         resp_dirty <= IS_EXCL ? hit_dirty : 1'b0;
 
+                        ev_l2_rd_hit <= 1'b1;
+
                         // El uso de la vía se avisa al reemplazo. Con exclusiva
                         // la vía además se invalida (la línea se MUEVE).
                         touch_pulse <= 1'b1;
@@ -570,6 +604,10 @@ always @(posedge clk) begin
                             wr_line  <= hit_line;
                             wr_dirty <= 1'b0;
                             wr_valid <= 1'b0;    // la L2 ya no tiene la línea
+
+                            // Invalidación hacia atrás: la L2 tira su copia
+                            // porque la línea pasa a estar solo en la L1-D.
+                            ev_l2_invalid <= 1'b1;
                         end
 
                         state <= S_RD_WAIT;
@@ -578,6 +616,8 @@ always @(posedge clk) begin
 
                         // ---- Fallo: hay que traer la línea ----
                         rd_hit_q <= 1'b0;
+
+                        ev_l2_rd_miss <= 1'b1;
 
                         if (IS_EXCL) begin
                             // Con exclusiva la línea va SOLO a la L1-D: la L2
@@ -614,6 +654,8 @@ always @(posedge clk) begin
                         req_way    <= hit_way;
                         store_line <= merge_bytes(hit_line, l2_wline, l2_be);
 
+                        ev_l2_wr_hit <= 1'b1;
+
                         // Una escritura parcial siempre deja la línea sucia
                         // (tiene datos que la RAM no tiene). Una escritura de
                         // la línea completa conserva el bit sucio que trae.
@@ -630,6 +672,8 @@ always @(posedge clk) begin
                         req_way  <= fill_way_sel;
                         w_line   <= l2_wline;
                         w_be     <= l2_be;
+
+                        ev_l2_wr_miss <= 1'b1;
 
                         if (l2_be == {LINE_MASK_W{1'b1}}) begin
 
@@ -669,6 +713,7 @@ always @(posedge clk) begin
                                 state     <= S_WR_FETCH;
                                 read_req  <= 1'b1;
                                 read_addr <= {l2_addr[31:L2_INDEX_LSB], {L2_INDEX_LSB{1'b0}}};
+                                ev_l2_read_req <= 1'b1;
                             end
                         end
                     end
@@ -716,10 +761,16 @@ always @(posedge clk) begin
             evict_valid <= 1'b1;
             cnt        <= cnt + 8'd1;
 
+            // La L2 le está entregando una línea al nivel inferior.
+            ev_l2_write_req <= 1'b1;
+
             if (evict_valid && evict_ready) begin
 
                 // La línea ya está en el buffer: se puede seguir.
                 evict_valid <= 1'b0;
+
+                // La línea sucia salió de la L2 por reemplazo.
+                ev_l2_evict <= 1'b1;
 
                 if (is_read_q) begin
                     state <= S_RD_WAIT;
@@ -729,6 +780,7 @@ always @(posedge clk) begin
                         state     <= S_WR_FETCH;
                         read_req  <= 1'b1;
                         read_addr <= {req_addr[31:L2_INDEX_LSB], {L2_INDEX_LSB{1'b0}}};
+                        ev_l2_read_req <= 1'b1;
                     end
                     else begin
                         state <= S_WR_STORE;
@@ -763,6 +815,7 @@ always @(posedge clk) begin
                     read_req  <= 1'b1;
                     read_addr <= {req_addr[31:L2_INDEX_LSB], {L2_INDEX_LSB{1'b0}}};
                     state     <= S_RD_FETCH;
+                    ev_l2_read_req <= 1'b1;
                 end
             end
         end
@@ -787,6 +840,9 @@ always @(posedge clk) begin
                     fill_pulse <= 1'b1;
                     fill_set   <= req_set;
                     fill_way   <= req_way;
+
+                    // Con NINE la línea entra a la L2: es un llenado.
+                    ev_l2_fill <= 1'b1;
                 end
 
                 // Con exclusiva l2_rdirty dice si la línea venía sucia del
@@ -836,6 +892,9 @@ always @(posedge clk) begin
                 fill_pulse <= 1'b1;
                 fill_set   <= req_set;
                 fill_way   <= req_way;
+
+                // La línea entra a la L2: es un llenado.
+                ev_l2_fill <= 1'b1;
             end
 
             // Ojo: aquí NO se vuelve a dar el permiso. La escritura en los
@@ -913,6 +972,9 @@ always @(posedge clk) begin
 
             evict_valid <= 1'b1;
 
+            // La L2 le está entregando una línea al nivel inferior.
+            ev_l2_write_req <= 1'b1;
+
             if (evict_valid && evict_ready) begin
 
                 // La línea ya está en el buffer: su copia en la L2 queda
@@ -922,6 +984,9 @@ always @(posedge clk) begin
                 clr_dirty_en <= 1'b1;
                 clr_dirty_set<= flush_set_q;
                 clr_dirty_way<= flush_way_q;
+
+                // Esta línea sucia bajó a la RAM: es un write-back.
+                ev_l2_writeback <= 1'b1;
 
                 scan_ptr <= scan_ptr + 9'd1;
 
