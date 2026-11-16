@@ -65,6 +65,8 @@ de cada decisión; lo de hoy es esto:
   `docs/memory-hierarchy.md` ya reúne ambas cachés con sus políticas.
 - Latencias de la jerarquía completa (D12): 0 ciclos con hit en la L1-D, 8 con hit en la L2 y 64 cuando
   falla en las dos (8 + Tmem = 53 + 3 del eviction buffer y del cruce de relojes).
+- La decisión **18** (instrucciones `vaciarc`, `medir` y `lcont`) está conectada en `top` y probada
+  (`tb_cache_isa`, PR #62).
 - Falta la decisión **11** en su parte de la L2 (las 4 etapas son de Fabricio).
 
 ## 3. Decisiones obligatorias que faltaban
@@ -347,6 +349,9 @@ el slot y la semántica en `docs/` y comunicarla a CE1108.
   `measure_enable` de los contadores y el stall de `vaciarc`. Javier también agrega los 3 mnemónicos al
   ensamblador (con `lcont` en la revisión N+3 como una carga) y sus pruebas, documenta el tipo en
   `docs/isa.md` y `docs/compiler-integration.md` y avisa formalmente a CE1108.
+- **Estado:** conectadas en `top` (PR #62) y probadas con `tb_cache_isa`. `vaciarc` cuesta 2 ciclos sin
+  caché y, con la jerarquía, lo que tarda el vaciado; mientras tanto el bundle siguiente no accede a
+  memoria. Los selectores 9 a 12 (L2 y RAM) leen 0 hasta que se conecten sus contadores (#26).
 
 ## 5. Configuración por defecto y comparaciones
 
