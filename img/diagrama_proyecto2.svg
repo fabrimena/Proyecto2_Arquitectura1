@@ -143,9 +143,15 @@
   <text x="1405" y="96" text-anchor="middle" class="b">perf_stage_counters</text>
   <text x="1405" y="118" text-anchor="middle" class="s">ciclos ocupados, con burbuja</text>
   <text x="1405" y="136" text-anchor="middle" class="s">y congelados en IF, ID, EX y WB</text>
-  <text x="975" y="203" class="s">Solo observan: ninguna salida vuelve al control del núcleo.</text>
-  <text x="975" y="222" class="s">perf_measure_enable pausa la cuenta sin borrarla.</text>
-  <text x="975" y="241" class="s">Los contadores de la L1-D están dentro de mem_hierarchy.</text>
+  <text x="975" y="196" class="s">Solo observan: ninguna salida vuelve al control del núcleo.</text>
+  <rect x="980" y="205" width="560" height="45" rx="4" class="logic"/>
+  <text x="1260" y="224" text-anchor="middle" class="bs">cache_isa_unit (D18): vaciarc, medir y lcont del slot 1</text>
+  <text x="1260" y="241" text-anchor="middle" class="s">medir pausa los contadores · lcont los lee · vaciarc pide el vaciado</text>
+  <polyline points="900,340 928,340 928,228 978,228" class="w" marker-end="url(#a)"/>
+  <text x="934" y="278" style="font-size:11px">slot 1</text>
+  <text x="934" y="291" style="font-size:11px">(EX)</text>
+  <line x1="1500" y1="250" x2="1500" y2="298" class="w" marker-end="url(#a)"/>
+  <text x="1492" y="284" text-anchor="end" class="s">flush_req de vaciarc</text>
   <line x1="900" y1="125" x2="958" y2="125" class="obs" marker-end="url(#ab)"/>
   <text x="929" y="117" text-anchor="middle" style="font-size:11px" class="tb">observa</text>
 
