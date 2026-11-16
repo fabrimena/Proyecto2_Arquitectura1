@@ -75,8 +75,10 @@
      ID/EX, EX/WB, banco, LSU, BRU, CRIPTO y bóveda): el bundle completo
      queda congelado y al terminar sigue igual, con más ciclos. DMEM y lo que
      se agregue para la jerarquía siguen con clk.
-     Con MEM_MODE = 2 los dos puertos (LSU y cripto) pasan por la L1-D
-     (rtl-p2/mem_hierarchy.sv) y DMEM queda detrás como la RAM. Con
+     Con MEM_MODE = 2 los dos puertos (LSU y cripto) pasan por la jerarquía
+     completa (rtl-p2/mem_hierarchy.sv): L1-D, L2, eviction buffer y
+     controlador de memoria. DMEM queda detrás como la RAM y, en ese modo,
+     trabaja con su propio reloj (clk_mem = clk / MEM_DIV, 25 MHz). Con
      write-back DMEM no tiene los últimos valores hasta que se vacía la
      caché: un testbench pone flush_req = 1 y espera flush_done antes de
      leer DUT.DMEM.mem. En los modos 0 y 1 no hay nada que vaciar y
@@ -100,10 +102,16 @@ module top #(
     //   0  conexión directa con DMEM, como en el proyecto 1 (por defecto)
     //   1  modelo de stalls (rtl-p2/mem_stall_model.sv): cada acceso de la LSU
     //      tarda STALL_CYCLES ciclos más, para probar el congelamiento
-    //   2  jerarquía de caché (rtl-p2/mem_hierarchy.sv): L1-D y, mientras no
-    //      esté la L2 real, la L2 de prueba (rtl-p2/l2_model.sv)
+    //   2  jerarquía de caché (rtl-p2/mem_hierarchy.sv): L1-D, L2, eviction
+    //      buffer y controlador de memoria
     parameter int MEM_MODE     = 0,
     parameter int STALL_CYCLES = 3,
+
+    // Solo con MEM_MODE = 2: L2_MODEL = 1 cambia la L2 real, el buffer y el
+    // controlador por la L2 de prueba (rtl-p2/l2_model.sv); MEM_DIV fija el
+    // reloj de la RAM (clk / MEM_DIV: 2 = 50 MHz, 4 = 25 MHz, 5 = 20 MHz)
+    parameter bit L2_MODEL     = 1'b0,
+    parameter int MEM_DIV      = 4,
 
     // Memoria de instrucciones: 1 = ROM síncrona (por defecto), 0 = lectura
     // combinacional como en el proyecto 1
@@ -639,6 +647,7 @@ assign mem_re_b = id_ex_valid && ex_crypto_valid && !ex_crypto_fault &&
 // leyendo DUT.DMEM.mem.
 // -----------------------------------------------------------------------------
 
+logic        dmem_clk;          // clk, o clk_mem con la jerarquía completa
 logic        dmem_we;
 logic [3:0]  dmem_be;
 logic [31:0] dmem_addr;
@@ -683,10 +692,15 @@ generate
         );
 
         assign flush_done = flush_req;      // no hay caché que vaciar
+        assign dmem_clk   = clk;
     end
     else if (MEM_MODE == 2) begin : g_mem_cache
 
-        mem_hierarchy #(.PERF_ENABLE(PERF_ENABLE)) HIER (
+        mem_hierarchy #(
+            .PERF_ENABLE(PERF_ENABLE),
+            .L2_MODEL(L2_MODEL),
+            .MEM_DIV(MEM_DIV)
+        ) HIER (
             .clk(clk),
             .reset(reset),
 
@@ -709,6 +723,7 @@ generate
             .flush_done(flush_done),
             .perf_measure_enable(perf_measure_enable),
 
+            .m_clk(dmem_clk),
             .m_we(dmem_we),
             .m_be(dmem_be),
             .m_addr(dmem_addr),
@@ -726,6 +741,7 @@ generate
         // Proyecto 1: la LSU y la cripto van directo a DMEM, sin stalls
         assign cache_stall = 1'b0;
         assign flush_done  = flush_req;     // no hay caché que vaciar
+        assign dmem_clk    = clk;
 
         assign dmem_we      = mem_we;
         assign dmem_be      = mem_be;
@@ -741,7 +757,7 @@ generate
 endgenerate
 
 memory #(.SIZE_WORDS(DMEM_BYTES / 4)) DMEM (
-    .clk(clk),
+    .clk(dmem_clk),
     .we(dmem_we),
     .be(dmem_be),
     .addr(dmem_addr),

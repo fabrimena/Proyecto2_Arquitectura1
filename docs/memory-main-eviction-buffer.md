@@ -9,13 +9,13 @@
 
 La memoria principal se modela con una capacidad de **64 KB**, direcciones de byte de 32 bits dentro del rango válido `0x0000` a `0xFFFF`, y acceso físico mediante **16 384 palabras de 32 bits**. La unidad de transferencia entre cachés y memoria es una línea de **32 bytes (256 bits)**, compuesta por ocho palabras consecutivas. Las solicitudes de línea se alinean a 32 bytes (`addr[4:0] = 0`). La palabra 0 ocupa `line[31:0]` y la palabra 7 ocupa `line[255:224]`.
 
-Los módulos de controlador y eviction buffer tienen interfaces compatibles y cuentan con una prueba de integración. Sin embargo, en la versión revisada de `rtl-p2/mem_hierarchy.sv` la jerarquía de `MEM_MODE=2` todavía conecta `l1d_port_arbiter` → `l1d_cache` → `l2_model` → DMEM. **No se debe presentar la L2 real, el controlador y el eviction buffer como integrados al procesador** hasta reemplazar ese modelo y verificar el camino completo.
+Los módulos de controlador y eviction buffer tienen interfaces compatibles y cuentan con una prueba de integración. Desde el issue #27, `rtl-p2/mem_hierarchy.sv` los conecta en el camino del procesador con `MEM_MODE=2`: `l1d_port_arbiter` → `l1d_cache` → `l2_cache` → eviction buffer → controlador → DMEM, y DMEM usa `clk_mem` como reloj. La L2 de prueba (`l2_model`) queda solo con `L2_MODEL = 1`.
 
 ```text
-Camino actual de MEM_MODE=2:
+Camino con L2_MODEL = 1 (L2 de prueba):
 CPU (puertos A/B) -> árbitro -> L1-D -> l2_model -> DMEM
 
-Camino previsto con la L2 real:
+Camino de MEM_MODE=2 (por defecto, issue #27):
 CPU -> L1-D -> L2 real -> [eviction buffer] -> controlador -> RAM
                                    ^                  |
                                    +--- lecturas -----+
@@ -118,8 +118,8 @@ También se verificó de forma independiente `perf_memory.sv` mediante `tb_perf_
 
 ### 7. Pendientes de integración y criterios de cierre
 
-- **Integración de la jerarquía:** reemplazar `l2_model` en `mem_hierarchy.sv` por la L2 real y conectar sus desalojos y lecturas con `eviction_buffer` y `mem_controller`.
-- **Vaciado completo:** comprobar que `flush_done` solo se afirme cuando las líneas sucias hayan atravesado todos los niveles pertinentes y hayan llegado a memoria principal.
+- **Integración de la jerarquía:** hecha (#27): `mem_hierarchy.sv` conecta la L2 real con `eviction_buffer` y `mem_controller`.
+- **Vaciado completo:** hecho: `flush_done` sube cuando la L1-D terminó, la L2 terminó y el buffer quedó vacío (`lower_drained = !busy`); los programas de archivo comparan DMEM después del vaciado.
 - **CDC para síntesis:** revisar generación de reloj, restricciones, sincronizadores e integridad de los buses multibit.
 - **Validación de extremo a extremo:** ejecutar programas y pruebas de jerarquía con la L2 real y memoria principal conectadas.
 

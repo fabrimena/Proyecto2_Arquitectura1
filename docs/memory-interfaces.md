@@ -2,15 +2,15 @@
 
 > Curso: CE4301 – Arquitectura de Computadores I, II Semestre 2026  
 > Profesor: Dr.-Ing. Jeferson González Gómez  
-> Estado: interfaces de núcleo y L1-D documentadas; controlador de memoria y eviction buffer implementados y probados por separado; L2 real implementada y verificada (`rtl-p2/l2_cache.sv`); su integración en `mem_hierarchy.sv` pendiente 
+> Estado: secciones 2 a 8 implementadas; la jerarquía completa (L1-D, L2, eviction buffer y controlador de memoria) está integrada en `rtl-p2/mem_hierarchy.sv` y se usa con `MEM_MODE = 2`  
 > Equipo: Dylan Guerrero González, José García Izaguirre, Javier Hernández Castillo, Alejandro Vásquez Oviedo, Fabricio Mena Mejia
 
 Cómo se conectan el núcleo del proyecto 1, la L1-D, la L2 y la memoria principal. La idea es que cada
 uno pueda hacer y probar su módulo por separado contra un modelo simple y que después todo encaje. Las
-secciones 2 a 4 están en `rtl-p2/top.sv` y `rtl-p2/mem_stall_model.sv`; la 5, la 7 y la 8 en
-`rtl-p2/mem_hierarchy.sv`, la L1-D de José y la L2 de prueba (`rtl-p2/l2_model.sv`). La sección 6 documenta los puertos implementados de memoria principal y eviction buffer.
-La L2 real ya está implementada y verificada (`rtl-p2/l2_cache.sv`); lo que sigue pendiente es conectarla en `mem_hierarchy.sv` en lugar de la L2 de prueba, y conectar ahí el eviction buffer y el controlador. Las decisiones de
-diseño están en [`decisiones-importantes.md`](decisiones-importantes.md).
+secciones 2 a 4 están en `rtl-p2/top.sv` y `rtl-p2/mem_stall_model.sv`; la 5 a la 8 en
+`rtl-p2/mem_hierarchy.sv`, que une la L1-D (José), la L2 (Alejandro), el eviction buffer y el controlador
+de memoria (Dylan). La L2 de prueba (`rtl-p2/l2_model.sv`) queda como opción para comparar
+(`L2_MODEL = 1`). Las decisiones de diseño están en [`decisiones-importantes.md`](decisiones-importantes.md).
 
 ## 1. Regla de partida
 
@@ -66,13 +66,14 @@ Reglas que tiene que cumplir cualquier implementación:
 |:---:|:---|:---|
 | 0 (por defecto) | Conexión directa, como en el proyecto 1 | Listo |
 | 1 | `mem_stall_model`: cada acceso de la LSU tarda `STALL_CYCLES` ciclos más, como si todos fueran un miss | Listo, para probar el congelamiento |
-| 2 | `mem_hierarchy`: los dos puertos pasan por la L1-D (sección 8). Por ahora la L2 es `l2_model`; después se agregan la L2 real, el eviction buffer y el controlador de memoria | L1-D y puerto B listos; L2 real y memoria en las iteraciones 2 y 4 |
+| 2 | `mem_hierarchy`: jerarquía completa. Los dos puertos pasan por la L1-D (sección 8), la L2, el eviction buffer y el controlador de memoria; la RAM trabaja con su reloj `clk_mem` (sección 6). Con `L2_MODEL = 1`, la L2 de prueba | Listo |
 
 DMEM (`memory.sv`, 64 KB) se queda en `top` como el almacenamiento de la memoria principal. Así
 `DUT.DMEM.mem` sigue siendo la memoria para los testbenches y las herramientas que la cargan o la leen
 por jerarquía (`tb_archivo`, `tb_assembled_program` de `run_program.py`, `tb_pipeline_cripto` y otros).
-En el modo 2 solo la usa la jerarquía por el puerto A (hoy `l2_model`, después el controlador de
-memoria, con la latencia y el reloj de la memoria principal); el puerto B de DMEM queda sin usar. Con
+En el modo 2 solo la usa la jerarquía por el puerto A: el controlador de memoria escribe y lee una
+palabra por flanco de `clk_mem` (`top` le conecta a DMEM ese reloj, que sale de `mem_hierarchy` como
+`m_clk`); con `L2_MODEL = 1` la usa `l2_model` con `clk`. El puerto B de DMEM queda sin usar. Con
 write-back, DMEM no tiene los últimos valores hasta que se vacía la caché (sección 7).
 
 Un testbench nuevo elige el modo con parámetros:
@@ -143,11 +144,11 @@ en la L1-D por José, ver [`l1d-cache.md`](l1d-cache.md)):
 - Write buffer de 4 entradas (2 a 8) con el mismo formato que una escritura del bus. Riesgo RAW: con
   NINE se reenvían los bytes pendientes; con exclusiva se espera a que la entrada llegue a la L2.
 
-**L2 de prueba** (`rtl-p2/l2_model.sv`). Mientras la L2 real no se conecta en `mem_hierarchy`, la jerarquía sigue instanciando este
-modelo: siempre acierta, no guarda líneas y lee o escribe DMEM una palabra por ciclo, así que una
+**L2 de prueba** (`rtl-p2/l2_model.sv`). Ya no es la opción por defecto: se elige con `L2_MODEL = 1`
+(parámetro de `top` y de `mem_hierarchy`) para comparar o depurar. Siempre acierta, no guarda líneas y lee o escribe DMEM una palabra por ciclo, así que una
 lectura tarda exactamente 8 ciclos (las 8 palabras de la línea). Una escritura ocupa el modelo 8
 ciclos. `l2_rdirty` siempre es 0 porque lo que entrega ya está en la RAM; con la política exclusiva se
-comporta como una L2 vacía con la RAM detrás. La L2 real se conecta en su lugar con el mismo bus.
+comporta como una L2 vacía con la RAM detrás. La L2 real usa el mismo bus.
 
 ## 6. L2, eviction buffer y memoria principal
 
@@ -312,11 +313,16 @@ El controlador utiliza `mem_error` para su salida de error; **al conectarlo al b
 
 El buffer utiliza `clk` del dominio CPU y `reset`. La integración de buffer, controlador y RAM simulada está probada mediante `tb_eviction_buffer_integracion.sv`.
 
-### 6.7.1. Estado real de integración con la jerarquía
+### 6.7.1. Integración en la jerarquía
 
-En la versión revisada de `rtl-p2/mem_hierarchy.sv`, las solicitudes de la L1-D llegan a `l2_model`, que sigue conectado directamente a DMEM mediante `m_we`, `m_be`, `m_addr`, `m_wdata` y `m_rdata`. El eviction buffer y el controlador no están instanciados ahí. Por tanto, **el intercambio con la jerarquía sigue pendiente**: sustituir `l2_model` por la L2 real en `mem_hierarchy.sv` es el issue #27, que no es de este bloque. El bus L1-D ↔ L2 de la sección 5 permanece como contrato de integración; no debe confundirse con los puertos `evict_*` y `read_*` del buffer.
+`rtl-p2/mem_hierarchy.sv` instancia la L2 real (`l2_cache`), el eviction buffer y el controlador de
+memoria con estos puertos, sin adaptadores (#27). `mem_error` del controlador va a `ram_error` del
+buffer, `mem_hold` y `clear_write_error` quedan en 0, y un error de memoria después del reintento se
+avisa con `$error` (D14). El bus de palabras del controlador va a DMEM: `mem_word_addr` como dirección
+de palabra, `mem_word_we` con `be = 1111` y `clk_mem` como reloj de DMEM. Los parámetros `MEM_DIV`
+(2 a 5) y `EB_DEPTH` (4 a 16) de `mem_hierarchy` llegan al controlador y al buffer.
 
-**La L2 real ya existe y habla con estos puertos.** `rtl-p2/l2_cache.sv` (rama `feat/l2-cache`) es la L2 unificada write-back del proyecto: 16 KB, 4 vías, líneas de 32 B, hit de 8 ciclos y write-back. Su bus hacia abajo usa **exactamente** los nombres y la polaridad de la sección 6.7, sin adaptadores:
+**La L2 real ya existe y habla con estos puertos.** `rtl-p2/l2_cache.sv` es la L2 unificada write-back del proyecto: 16 KB, 4 vías, líneas de 32 B, hit de 8 ciclos y write-back. Su bus hacia abajo usa **exactamente** los nombres y la polaridad de la sección 6.7, sin adaptadores:
 
 - Desalojo: `evict_valid`, `evict_addr`, `evict_line` hacia el buffer, y `evict_ready` de vuelta.
 - Lectura de línea: `read_req`, `read_addr` hacia el buffer, y `read_ready`, `read_line`, `read_forwarded` de vuelta.
@@ -366,9 +372,19 @@ while (!flush_done) @(posedge clk);     // después, DUT.DMEM.mem tiene todo
 flush_req = 1'b0;
 ```
 
-- Modo 2: la L1-D espera a que no quede ningún MSHR, manda sus líneas sucias al write buffer y espera
-  a que se vacíe. `flush_done` = 1 cuando la L1-D terminó y la L2 de prueba ya escribió todo en DMEM, y
-  se mantiene mientras `flush_req` siga en 1. Con la L2 real se agrega su parte de la cadena (D16).
+- Modo 2, cadena completa (D16), armada en `mem_hierarchy.sv`:
+  1. la L1-D espera a que no quede ningún MSHR, manda sus líneas sucias al write buffer y espera a
+     que se vacíe (su `flush_done`);
+  2. recién entonces la L2 recibe su `flush_req` (`flush_req && flush_done de la L1-D`) y manda sus
+     líneas sucias al eviction buffer. Antes no, porque mientras vacía no atiende peticiones y la L1-D
+     necesita mandarle sus víctimas;
+  3. la L2 espera a que el buffer quede vacío y el controlador libre (`lower_drained = !busy`).
+
+  `flush_done` de la jerarquía = los dos `flush_done`, y se mantiene mientras `flush_req` siga en 1.
+  Con `L2_MODEL = 1`: la L1-D terminó y `l2_model` ya escribió todo en DMEM.
+- Duración: cerca de 56 ciclos por línea sucia que llega a la RAM. Después de cifrar `imagen.bmp`
+  (9270 bytes) el vaciado tarda 16631 ciclos; en el peor caso (640 líneas sucias) unos 37000. Por eso
+  el límite de espera de los testbenches de `tests/rtl` es de 100000 ciclos (`+FLUSH_MAXCYCLES`).
 - Modos 0 y 1: no hay nada que vaciar y `flush_done` sigue a `flush_req`.
 - El programa puede seguir después de un vaciado. Con exclusiva, las líneas sucias que se mandaron a la
   L2 quedan inválidas en la L1-D y se vuelven a pedir.
@@ -406,8 +422,9 @@ L2 las alcance. Mientras dura el vaciado la L2 no acepta peticiones (`l2_gnt = 0
 detenido. Igual que en la L1-D, `flush_done` es un nivel y la L2 sigue detenida hasta que `flush_req` baja;
 entonces vuelve a estar libre y a aceptar peticiones.
 
-**Cableado (issue #27, de Fabricio).** `lower_drained` se conecta con `!busy` del eviction buffer: el
-nivel inferior está drenado cuando el buffer no tiene líneas en la FIFO ni una transferencia en curso.
+**Cableado (#27, en `mem_hierarchy.sv`).** `lower_drained` se conecta con `!busy` del eviction buffer:
+el nivel inferior está drenado cuando el buffer no tiene líneas en la FIFO ni una transferencia en curso.
+El `flush_req` de la L2 sube cuando la L1-D ya terminó su vaciado.
 
 La evidencia está en `tb-p2/tb_l2_cache_flush.sv`, que corre la L2 real contra el `eviction_buffer.sv` y el
 `mem_controller.sv` **reales**, con una RAM simulada de 16384 palabras. Comprueba que antes del vaciado la
@@ -446,18 +463,21 @@ accesos en los dos, se atienden en fases y el núcleo sigue congelado hasta la �
 1. Políticas de la L1-D: listo (José): write-back, write-allocate y LRU por defecto; write-through, FIFO
    y Random como parámetros.
 2. Riesgo RAW: write buffer de la L1-D implementado; eviction buffer con forwarding implementado y
-   probado por separado (Dylan). Falta conectarlo a la L2 real en la jerarquía.
+   probado (Dylan) y conectado a la L2 real en la jerarquía.
 3. Inclusión: exclusiva por defecto y NINE como parámetro, **en las dos cachés** (D3), y el profesor ya
    confirmó la exclusiva como crédito extra. La L2 implementa los dos modos: en exclusiva la línea se
    mueve a la L1-D y la L2 invalida su copia; en NINE la L2 guarda la suya (sección 4 de
-   `docs/memory-hierarchy.md`). Falta el checker de exclusividad de Fabricio (`rtl-p2/excl_checker.sv`).
+   `docs/memory-hierarchy.md`). El checker de exclusividad (`rtl-p2/excl_checker.sv`) revisa en cada
+   ciclo de simulación que ninguna línea esté en las dos cachés; `tb_mem_hierarchy` y `tb_port_b`
+   comprueban que no encontró ninguna.
 4. Cruce de dominios de reloj, timeout y reintento: implementados y probados en `mem_controller.sv`
-   (Dylan). Pendiente la integración con la L2 real y la revisión CDC para síntesis.
+   (Dylan) e integrados con la L2 real. Pendiente la revisión CDC para síntesis.
 5. Memoria de instrucciones: listo. ROM síncrona leída con el siguiente PC (`rtl-p2/rom_sync.sv`, D1),
    que mantiene los tiempos de IF y no afecta al compilador.
 6. Puerto B a través de la L1-D: listo (sección 8).
 7. Testbenches de las herramientas con el vaciado (#28, Javier).
-8. Vaciado de la L2: implementado y probado en la L2 real (sección 7.1). Falta el cableado de la L2 real en `mem_hierarchy.sv` y el encadenado del vaciado de la L1-D con el de la L2 (#27, de Fabricio).
+8. Vaciado de la L2: implementado (Alejandro) y encadenado con el de la L1-D en `mem_hierarchy.sv`
+   (sección 7).
 9. Eventos de la L2: los diez pulsos `ev_l2_*` de un ciclo están implementados en `rtl-p2/l2_cache.sv`
    y verificados con los contadores de los testbenches (#23, Alejandro). Con eso `perf_cache_l2.sv`
    puede contar sin interpretar el bus (#26, Javier); falta su implementación.
@@ -465,6 +485,7 @@ accesos en los dos, se atienden en fases y el núcleo sigue congelado hasta la �
     dos cachés justificadas, los diagramas L1/L2, la cadena de vaciado y las latencias.
 11. Reemplazo de la L2: pseudo-LRU de árbol (por defecto) y Random con LFSR, ambos implementados y
     probados (#22, Alejandro). El pseudo-LRU es una **aproximación** del LRU, no un LRU exacto.
+12. L2 en 4 etapas (crédito extra, D11): pendiente; hoy la L2 es bloqueante.
 
 ## 10. Pruebas
 
@@ -489,15 +510,19 @@ accesos en los dos, se atienden en fases y el núcleo sigue congelado hasta la �
 - Los cinco testbenches de la L2, junto con el resto del proyecto, dan **63 PASS y 0 FAIL** en
   `make sim`.
 - `make tb_l2_cache_flush` prueba el vaciado de la L2 real contra el eviction buffer y el controlador de memoria reales: antes del vaciado la RAM no tiene las líneas sucias, después sí, `flush_done` se levanta y se mantiene con `flush_req` en alto, las copias de la L2 quedan limpias y la L2 vuelve a aceptar peticiones al bajar `flush_req`.
-- `make tb_mem_hierarchy` prueba la jerarquía del modo 2 sin el procesador, contra un modelo de la
-  memoria del proyecto 1: un miss tarda 8 ciclos, un hit y un store con un MSHR libre 0, y los casos del
-  puerto B de la sección 8 (incluidos `vcr` y `camcon` sobre palabras que solo están sucias en la L1-D).
-  Después del vaciado, DMEM es igual al modelo, también tras 3000 bundles aleatorios sobre 32 líneas que
-  compiten por 4 conjuntos.
+- `make tb_mem_hierarchy` prueba la jerarquía completa sin el procesador, contra un modelo de la
+  memoria del proyecto 1. Latencias medidas (iguales en todas las fases de `clk_mem`): hit en la L1-D
+  **0** ciclos, falla en la L1-D y acierta en la L2 **8**, falla en las dos **64** = 8 de la L2 + 53 de
+  la RAM (Tmem a 25 MHz) + 3 del eviction buffer y del cruce de relojes. Un store con un MSHR libre, 0.
+  También los casos del puerto B de la sección 8 (incluidos `vcr` y `camcon` sobre palabras que solo
+  están sucias en la L1-D). Después del vaciado, DMEM es igual al modelo, también tras 3000 bundles
+  aleatorios sobre 32 líneas que compiten por 4 conjuntos, y el checker de exclusividad no encontró
+  ninguna línea en los dos niveles.
 - `make tb_port_b` ejecuta un programa con `setpwd`, `vcr` y `camcon` junto a cargas y stores de la
-  misma palabra en tres copias de `top` (modos 0, 1 y 2): mismo estado final, mismas escrituras al banco
-  y `camcon` escribe una sola vez.
-- Con el modo 2 (copias de `tb_assembled_program`, `tb_archivo` y `tb_ce1108_program` con el vaciado),
-  `make test-programs`, `make descifrar` y los programas de CE1108 dan los resultados esperados, y
-  `make archivo` da el mismo `cifrado.bin` que el proyecto 1 en más ciclos: `mensaje.txt` 1102 en vez de
-  989, `imagen.bmp` 25518 en vez de 23189 y `datos.bin` 2774 en vez de 2509.
+  misma palabra en tres copias de `top` (modos 0, 1 y 2, este con la jerarquía completa): mismo estado
+  final, mismas escrituras al banco y `camcon` escribe una sola vez.
+- Con la jerarquía completa (`MEM_MODE = 2`; `tb_archivo` con el `defparam` de la sección 3),
+  `make archivo` da el mismo `cifrado.bin` que el proyecto 1 y el descifrado es idéntico al original, en
+  más ciclos: `mensaje.txt` 1886 en vez de 989, `imagen.bmp` 41814 en vez de 23189 y `datos.bin` 4622
+  en vez de 2509. `make test-memory-modes`, `make test-memory-benchmarks` y `tests/test_flush_tools.py`
+  (que corren las herramientas en los modos 0, 1 y 2) también pasan.
