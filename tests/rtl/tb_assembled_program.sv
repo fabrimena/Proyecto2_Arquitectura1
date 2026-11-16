@@ -15,7 +15,9 @@ module tb_assembled_program #(
 
     // El límite protege la simulación sin sustituir el protocolo por un retardo.
     // Se configura solo para pruebas/diagnóstico; la persistencia siempre exige done=1.
-    integer flush_limit = 10000;
+    // Peor caso con la jerarquía completa: 640 líneas sucias (128 de la L1-D y 512
+    // de la L2) a unos 56 ciclos cada una hacia la RAM, cerca de 37000 ciclos.
+    integer flush_limit = 100000;
     // req nace inactivo; done pertenece al productor y confirma DMEM persistente.
     logic flush_req = 1'b0;
     wire flush_done;
