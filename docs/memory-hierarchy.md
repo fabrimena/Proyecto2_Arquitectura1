@@ -161,37 +161,49 @@ nuestros benchmarks no aporta nada frente al PLRU de árbol.
 
 ### 3.3 Cómo funciona por dentro
 
-La L2 es **bloqueante**: `l2_gnt` solo está en alto cuando la caché está libre, así que se atiende una
-petición a la vez. El bus versión 2 separa la aceptación de la respuesta:
+La L2 está segmentada en **4 etapas** (decisión 11): acepta una petición por ciclo mientras haya lugar y
+todo avanza en orden. El bus versión 2 separa la aceptación de la respuesta, así que para la L1-D nada
+cambia: un acierto sigue respondiendo a los 8 ciclos y un fallo a los 8 + Tmem.
 
 ```text
   l2_req, l2_we, l2_addr, l2_wline, l2_be, l2_wdirty
-                |
+                |   l2_gnt: la cola tiene lugar
                 v
-        +---------------+   l2_gnt (solo si está libre)
-        |   S_IDLE      |------------------------> acepta la petición
         +---------------+
-                |  fallo
-                v
-        +---------------+   read_req, read_addr
-        |  S_RD_WAIT   |-----------------------> pide la línea al nivel inferior
+        | S1 Recepción  |  cola de 2 peticiones
         +---------------+
-                |
                 v
-        +---------------+   evict_valid, evict_addr, evict_line
-        |   S_EVICT    |-----------------------> la víctima sucia baja al EB
+        +---------------+   read_req -> read_ready: un fallo espera aquí la línea
+        | S2 Etiquetas  |   evict_*: la víctima sucia baja al eviction buffer
+        +---------------+---------------------------> respuesta de un fallo
+                v                                      (l2_rvalid, l2_rline, l2_rdirty)
         +---------------+
-                |
+        |   S3 Datos    |  escribe los arreglos y actualiza el reemplazo
+        +---------------+
                 v
-        +---------------+   l2_rvalid, l2_rline, l2_rdirty
-        |  S_RD_FETCH  |------------------------> entrega la línea
+        +---------------+
+        | S4 Respuesta  |  un acierto sale a los 8 ciclos de su aceptación
         +---------------+
 ```
 
-Y en el camino de escritura, `S_WR_STORE` → `S_WR_COMMIT`: el estado de confirmación existe porque la
-escritura en los arreglos ocurre en el flanco que cierra `S_WR_STORE`. Sin él, la siguiente petición
-compararía la etiqueta contra el contenido viejo, fallaría el acierto y, en un llenado, mandaría dos
-líneas a la misma vía.
+| Etapa | Qué hace |
+|:---|:---|
+| S1 Recepción | Cola de 2 entradas. `l2_gnt` sale de un registro y dice que la cola tiene lugar en ese ciclo |
+| S2 Etiquetas | Compara las 4 vías, decide acierto o fallo y elige la víctima. Un fallo espera aquí la línea del nivel inferior y una víctima sucia baja al eviction buffer antes de seguir; mientras tanto las peticiones de atrás esperan en la cola |
+| S3 Datos | Escribe los arreglos (llenado, store o la invalidación de la exclusiva) y actualiza el pseudo-LRU, en el flanco en que la petición sale de S3 |
+| S4 Respuesta | La línea de un acierto espera hasta completar los 8 ciclos desde su aceptación y sale por `l2_rvalid` |
+
+Riesgo entre etapas: si S3 todavía no escribió el conjunto que S2 va a mirar, S2 espera un ciclo. Sin
+esa espera compararía la etiqueta contra el contenido viejo (fallaría un acierto) y, en un llenado,
+mandaría dos líneas a la misma vía. Con Random también espera si S3 hace un llenado, porque el LFSR es
+uno solo. La respuesta de un fallo sale directo desde S2 cuando llega la línea, salvo que haya una
+lectura más vieja todavía sin responder: las respuestas nunca se desordenan.
+
+**Qué se gana.** Una escritura ocupa la L2 un ciclo (la versión bloqueante necesitaba 3) y una lectura se
+acepta en el ciclo siguiente a una escritura (antes, 3 ciclos después). `tb_l2_pipeline` acepta 24
+escrituras seguidas en 24 ciclos; la versión bloqueante necesitaba 70. En los programas casi no se nota,
+porque la L1-D tiene una sola lectura a la L2 en vuelo y no drena su write buffer mientras espera
+(`docs/l1d-cache.md`, sección 4): la comparación está en `decisiones-importantes.md`, sección 4.3.
 
 Detalle importante del handshake de desalojo: `evict_valid` es un pulso de **un ciclo**, pero no puede
 desasertarse en el mismo ciclo en que se decide desalojar, porque es una salida registrada. El
@@ -402,9 +414,7 @@ RAM).
 
 | Pendiente | Quién | Referencia |
 |:---|:---|:---|
-| L2 en 4 etapas con valid/ready (la L2 bloqueante ya existe) | Fabricio | decisión 11 |
 | Contadores de la L2 con los eventos `ev_l2_*` | Javier | issue #26, sección 4 |
-| Cerrar la cadena de vaciado de extremo a extremo con la jerarquía conectada | Fabricio | sección 6 |
 | CDC para síntesis: relojes, sincronizadores y buses multibit | Dylan | `memory-main-eviction-buffer.md`, sección 3 |
 
 Los contratos de señales de cada uno de estos enlaces están en

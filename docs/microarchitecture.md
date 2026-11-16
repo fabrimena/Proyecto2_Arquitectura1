@@ -170,7 +170,7 @@ de la LSU se apagan con la falla.
 | L1-D | `l1d_cache`, `l1d_arrays`, `l1d_replacement` | 4 KB, 2 vías, 64 conjuntos, líneas de 32 B; write-back y write-allocate; LRU; un hit responde en el mismo ciclo |
 | Write buffer | `l1d_write_buffer` | 4 entradas de la L1-D hacia la L2. Si un miss pide una línea que todavía está en el buffer, la L1-D espera a que salga (con la política exclusiva no hay forwarding) |
 | MSHR | Dentro de `l1d_cache` | 2: un store que falla no detiene el núcleo mientras haya un MSHR libre; una carga que falla sí lo detiene |
-| L2 | `l2_cache`, `l2_arrays`, `l2_replacement` | 16 KB, 4 vías, 128 conjuntos, líneas de 32 B; write-back; pseudo-LRU de árbol; hit en 8 ciclos; bloqueante (una petición a la vez) |
+| L2 | `l2_cache`, `l2_arrays`, `l2_replacement` | 16 KB, 4 vías, 128 conjuntos, líneas de 32 B; write-back; pseudo-LRU de árbol; hit en 8 ciclos; segmentada en 4 etapas (recepción, etiquetas, datos y respuesta): acepta una petición por ciclo y responde en orden |
 | Eviction buffer | `eviction_buffer` | 4 líneas sucias de la L2 hacia la RAM; si la L2 pide una línea que está ahí, la reenvía sin ir a la RAM |
 | Controlador | `mem_controller` | Genera `clk_mem`, cruza los dominios de reloj con handshake y 2 flip-flops, Tmem = 25 + 7 × 4 = 53 ciclos por línea, timeout de 256 ciclos con un reintento |
 | RAM | `memory` del proyecto 1 (instancia `DMEM`) | 64 KB, *little-endian*, con `clk_mem` |
@@ -285,9 +285,9 @@ Efecto en un programa completo: `make archivo` (cifrar y descifrar con `cifrar_a
 
 | Archivo | Tamaño | Modo 0 (proyecto 1) | Modo 2 (jerarquía) | Vaciado después de cifrar |
 |:---|---:|---:|---:|---:|
-| `mensaje.txt` | 386 B | 989 | 1886 | 1105 |
-| `imagen.bmp` | 9270 B | 23189 | 41814 | 16631 |
-| `datos.bin` | 1000 B | 2509 | 4622 | 2112 |
+| `mensaje.txt` | 386 B | 989 | 1886 | 1103 |
+| `imagen.bmp` | 9270 B | 23189 | 41814 | 16378 |
+| `datos.bin` | 1000 B | 2509 | 4622 | 2091 |
 
 Las columnas de los modos 0 y 2 son los ciclos del programa de cifrado; el vaciado se cuenta aparte.
 
@@ -303,7 +303,7 @@ con `vaciarc` (sección 10):
 3. `flush_done` sube cuando la L2 terminó y el eviction buffer y el controlador quedaron vacíos.
 
 `flush_done` se mantiene mientras `flush_req` siga en 1. En los modos 0 y 1 no hay nada que vaciar y
-`flush_done` sigue a `flush_req`. Con `imagen.bmp` (290 líneas) el vaciado tarda 16631 ciclos, unos 57 por
+`flush_done` sigue a `flush_req`. Con `imagen.bmp` (290 líneas) el vaciado tarda 16378 ciclos, unos 56 por
 línea sucia. El peor caso, con las 640 líneas de las dos cachés sucias, ronda los 37000 ciclos, así que
 los testbenches de `tests/rtl/` esperan hasta 100000 (`+FLUSH_MAXCYCLES` lo cambia).
 
@@ -383,7 +383,7 @@ contadores de la L1-D coinciden con `perf_cache_l1d`.
 | Banco de registros | 32 × 32 bits, x0 = 0, 8 lecturas combinacionales y 5 escrituras, reset síncrono |
 | ROM de instrucciones | 1024 bundles de 128 bits (16 KB), síncrona, leída con el siguiente PC; carga con `$readmemh` (`+IMEM`); `0x3FF0` es `TRAP_VECTOR` |
 | L1-D | 4 KB, 2 vías, líneas de 32 B, write-back, write-allocate, LRU, write buffer de 4 entradas y 2 MSHR |
-| L2 | 16 KB, 4 vías, líneas de 32 B, write-back, pseudo-LRU, hit de 8 ciclos, exclusiva con la L1-D |
+| L2 | 16 KB, 4 vías, líneas de 32 B, write-back, pseudo-LRU, hit de 8 ciclos, exclusiva con la L1-D, 4 etapas |
 | Eviction buffer | 4 líneas (4 a 16 con `EB_DEPTH`) |
 | RAM de datos | 64 KB, por byte, *little-endian*, escritura con byte enables, reloj `clk_mem`. Espacio separado de la ROM |
 | Bóveda de llaves | 4 llaves de 128 bits (4 subllaves de 32) y la contraseña, dentro de `crypto_unit`. Solo la lee la ronda Feistel; no tiene camino a registros ni a memoria. El reset la borra |
@@ -418,4 +418,4 @@ memoria después del vaciado.
 | Contadores | `rtl-p2/perf_vliw_monitor.sv`, `rtl-p2/perf_slot_mask.sv`, `rtl-p2/perf_pipeline_monitor.sv`, `rtl-p2/perf_counters.sv`, `rtl-p2/perf_stage_counters.sv`, `rtl-p2/perf_cache_l1d.sv`, `rtl-p2/perf_cache_l1d_latency.sv`, `rtl-p2/perf_memory.sv` |
 | Instrucciones de caché (D18) | `rtl-p2/decoder_cache_isa.sv` (ID) y `rtl-p2/cache_isa_unit.sv` (EX y WB) |
 | Integración | `rtl-p2/top.sv` (conexiones, flush, excepción, reloj del núcleo y `MEM_MODE`), `rtl/isa_defs.sv` y `rtl-p2/cache_defs.sv` (códigos y parámetros) |
-| Pruebas | Un testbench por módulo en `tb/` y `tb-p2/`, más los de sistema: `tb_top`, `tb_pipeline_integracion` y `tb_pipeline_cripto` (proyecto 1); `tb_pipeline_stall`, `tb_rom_sync`, `tb_port_b`, `tb_mem_hierarchy` y `tb_cache_isa` (proyecto 2). Detalle en [simulation.md](simulation.md) |
+| Pruebas | Un testbench por módulo en `tb/` y `tb-p2/`, más los de sistema: `tb_top`, `tb_pipeline_integracion` y `tb_pipeline_cripto` (proyecto 1); `tb_pipeline_stall`, `tb_rom_sync`, `tb_port_b`, `tb_mem_hierarchy`, `tb_cache_isa` y `tb_l2_pipeline` (proyecto 2). Detalle en [simulation.md](simulation.md) |

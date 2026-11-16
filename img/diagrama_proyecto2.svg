@@ -195,7 +195,7 @@
   <rect x="970" y="660" width="240" height="90" rx="4" class="store"/>
   <text x="1090" y="682" text-anchor="middle" class="b">L2 (l2_cache)</text>
   <text x="1090" y="701" text-anchor="middle" class="s">16 KB · 4 vías · hit de 8 ciclos</text>
-  <text x="1090" y="719" text-anchor="middle" class="s">write-back · PLRU · bloqueante</text>
+  <text x="1090" y="719" text-anchor="middle" class="s">write-back · PLRU · 4 etapas</text>
   <text x="1090" y="737" text-anchor="middle" class="s">exclusiva con la L1-D</text>
 
   <line x1="1090" y1="752" x2="1090" y2="788" class="w" marker-start="url(#a)" marker-end="url(#a)"/>
