@@ -90,6 +90,19 @@
      que la memoria combinacional del proyecto 1, así que no cambia ningún
      tiempo. Con ROM_SYNC = 0 vuelve a leer de forma combinacional.
 
+ Proyecto 2, instrucciones de caché y medición (decisiones-importantes.md 4.4):
+     vaciarc, medir y lcont (tipo 1001101, solo en el slot 1). decoder_lsu no
+     las conoce y las deja como NOP; decoder_cache_isa las decodifica en ID,
+     un registro propio las lleva a EX y cache_isa_unit las ejecuta cuando el
+     bundle sale de EX:
+         - medir pausa o reanuda los contadores (junto con perf_measure_enable).
+         - lcont toma el contador en EX y lo escribe en WB por el carril de la
+           LSU, como una carga (regla N+3).
+         - vaciarc pide el vaciado de toda la jerarquía. Mientras dura, el
+           núcleo queda congelado y los accesos a memoria del bundle siguiente
+           se retienen, así que cada uno se hace una sola vez y después del
+           vaciado.
+
 ================================================================================
 */
 
@@ -135,7 +148,8 @@ module top #(
 
     // Ventana común, activa por defecto para conservar instancias anteriores.
     // Cambiarla solo pausa acumulación; metadatos y demandas siguen su curso.
-    // No implementa medir/lcont ni afecta core_en, reset o el vaciado.
+    // No afecta core_en, reset ni el vaciado. La instrucción medir (D18)
+    // también pausa los contadores: cuentan si las dos están en 1.
     input  logic         perf_measure_enable = 1'b1
 
 );
@@ -284,9 +298,33 @@ logic [4:0][31:0] wb_wdata;
 logic             wb_conflict;
 
 // Memoria de datos y congelamiento (proyecto 2)
-logic        cache_stall;       // el acceso a memoria de EX no termina en este ciclo
+logic        cache_stall;       // el núcleo no avanza en este ciclo (memoria o vaciarc)
+logic        mem_stall;         // el acceso a memoria de EX no termina en este ciclo
 logic        core_en = 1'b1;    // cache_stall negado, tomado con clk en 0
 logic        core_clk;          // reloj del núcleo: clk sin los ciclos de stall
+
+// Instrucciones de caché y medición (D18)
+logic        cisa_valid_id;     // el slot 1 de ID trae vaciarc, medir o lcont
+logic [3:0]  cisa_op_id;
+logic [4:0]  cisa_rd_id;
+logic [5:0]  cisa_sel_id;
+logic        cisa_imm_id;
+logic        ex_cisa_valid;     // lo mismo, en EX
+logic [3:0]  ex_cisa_op;
+logic [4:0]  ex_cisa_rd;
+logic [5:0]  ex_cisa_sel;
+logic        ex_cisa_imm;
+logic        cisa_measure_enable;   // estado de medir (1 después del reset)
+logic        cisa_flush_req;    // vaciarc pide el vaciado
+logic        cisa_pending;      // cache_isa_unit tiene una instrucción sin terminar
+logic        cisa_complete;     // y ya tiene su respuesta (lista para WB)
+logic        cisa_hold;         // vaciado de vaciarc en curso: el núcleo espera
+logic        cisa_wb_we;        // lcont escribe rd en WB
+logic [4:0]  cisa_wb_rd;
+logic [31:0] cisa_wb_data;
+logic        perf_measure_eff;  // los contadores cuentan: entrada y medir en 1
+logic        flush_req_all;     // vaciado pedido por el testbench o por vaciarc
+logic [3:0][63:0] l1d_counts;   // lecturas y escrituras de la L1-D con hit y miss
 
 
 // =============================================================================
@@ -294,8 +332,10 @@ logic        core_clk;          // reloj del núcleo: clk sin los ciclos de stal
 //
 // core_en se toma mientras clk está en 0 (latch), así que un cambio de
 // cache_stall con clk en 1 no produce flancos falsos en core_clk. Con
-// cache_stall = 0 (MEM_MODE = 0), core_clk es igual a clk.
+// cache_stall = 0 (MEM_MODE = 0 sin vaciarc), core_clk es igual a clk.
 // =============================================================================
+
+assign cache_stall = mem_stall || cisa_hold;
 
 always @(*) begin
 
@@ -640,6 +680,19 @@ logic mem_re_b;
 assign mem_re_b = id_ex_valid && ex_crypto_valid && !ex_crypto_fault &&
                   (ex_crypto_op == OP_VCR || ex_crypto_op == OP_CAMCON);
 
+// Mientras dura el vaciado de vaciarc, el bundle de EX espera sin acceder a la
+// memoria: si accediera durante la espera, un store se repetiría en cada ciclo
+// y camcon rotaría la palabra varias veces. Su acceso empieza al terminar el
+// vaciado. Sin vaciarc, cisa_hold = 0 y estas señales son las de siempre.
+logic mem_re_c, mem_we_c, mem_re_b_c, crypto_mem_we_c;
+
+assign mem_re_c        = mem_re        && !cisa_hold;
+assign mem_we_c        = mem_we        && !cisa_hold;
+assign mem_re_b_c      = mem_re_b      && !cisa_hold;
+assign crypto_mem_we_c = crypto_mem_we && !cisa_hold;
+
+assign flush_req_all = flush_req || (cisa_flush_req === 1'b1);
+
 
 // -----------------------------------------------------------------------------
 // Enganche de la memoria de datos (MEM_MODE). DMEM se queda aquí como el
@@ -666,19 +719,19 @@ generate
             .clk(clk),
             .reset(reset),
 
-            .re(mem_re),
-            .we(mem_we),
+            .re(mem_re_c),
+            .we(mem_we_c),
             .be(mem_be),
             .addr(mem_addr),
             .wdata(mem_wdata),
             .rdata(mem_rdata),
 
-            .we_b(crypto_mem_we),
+            .we_b(crypto_mem_we_c),
             .addr_b(crypto_mem_addr),
             .wdata_b(crypto_mem_wdata),
             .rdata_b(crypto_mem_rdata),
 
-            .stall(cache_stall),
+            .stall(mem_stall),
 
             .m_we(dmem_we),
             .m_be(dmem_be),
@@ -691,8 +744,9 @@ generate
             .m_rdata_b(dmem_rdata_b)
         );
 
-        assign flush_done = flush_req;      // no hay caché que vaciar
+        assign flush_done = flush_req_all;  // no hay caché que vaciar
         assign dmem_clk   = clk;
+        assign l1d_counts = '0;
     end
     else if (MEM_MODE == 2) begin : g_mem_cache
 
@@ -704,24 +758,25 @@ generate
             .clk(clk),
             .reset(reset),
 
-            .re(mem_re),
-            .we(mem_we),
+            .re(mem_re_c),
+            .we(mem_we_c),
             .be(mem_be),
             .addr(mem_addr),
             .wdata(mem_wdata),
             .rdata(mem_rdata),
 
-            .re_b(mem_re_b),
-            .we_b(crypto_mem_we),
+            .re_b(mem_re_b_c),
+            .we_b(crypto_mem_we_c),
             .addr_b(crypto_mem_addr),
             .wdata_b(crypto_mem_wdata),
             .rdata_b(crypto_mem_rdata),
 
-            .stall(cache_stall),
+            .stall(mem_stall),
 
-            .flush_req(flush_req),
+            .flush_req(flush_req_all),
             .flush_done(flush_done),
-            .perf_measure_enable(perf_measure_enable),
+            .perf_measure_enable(perf_measure_eff),
+            .perf_l1d_counts(l1d_counts),
 
             .m_clk(dmem_clk),
             .m_we(dmem_we),
@@ -739,17 +794,18 @@ generate
     else begin : g_mem_directa
 
         // Proyecto 1: la LSU y la cripto van directo a DMEM, sin stalls
-        assign cache_stall = 1'b0;
-        assign flush_done  = flush_req;     // no hay caché que vaciar
+        assign mem_stall   = 1'b0;
+        assign flush_done  = flush_req_all; // no hay caché que vaciar
         assign dmem_clk    = clk;
+        assign l1d_counts  = '0;
 
-        assign dmem_we      = mem_we;
+        assign dmem_we      = mem_we_c;
         assign dmem_be      = mem_be;
         assign dmem_addr    = mem_addr;
         assign dmem_wdata   = mem_wdata;
         assign mem_rdata    = dmem_rdata;
 
-        assign dmem_we_b    = crypto_mem_we;
+        assign dmem_we_b    = crypto_mem_we_c;
         assign dmem_addr_b  = crypto_mem_addr;
         assign dmem_wdata_b = crypto_mem_wdata;
         assign crypto_mem_rdata = dmem_rdata_b;
@@ -894,9 +950,11 @@ wb WB (
     .alu_rd(ex_wb_rd),
     .alu_data(ex_wb_alu_result),
 
-    .lsu_we(lsu_we_d),
-    .lsu_rd(lsu_rd_d),
-    .lsu_data(lsu_data_d),
+    // Carril de la LSU, compartido con lcont: los dos usan el slot 1, así que
+    // nunca escriben en el mismo bundle
+    .lsu_we(lsu_we_d || cisa_wb_we === 1'b1),
+    .lsu_rd(cisa_wb_we === 1'b1 ? cisa_wb_rd : lsu_rd_d),
+    .lsu_data(cisa_wb_we === 1'b1 ? cisa_wb_data : lsu_data_d),
 
     .bru_we(bru_link_we_d),
     .bru_rd(bru_link_rd_d),
@@ -923,9 +981,9 @@ assign debug_rd     = wb_waddr[0];
 assign debug_write  = wb_we[0];
 
 
-// Resultados de observación por puertos internos explícitos. Sus únicos
-// consumidores actuales son los bancos; una futura ruta lcont debe acordarse
-// con Fabricio. Ninguno participa en decisiones de ejecución o de memoria.
+// Resultados de observación por puertos internos explícitos. Los leen los
+// bancos de pruebas y lcont (al final de este archivo). Ninguno participa en
+// decisiones de ejecución o de memoria.
 wire [63:0] perf_cycle_count, perf_bundle_count, perf_instruction_count;
 wire [63:0] perf_memory_stall_count, perf_branch_penalty_count;
 wire perf_bundle_complete, perf_branch_recovery, perf_memory_stall, perf_wb_valid;
@@ -945,7 +1003,7 @@ generate if (PERF_ENABLE) begin : g_perf
     // Sin avance retiene metadatos y no repite retiro, pero clk suma residencia.
     // Todas las salidas son observación: ninguna vuelve al control del núcleo.
     perf_vliw_monitor PERF_VLIW (
-        .clk(clk), .reset(reset), .measure_enable(perf_measure_enable),
+        .clk(clk), .reset(reset), .measure_enable(perf_measure_eff),
         .core_advance(core_en), .id_valid(id_valid), .id_bundle(id_bundle),
         .ex_valid(id_ex_valid), .ex_branch_taken(branch_flush), .ex_exception(crypto_fault),
         .cycle_count(perf_cycle_count), .bundle_count(perf_bundle_count),
@@ -964,7 +1022,7 @@ generate if (PERF_ENABLE) begin : g_perf
     // Reset es síncrono prioritario; pausar conserva las cuatro categorías.
     // El stall es global y se expone por etapa: no se suman sus cuatro copias.
     perf_stage_counters PERF_STAGES (
-        .clk(clk), .reset(reset), .measure_enable(perf_measure_enable),
+        .clk(clk), .reset(reset), .measure_enable(perf_measure_eff),
         .core_advance(core_en), .if_valid(fetch_valid), .id_valid(id_valid),
         .ex_valid(id_ex_valid), .wb_valid(perf_wb_valid),
         .measured_cycles(perf_stage_measured_cycles),
@@ -982,5 +1040,102 @@ end else begin : g_no_perf
     assign {perf_stage_occupied,perf_stage_bubbles,perf_stage_stalls,
             perf_stage_stalled_occupied}=1024'd0;
 end endgenerate
+
+
+// =============================================================================
+// Instrucciones de caché y medición (D18): vaciarc, medir y lcont
+//
+// Tipo 1001101, solo en el slot 1 (lo revisa el ensamblador). decoder_lsu no
+// las conoce y las deja como NOP; aquí se decodifican en ID y un registro con
+// las mismas reglas de ID/EX (reset y redirect las anulan) las lleva a EX.
+// cache_isa_unit trabaja con clk y emite la instrucción en el flanco en que el
+// bundle sale de EX (ex_advance = core_en); una excepción en el bundle la
+// anula. Su respuesta se consume cuando el bundle sale de WB.
+//
+//   medir    cambia cisa_measure_enable en ese flanco.
+//   lcont    toma el contador en ese flanco y lo escribe en WB por el carril
+//            de la LSU (el banco lo ve desde el bundle N+3, como una carga).
+//   vaciarc  pide el vaciado (flush_req) hasta flush_done. Mientras tanto
+//            cisa_hold congela el núcleo con vaciarc en WB y retiene los
+//            accesos a memoria del bundle que quedó en EX.
+// =============================================================================
+
+decoder_cache_isa DECODER_CACHE_ISA (
+    .instruction(slot1_instr),
+    .valid(cisa_valid_id),
+    .operation(cisa_op_id),
+    .rd(cisa_rd_id),
+    .selector(cisa_sel_id),
+    .measure_imm(cisa_imm_id)
+);
+
+always @(posedge core_clk) begin
+
+    if (reset || redirect) begin
+        ex_cisa_valid <= 1'b0;
+        ex_cisa_op    <= 4'd0;
+        ex_cisa_rd    <= 5'd0;
+        ex_cisa_sel   <= 6'd0;
+        ex_cisa_imm   <= 1'b0;
+    end
+    else begin
+        ex_cisa_valid <= dispatch_valid && cisa_valid_id;
+        ex_cisa_op    <= cisa_op_id;
+        ex_cisa_rd    <= cisa_rd_id;
+        ex_cisa_sel   <= cisa_sel_id;
+        ex_cisa_imm   <= cisa_imm_id;
+    end
+end
+
+// Contadores que lee lcont, en el orden de su campo sel (isa.md). Los de la
+// L1-D salen de mem_hierarchy (cero en los modos 0 y 1). Los de la L2 y la
+// RAM (9 a 12) todavía no tienen contador conectado y se leen como cero (#26).
+logic [63:0] cisa_counters [0:12];
+
+always @(*) begin
+
+    cisa_counters[0]  = perf_cycle_count;
+    cisa_counters[1]  = perf_bundle_count;
+    cisa_counters[2]  = perf_instruction_count;
+    cisa_counters[3]  = perf_memory_stall_count;
+    cisa_counters[4]  = perf_branch_penalty_count;
+    cisa_counters[5]  = l1d_counts[0];      // lecturas con hit
+    cisa_counters[6]  = l1d_counts[1];      // lecturas con miss
+    cisa_counters[7]  = l1d_counts[2];      // escrituras con hit
+    cisa_counters[8]  = l1d_counts[3];      // escrituras con miss
+    cisa_counters[9]  = 64'd0;
+    cisa_counters[10] = 64'd0;
+    cisa_counters[11] = 64'd0;
+    cisa_counters[12] = 64'd0;
+end
+
+cache_isa_unit CACHE_ISA (
+    .clk(clk),
+    .reset(reset),
+    .valid_in(id_ex_valid && ex_cisa_valid && !crypto_fault),
+    .ex_advance(core_en),
+    .issue_ready(),
+    .operation(ex_cisa_op),
+    .rd(ex_cisa_rd),
+    .selector(ex_cisa_sel),
+    .measure_imm(ex_cisa_imm),
+    .counters(cisa_counters),
+    .measure_enable(cisa_measure_enable),
+    .flush_req(cisa_flush_req),
+    .flush_done(flush_done),
+    .pending(cisa_pending),
+    .complete_valid(cisa_complete),
+    .complete_ready(core_en),
+    .wb_we(cisa_wb_we),
+    .wb_rd(cisa_wb_rd),
+    .wb_data(cisa_wb_data)
+);
+
+// El vaciado está en curso desde que vaciarc sale de EX hasta que la unidad
+// tiene su respuesta (flush_done ya subió y volvió a bajar). Las comparaciones
+// con === dejan estas señales en su valor de reposo si la unidad todavía no
+// pasó por un reset (sus salidas valen X hasta entonces).
+assign cisa_hold        = (cisa_pending === 1'b1) && (cisa_complete !== 1'b1);
+assign perf_measure_eff = perf_measure_enable && (cisa_measure_enable !== 1'b0);
 
 endmodule
