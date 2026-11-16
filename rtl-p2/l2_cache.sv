@@ -4,7 +4,8 @@
 
  Descripción:
  ------------------------------------------------------------------------------
- Caché L2 unificada del Proyecto Grupal II (bloque de Alejandro).
+ Caché L2 unificada del Proyecto Grupal II (bloque de Alejandro; la
+ segmentación en 4 etapas es la decisión 11, de Fabricio).
 
  Sustituye a rtl-p2/l2_model.sv, que era un stub que siempre acertaba. Esta es
  la L2 de verdad: guarda líneas, aplica la política de reemplazo, cumple la
@@ -20,8 +21,9 @@
        l2_req, l2_we, l2_addr[31:0], l2_wline[255:0], l2_be[32], l2_wdirty
        l2_gnt, l2_rvalid, l2_rline[255:0], l2_rdirty
      La aceptación es l2_req && l2_gnt. Las escrituras terminan al ser
-     aceptadas (no tienen respuesta). Las salidas salen de registros, porque el
-     stall de la L1-D tiene que depender solo de registros.
+     aceptadas (no tienen respuesta) y las lecturas responden en orden. Las
+     salidas salen de registros, porque el stall de la L1-D tiene que depender
+     solo de registros.
 
  Bus hacia abajo (eviction buffer, sección 6.7 de docs/memory-interfaces.md):
      La L2 no habla con la RAM: le pide las líneas al eviction buffer, que a su
@@ -47,6 +49,38 @@
  Política de escritura: write-back. Una línea solo baja a la RAM cuando sale
  sucia de la L2 (por el eviction buffer) o en el vaciado.
 
+ Etapas (decisiones-importantes.md 4.3, D11)
+ ------------------------------------------------------------------------------
+     S1 Recepción   cola de 2 entradas. l2_gnt (registrado) dice que la cola
+                    tiene lugar en este ciclo, así que se acepta una petición
+                    por ciclo mientras las etapas siguientes avancen.
+     S2 Etiquetas   compara las 4 vías, decide acierto o fallo y la víctima.
+                    Aquí esperan los fallos (la línea que se pide al nivel
+                    inferior) y los desalojos de víctimas sucias: todo va en
+                    orden, así que un fallo detiene S2 y las peticiones de
+                    atrás esperan en la cola.
+     S3 Datos       escribe los arreglos (llenado, store o la invalidación de
+                    la exclusiva) y actualiza el reemplazo, en el flanco en
+                    que la petición sale de S3.
+     S4 Respuesta   la línea de un acierto espera hasta completar los 8
+                    ciclos desde su aceptación y sale por l2_rvalid.
+
+     Riesgos entre etapas:
+       - Si S3 todavía no escribió el conjunto que S2 tiene que mirar, S2
+         espera un ciclo. Con RANDOM también espera si S3 hace un llenado,
+         porque el LFSR es uno solo para todos los conjuntos.
+       - La respuesta de un fallo sale directo desde S2 cuando llega la línea,
+         si no hay una lectura más vieja en S3 o S4; si la hay, espera su
+         turno (las respuestas nunca se desordenan).
+
+ Tiempos:
+     Acierto: la petición se acepta en el ciclo t y l2_rvalid sale en t+8.
+     Fallo:   la petición se acepta en t, la L2 pide la línea en t+5, el nivel
+              inferior tarda Tmem y l2_rvalid sale en t+8+Tmem. Con Tmem = 53
+              son 61 ciclos, que es el 8 + Tmem del enunciado.
+     Una escritura ocupa la L2 un ciclo (la versión bloqueante necesitaba 3) y
+     una lectura se puede aceptar en el ciclo siguiente a una escritura.
+
  Vaciado (D16)
  ------------------------------------------------------------------------------
  La L2 sabe vaciarse. La interfaz es la misma que usa la L1-D (l1d_cache.sv):
@@ -58,56 +92,37 @@
                     confirmó las escrituras.
 
  Cómo funciona:
-     1. La L2 recorre sus 512 líneas (128 conjuntos x 4 vías) buscando las
+     1. Con flush_req = 1 la L2 deja de aceptar peticiones (l2_gnt = 0) y
+        termina las que tiene en las etapas. Una petición que ya estaba
+        aceptada se atiende antes del barrido.
+     2. La L2 recorre sus 512 líneas (128 conjuntos x 4 vías) buscando las
         sucias. Cada línea sucia se le entrega al eviction buffer con el mismo
         handshake de siempre (evict_valid y evict_ready) y su copia en la L2
         queda limpia: a partir de ahí la L2 y la RAM tienen lo mismo.
-     2. Cuando ya no quedan líneas sucias, la L2 espera a que el nivel
+     3. Cuando ya no quedan líneas sucias, la L2 espera a que el nivel
         inferior se vacíe (lower_drained = 1) y entonces pone flush_done = 1.
 
- Contrato con el nivel de arriba (quien cablea esto es issue #27):
+ Contrato con el nivel de arriba:
      - El pedido de vaciado de la L2 se sube DESPUÉS de que la L1-D haya
        terminado su propio vaciado (su flush_done). Así las líneas sucias de
        la L1-D ya están dentro de la L2 y el vaciado de la L2 las alcanza.
-     - Mientras dura el vaciado la L2 no acepta peticiones (l2_gnt = 0), así
-       que el núcleo queda detenido. Como la L2 es bloqueante, una petición que
-       ya estaba en curso se termina antes de empezar el barrido.
-     - Igual que en la L1-D, flush_done es un NIVEL: se levanta cuando el
-       vaciado termina y se mantiene mientras flush_req siga en alto. La L2
-       sigue detenida hasta que flush_req baja, y entonces vuelve a estar
-       libre y a aceptar peticiones.
-     - Si hay una petición pendiente en el instante en que llega flush_req, la
-       L2 la acepta primero (la señal l2_gnt ya está en alto y no se puede
-       cancelar una aceptación) y el barrido empieza al terminar.
+     - flush_done es un NIVEL: se levanta cuando el vaciado termina y se
+       mantiene mientras flush_req siga en alto. La L2 vuelve a aceptar
+       peticiones cuando flush_req baja.
 
  Política de reemplazo (REPL_POLICY): la decide rtl-p2/l2_replacement.sv.
      RP2_PLRU (por defecto) es un pseudo-LRU de árbol: una APROXIMACIÓN del LRU
      exacto, no el LRU exacto. RP2_RANDOM usa un LFSR.
 
  Almacenamiento: está en rtl-p2/l2_arrays.sv, como el de la L1-D
- (l1d_arrays.sv). La L2 tiene un solo puerto de lectura, multiplexado: durante
- el vaciado apunta al conjunto que se está revisando.
+ (l1d_arrays.sv). La L2 tiene un solo puerto de lectura, multiplexado: S2 lo
+ usa con el conjunto de su petición y, durante el vaciado, apunta al conjunto
+ que se está revisando.
 
  Eventos (Javier, issue #26): pulsos de un ciclo con lo que hizo la L2:
      ev_l2_rd_hit, ev_l2_rd_miss, ev_l2_wr_hit, ev_l2_wr_miss, ev_l2_fill,
      ev_l2_evict, ev_l2_writeback, ev_l2_invalid, ev_l2_read_req,
      ev_l2_write_req. La convención es la misma que usa la L1-D.
-
- Tiempos:
-     Acierto: la petición se acepta en el ciclo t y l2_rvalid sale en t+8.
-     Fallo:   la petición se acepta en t, la L2 pide la línea en t+5, el nivel
-              inferior tarda Tmem y l2_rvalid sale en t+8+Tmem. Con Tmem = 53
-              son 61 ciclos, que es el 8 + Tmem del enunciado.
-
-     El acierto tarda 8 ciclos porque la L1-D exige que las salidas de la L2
-     salgan de registros: hay 7 ciclos de trabajo interno (comparación de
-     etiqueta, lectura de la línea, actualización del reemplazo) y 1 ciclo de
-     registro para presentar la respuesta.
-
- La L2 es BLOQUEANTE (decisiones-importantes.md, 4.3): acepta una petición
- cada vez y la termina antes de aceptar la siguiente. Fabricio la segmentará
- después, si da tiempo; el bus versión 2 ya lo permite (la aceptación está
- separada de la respuesta).
 
  ==============================================================================
 */
@@ -177,8 +192,6 @@ module l2_cache #(
     // Eventos para los contadores (Javier, issue #26)
     // ------------------------------------------------------------------
     // Pulsos de UN ciclo, con la misma convención que usa la L1-D (l1d_cache.sv).
-    // Son la única forma de que un módulo de contadores externo sepa qué hizo
-    // la L2 sin tener que mirar el bus.
     //
     //   ev_l2_rd_hit      una lectura aceptada acertó
     //   ev_l2_rd_miss     una lectura aceptada falló
@@ -204,167 +217,252 @@ module l2_cache #(
 );
 
 
-// ============================================================================
-// Verificación de los parámetros (solo en simulación)
-// ============================================================================
-
 localparam logic IS_EXCL = (INCL_POLICY == INCL_EXCLUSIVE);
+localparam logic IS_RND  = (REPL_POLICY == RP2_RANDOM);
 
 initial begin
-
     if (INCL_POLICY != INCL_EXCLUSIVE && INCL_POLICY != INCL_NINE)
         $fatal(1, "l2_cache: INCL_POLICY = %0d no es una política valida", INCL_POLICY);
-
     if (REPL_POLICY != RP2_PLRU && REPL_POLICY != RP2_RANDOM)
         $fatal(1, "l2_cache: REPL_POLICY = %0d no es una politica valida", REPL_POLICY);
 end
 
+localparam logic [LINE_MASK_W-1:0] FULL_MASK = {LINE_MASK_W{1'b1}};
 
-// ============================================================================
-// Estados
-// ============================================================================
-//
-//   S_IDLE     libre, puede aceptar una petición
-//   S_EVICT    está sacando una línea sucia al eviction buffer
-//   S_RD_WAIT  espera el momento de presentar la respuesta de un acierto
-//   S_RD_FETCH espera la línea del nivel inferior (fallo de lectura)
-//   S_WR_FETCH espera la línea del nivel inferior (write-allocate)
-//   S_WR_STORE escribe la línea en la L2
-//   S_WR_COMMIT deja pasar un ciclo para que los arreglos queden actualizados
-//   S_FL_SCAN  vaciado: recorre las 512 líneas buscando las sucias
-//   S_FL_EVICT vaciado: está sacando una línea sucia al eviction buffer
-//   S_FL_WAIT  vaciado: espera a que el nivel inferior se vacíe
-//   S_FL_DONE  vaciado terminado (flush_done = 1 mientras flush_req siga en 1)
+function automatic [LINE_W-1:0] merge_bytes(
+    input [LINE_W-1:0]      old_line,
+    input [LINE_W-1:0]      new_line,
+    input [LINE_MASK_W-1:0] be_mask);
 
-localparam logic [3:0] S_IDLE       = 4'd0;
-localparam logic [3:0] S_EVICT      = 4'd1;
-localparam logic [3:0] S_RD_WAIT    = 4'd2;
-localparam logic [3:0] S_RD_FETCH   = 4'd3;
-localparam logic [3:0] S_WR_FETCH   = 4'd4;
-localparam logic [3:0] S_WR_STORE   = 4'd5;
-localparam logic [3:0] S_WR_COMMIT  = 4'd6;
-localparam logic [3:0] S_FL_SCAN    = 4'd7;
-localparam logic [3:0] S_FL_EVICT   = 4'd8;
-localparam logic [3:0] S_FL_WAIT    = 4'd9;
-localparam logic [3:0] S_FL_DONE    = 4'd10;
+    integer b;
+    begin
+        for (b = 0; b < LINE_BYTES; b = b + 1)
+            merge_bytes[8*b +: 8] = be_mask[b] ? new_line[8*b +: 8] : old_line[8*b +: 8];
+    end
+endfunction
+
+function automatic [7:0] age_inc(input [7:0] a);
+    age_inc = (a == 8'hFF) ? a : a + 8'd1;
+endfunction
 
 
 // ============================================================================
-// Arreglos de la caché (rtl-p2/l2_arrays.sv)
-// ============================================================================
-//
-// El almacenamiento está en un módulo aparte, como el de la L1-D
-// (l1d_arrays.sv): 128 conjuntos por 4 vías, con sus propios arreglos de
-// 128 posiciones por vía. Solo guarda y entrega; las decisiones están arriba.
-//
-// La L2 tiene UN SOLO puerto de lectura, multiplexado: durante el vaciado,
-// bus_set apunta al conjunto que está revisando el barrido y no al de la
-// petición (ver el multiplexor de bus_set, más abajo).
-
-logic [L2_INDEX_W-1:0] bus_set;
-logic [L2_TAG_W-1:0]   addr_tag;   // etiqueta de la dirección del bus
-
-
-// ============================================================================
-// Puerto de escritura de los arreglos
+// Arreglos y reemplazo (los mismos módulos de la versión bloqueante)
 // ============================================================================
 
-logic                   wr_en;
+logic [L2_INDEX_W-1:0]       bus_set;
+logic [L2_WAYS-1:0]          bus_valid;
+logic [L2_WAYS*L2_TAG_W-1:0] bus_tag;
+logic [L2_WAYS*LINE_W-1:0]   bus_line;
+logic [L2_WAYS-1:0]          bus_dirty;
+
+logic                  wr_en;
 logic [L2_INDEX_W-1:0] wr_set;
 logic [L2_WAY_W-1:0]   wr_way;
 logic [L2_TAG_W-1:0]   wr_tag;
 logic [LINE_W-1:0]     wr_line;
-logic                   wr_dirty;
-logic                   wr_valid;
+logic                  wr_dirty;
+logic                  wr_valid;
 
-// Puerto para limpiar SOLO el bit sucio de una línea, sin tocar la etiqueta ni
-// los datos. Lo usa el vaciado: cuando una línea sucia baja al eviction
-// buffer, la copia de la L2 pasa a estar limpia (ya está en la RAM) pero sigue
-// siendo válida y sigue teniendo los mismos datos.
-logic                   clr_dirty_en;
+logic                  clr_dirty_en;
 logic [L2_INDEX_W-1:0] clr_dirty_set;
 logic [L2_WAY_W-1:0]   clr_dirty_way;
 
-
-// ============================================================================
-// Decodificación de la dirección del bus
-// ============================================================================
-//
-// El valor de bus_set lo fija el barrido de vaciado (ver más abajo): durante
-// el barrido, la lectura de los arreglos apunta al conjunto que se está
-// revisando y no a la dirección de la petición.
-//
-// La instancia de los arreglos.
-// ============================================================================
-
-logic [L2_WAYS-1:0]          bus_valid;   // V de cada vía del conjunto mirado
-logic [L2_WAYS*L2_TAG_W-1:0] bus_tag;     // vía w en [w*TAG_W +: TAG_W]
-logic [L2_WAYS*LINE_W-1:0]   bus_line;    // vía w en [w*LINE_W +: LINE_W]
-logic [L2_WAYS-1:0]          bus_dirty;   // D de cada vía del conjunto mirado
-
 l2_arrays ARRAYS (
+    .clk(clk), .reset(reset),
+    .rd_set(bus_set), .rd_valid(bus_valid), .rd_tag(bus_tag), .rd_line(bus_line), .rd_dirty(bus_dirty),
+    .wr_en(wr_en), .wr_set(wr_set), .wr_way(wr_way), .wr_tag(wr_tag), .wr_line(wr_line),
+    .wr_dirty(wr_dirty), .wr_valid(wr_valid),
+    .clr_dirty_en(clr_dirty_en), .clr_dirty_set(clr_dirty_set), .clr_dirty_way(clr_dirty_way)
+);
 
-    .clk           (clk),
-    .reset         (reset),
+logic [L2_WAY_W-1:0]   repl_victim;
+logic                  touch_pulse;
+logic                  fill_pulse;
 
-    .rd_set        (bus_set),
-    .rd_valid      (bus_valid),
-    .rd_tag        (bus_tag),
-    .rd_line       (bus_line),
-    .rd_dirty      (bus_dirty),
-
-    .wr_en         (wr_en),
-    .wr_set        (wr_set),
-    .wr_way        (wr_way),
-    .wr_tag        (wr_tag),
-    .wr_line       (wr_line),
-    .wr_dirty      (wr_dirty),
-    .wr_valid      (wr_valid),
-
-    .clr_dirty_en  (clr_dirty_en),
-    .clr_dirty_set (clr_dirty_set),
-    .clr_dirty_way (clr_dirty_way)
+l2_replacement #(.REPL_POLICY(REPL_POLICY)) REPL (
+    .clk(clk), .reset(reset),
+    .lookup_set(bus_set), .victim_way(repl_victim),
+    .touch(touch_pulse), .touch_set(wr_set), .touch_way(wr_way),
+    .fill(fill_pulse), .fill_set(wr_set), .fill_way(wr_way)
 );
 
 
 // ============================================================================
-// Acierto, vía libre y víctima
+// S1: cola de recepción de 2 entradas (q0 = la más vieja)
 // ============================================================================
 
-logic               hit;
+logic                   q0_v, q1_v;
+logic                   q0_we, q1_we;
+logic [31:0]            q0_addr, q1_addr;
+logic [LINE_W-1:0]      q0_wline, q1_wline;
+logic [LINE_MASK_W-1:0] q0_be, q1_be;
+logic                   q0_wdirty, q1_wdirty;
+logic [7:0]             q0_age, q1_age;
+
+logic accept;
+logic pop;                  // S2 toma q0 en este ciclo
+
+assign accept = l2_req && l2_gnt;
+
+
+// ============================================================================
+// S2: etiquetas y decisión
+// ============================================================================
+
+localparam logic [2:0] D_DECIDE = 3'd0;   // comparar y decidir
+localparam logic [2:0] D_SEND   = 3'd1;   // decidido, espera lugar en S3
+localparam logic [2:0] D_EVICT  = 3'd2;   // saca la víctima sucia al eviction buffer
+localparam logic [2:0] D_WAIT   = 3'd3;   // fallo de lectura: espera t+5 para pedir
+localparam logic [2:0] D_FETCH  = 3'd4;   // espera la línea del nivel inferior
+localparam logic [2:0] D_RESP   = 3'd5;   // respuesta de un fallo esperando su turno
+
+logic                   r2_v;
+logic [2:0]             r2_st;
+logic                   r2_we;
+logic [31:0]            r2_addr;
+logic [LINE_W-1:0]      r2_wline;
+logic [LINE_MASK_W-1:0] r2_be;
+logic                   r2_wdirty;
+logic [7:0]             r2_age;
+
+// Decisión ya tomada (para los estados que siguen a D_DECIDE)
+logic [L2_WAY_W-1:0]    r2_way;
+logic [LINE_W-1:0]      r2_line;      // línea para S3 (store o llenado) o la respuesta
+logic                   r2_dirty;
+logic                   r2_s3_wr;     // S3 escribe los arreglos
+logic                   r2_s3_valid;  // valor del bit V que escribe (0 = invalidar)
+logic                   r2_s3_touch;
+logic                   r2_s3_fill;
+logic                   r2_s3_read;   // lleva una respuesta a S4
+logic                   r2_after_evict_fetch;   // después del desalojo, pedir la línea
+logic                   r2_after_evict_wait;    // después del desalojo, esperar t+5
+logic [LINE_W-1:0]      r2_vic_line;
+logic [L2_TAG_W-1:0]    r2_vic_tag;
+
+logic [L2_INDEX_W-1:0]  r2_set;
+logic [L2_TAG_W-1:0]    r2_tag;
+
+assign r2_set = r2_addr[L2_INDEX_MSB:L2_INDEX_LSB];
+assign r2_tag = r2_addr[L2_TAG_MSB:L2_TAG_LSB];
+
+
+// ============================================================================
+// S3 y S4
+// ============================================================================
+
+logic                   r3_v;
+logic                   r3_wr, r3_valid_bit, r3_touch, r3_fill, r3_read;
+logic [L2_INDEX_W-1:0]  r3_set;
+logic [L2_WAY_W-1:0]    r3_way;
+logic [L2_TAG_W-1:0]    r3_tag;
+logic [LINE_W-1:0]      r3_line;      // lo que se escribe en los arreglos
+logic                   r3_dirty;
+logic [LINE_W-1:0]      r3_rline;     // respuesta (lecturas)
+logic                   r3_rdirty;
+logic [7:0]             r3_age;
+
+logic                   r4_v;
+logic [LINE_W-1:0]      r4_line;
+logic                   r4_dirty;
+logic [7:0]             r4_age;
+
+logic s4_emit, s4_free, s3_adv, s3_free;
+
+assign s4_emit = r4_v && (r4_age >= L2_HIT_CYCLES - 1);
+assign s4_free = !r4_v || s4_emit;
+assign s3_adv  = r3_v && (!r3_read || s4_free);
+assign s3_free = !r3_v || s3_adv;
+
+// Escritura de los arreglos y del reemplazo: en el flanco en que S3 avanza
+assign wr_en       = s3_adv && r3_wr;
+assign wr_set      = r3_set;
+assign wr_way      = r3_way;
+assign wr_tag      = r3_tag;
+assign wr_line     = r3_line;
+assign wr_dirty    = r3_dirty;
+assign wr_valid    = r3_valid_bit;
+assign touch_pulse = s3_adv && r3_touch;
+assign fill_pulse  = s3_adv && r3_fill;
+
+// Riesgo: S3 todavía no escribió el conjunto que S2 tiene que mirar
+logic hazard;
+
+assign hazard = r3_v && (((r3_wr || r3_touch || r3_fill) && (r3_set == r2_set)) ||
+                         (IS_RND && r3_fill));
+
+// Hay una lectura más vieja que todavía no respondió
+logic older_read;
+
+assign older_read = (r3_v && r3_read) || r4_v;
+
+
+// ============================================================================
+// Vaciado (el mismo barrido de la versión bloqueante)
+// ============================================================================
+
+localparam logic [2:0] F_NONE  = 3'd0;
+localparam logic [2:0] F_SCAN  = 3'd1;
+localparam logic [2:0] F_EVICT = 3'd2;
+localparam logic [2:0] F_WAIT  = 3'd3;
+localparam logic [2:0] F_DONE  = 3'd4;
+
+logic [2:0]            fl_st;
+logic [8:0]            scan_ptr;
+logic [L2_INDEX_W-1:0] scan_set;
+logic [L2_WAY_W-1:0]   scan_way;
+logic [LINE_W-1:0]     flush_line_q;
+logic [L2_TAG_W-1:0]   flush_tag_q;
+logic [L2_INDEX_W-1:0] flush_set_q;
+logic [L2_WAY_W-1:0]   flush_way_q;
+
+localparam logic [8:0] SCAN_LAST = 9'h1FF;
+
+assign scan_set = scan_ptr[L2_INDEX_W+1:2];
+assign scan_way = scan_ptr[L2_WAY_W-1:0];
+
+assign bus_set    = (fl_st == F_SCAN || fl_st == F_EVICT) ? scan_set : r2_set;
+assign flush_done = (fl_st == F_DONE);
+
+logic pipe_empty;
+
+assign pipe_empty = !q0_v && !q1_v && !r2_v && !r3_v && !r4_v;
+
+// Libre: nada en las etapas y ya salió el pulso del último llenado
+assign idle = (fl_st == F_NONE) && pipe_empty && !l2_rvalid && !ev_l2_fill;
+
+
+// ============================================================================
+// Decisión combinacional de S2 (D_DECIDE)
+// ============================================================================
+
+logic                hit;
 logic [L2_WAY_W-1:0] hit_way;
 logic [LINE_W-1:0]   hit_line;
-logic               hit_dirty;
-
-logic               free_found;
+logic                hit_dirty;
+logic                free_found;
 logic [L2_WAY_W-1:0] free_way;
 logic [L2_WAY_W-1:0] fill_way_sel;
+logic                vic_dirty;
 
 integer wi;
 
 always @(*) begin
 
-    hit       = 1'b0;
-    hit_way   = '0;
-    hit_line  = '0;
-    hit_dirty = 1'b0;
+    hit        = 1'b0;
+    hit_way    = '0;
+    hit_line   = '0;
+    hit_dirty  = 1'b0;
+    free_found = 1'b0;
+    free_way   = '0;
 
     for (wi = 0; wi < L2_WAYS; wi = wi + 1) begin
-        if (!hit && bus_valid[wi] && (bus_tag[wi*L2_TAG_W +: L2_TAG_W] == addr_tag)) begin
+        if (!hit && bus_valid[wi] && (bus_tag[wi*L2_TAG_W +: L2_TAG_W] == r2_tag)) begin
             hit       = 1'b1;
             hit_way   = wi[L2_WAY_W-1:0];
             hit_line  = bus_line[wi*LINE_W +: LINE_W];
             hit_dirty = bus_dirty[wi];
         end
-    end
-end
-
-always @(*) begin
-
-    free_found = 1'b0;
-    free_way   = '0;
-
-    for (wi = 0; wi < L2_WAYS; wi = wi + 1) begin
         if (!free_found && !bus_valid[wi]) begin
             free_found = 1'b1;
             free_way   = wi[L2_WAY_W-1:0];
@@ -372,166 +470,151 @@ always @(*) begin
     end
 end
 
-// Una vía vacía tiene prioridad sobre la política de reemplazo: si hay sitio,
-// no se desaloja a nadie.
 assign fill_way_sel = free_found ? free_way : repl_victim;
+assign vic_dirty    = !free_found && bus_dirty[repl_victim];
 
+// Una decisión "simple" pasa directo a S3 sin esperar nada abajo
+logic decide_now;       // S2 decide en este ciclo
+logic dec_simple;       // acierto, o escritura de línea completa sin víctima sucia
+logic dec_rd_hit, dec_rd_miss, dec_wr_hit, dec_wr_miss;
 
-// ============================================================================
-// Política de reemplazo (rtl-p2/l2_replacement.sv)
-// ============================================================================
+assign decide_now  = r2_v && (r2_st == D_DECIDE) && !hazard;
+assign dec_rd_hit  = decide_now && !r2_we &&  hit;
+assign dec_rd_miss = decide_now && !r2_we && !hit;
+assign dec_wr_hit  = decide_now &&  r2_we &&  hit;
+assign dec_wr_miss = decide_now &&  r2_we && !hit;
+assign dec_simple  = dec_rd_hit || dec_wr_hit ||
+                     (dec_wr_miss && (r2_be == FULL_MASK) && !vic_dirty);
 
-logic [L2_WAY_W-1:0] repl_victim;
-logic                touch_pulse;
-logic [L2_INDEX_W-1:0] touch_set;
-logic [L2_WAY_W-1:0] touch_way;
-logic                fill_pulse;
-logic [L2_INDEX_W-1:0] fill_set;
-logic [L2_WAY_W-1:0] fill_way;
+// S2 manda su petición a S3 en este ciclo
+logic s2_to_s3;
+logic s2_resp_now;      // la respuesta de un fallo sale en este ciclo
+logic s2_retire;        // S2 queda libre en este ciclo
 
-l2_replacement #(.REPL_POLICY(REPL_POLICY)) REPL (
+logic fetch_done;       // llegó la línea pedida
+logic miss_rd_fetch;    // la línea que llegó es de un fallo de lectura
 
-    .clk        (clk),
-    .reset      (reset),
+assign fetch_done    = r2_v && (r2_st == D_FETCH) && read_ready;
+assign miss_rd_fetch = fetch_done && !r2_we;
 
-    .lookup_set (bus_set),
-    .victim_way (repl_victim),
+assign s2_resp_now = (miss_rd_fetch && !older_read) ||
+                     (r2_v && r2_st == D_RESP && !older_read);
 
-    .touch      (touch_pulse),
-    .touch_set  (touch_set),
-    .touch_way  (touch_way),
+always @(*) begin
 
-    .fill       (fill_pulse),
-    .fill_set   (fill_set),
-    .fill_way   (fill_way)
-);
+    s2_to_s3  = 1'b0;
+    s2_retire = 1'b0;
 
+    if (r2_v) begin
+        case (r2_st)
+            D_DECIDE: if (dec_simple && s3_free) begin s2_to_s3 = 1'b1; s2_retire = 1'b1; end
+            D_SEND:   if (s3_free)               begin s2_to_s3 = 1'b1; s2_retire = 1'b1; end
+            D_FETCH:  if (read_ready) begin
+                          if (!r2_we) begin
+                              // Fallo de lectura: con NINE además se llena la L2
+                              if (!older_read && (IS_EXCL || s3_free)) begin
+                                  s2_to_s3  = !IS_EXCL;
+                                  s2_retire = 1'b1;
+                              end
+                          end
+                          else if (s3_free) begin
+                              s2_to_s3  = 1'b1;     // write-allocate: guardar la mezcla
+                              s2_retire = 1'b1;
+                          end
+                      end
+            D_RESP:   if (!older_read && (IS_EXCL || s3_free)) begin
+                          s2_to_s3  = !IS_EXCL;
+                          s2_retire = 1'b1;
+                      end
+            default: ;
+        endcase
+    end
+end
 
-// ============================================================================
-// Estado de la máquina
-// ============================================================================
+// Lo que S2 manda a S3 (desde la decisión de este ciclo o desde lo guardado)
+logic                  n3_wr, n3_valid_bit, n3_touch, n3_fill, n3_read;
+logic [L2_WAY_W-1:0]   n3_way;
+logic [LINE_W-1:0]     n3_line;
+logic                  n3_dirty;
+logic [LINE_W-1:0]     n3_rline;
+logic                  n3_rdirty;
 
-// Ojo: la máquina de estados tiene once estados (0..10), así que el estado
-// necesita CUATRO bits. Con tres bits los estados del vaciado (7..10) no
-// entrarían y la FSM caería en el caso por defecto.
-logic [3:0]           state;
-logic [7:0]           cnt;          // cuenta los 8 ciclos del acceso
+always @(*) begin
 
-logic                 is_read_q;    // la petición en curso es una lectura
-logic                 rd_hit_q;     // y fue un acierto
-logic                 wr_hit_q;     // la escritura en curso fue un acierto
-logic                 w_fetch_q;    // la escritura necesita la línea vieja
+    n3_wr = 1'b0; n3_valid_bit = 1'b1; n3_touch = 1'b0; n3_fill = 1'b0; n3_read = 1'b0;
+    n3_way = r2_way; n3_line = r2_line; n3_dirty = r2_dirty;
+    n3_rline = r2_line; n3_rdirty = r2_dirty;
 
-logic [L2_INDEX_W-1:0] req_set;
-logic [L2_TAG_W-1:0]   req_tag;
-logic [31:0]           req_addr;    // dirección de línea de la petición
-logic [L2_WAY_W-1:0]   req_way;     // vía donde entra o donde estaba la línea
-
-logic [LINE_W-1:0]     resp_line;   // línea de la respuesta (acierto)
-logic                 resp_dirty;
-
-logic [LINE_W-1:0]     vic_line;    // línea sucia que va al eviction buffer
-logic [L2_TAG_W-1:0]   vic_tag;
-
-logic [LINE_W-1:0]     w_line;      // escritura pendiente
-logic [LINE_MASK_W-1:0] w_be;
-logic [LINE_W-1:0]     store_line;  // línea que se va a escribir en la L2
-logic                 store_dirty;
-logic [LINE_W-1:0]     fetch_line;  // línea vieja + escritura parcial
-
-
-// ============================================================================
-// Vaciado (D16): el barrido de las 512 líneas
-// ============================================================================
-//
-// El puntero recorre las 512 líneas de la L2 (128 conjuntos x 4 vías):
-//     scan_ptr[8:2] = conjunto (7 bits)
-//     scan_ptr[1:0] = vía (2 bits)
-//
-// Durante el barrido, el puerto de lectura de los arreglos se apunta al
-// conjunto que se está revisando. Es el mismo truco que usa la L1-D con su
-// puerto B: un solo puerto de lectura, multiplexado.
-
-logic [8:0]            scan_ptr;
-logic [L2_INDEX_W-1:0] scan_set;
-logic [L2_WAY_W-1:0]   scan_way;
-logic                  flush_scanning;
-
-localparam logic [8:0] SCAN_LAST = 9'h1FF;
-
-assign scan_set      = scan_ptr[L2_INDEX_W+1:2];
-assign scan_way      = scan_ptr[L2_WAY_W-1:0];
-
-// El barrido también cubre el estado en que la línea sucia está saliendo:
-// durante los dos estados el puerto de lectura sigue apuntando al conjunto
-// que se está revisando.
-assign flush_scanning = (state == S_FL_SCAN) || (state == S_FL_EVICT);
-
-assign bus_set  = flush_scanning ? scan_set
-                                 : l2_addr[L2_INDEX_MSB:L2_INDEX_LSB];
-assign addr_tag = l2_addr[L2_TAG_MSB:L2_TAG_LSB];
-
-// La línea sucia que se está sacando al eviction buffer.
-logic [LINE_W-1:0]     flush_line_q;
-logic [L2_TAG_W-1:0]   flush_tag_q;
-logic [L2_INDEX_W-1:0] flush_set_q;
-logic [L2_WAY_W-1:0]   flush_way_q;
-
-// El vaciado terminó: se avisa al nivel de arriba. El aviso se mantiene
-// mientras flush_req siga en alto, igual que hace la L1-D.
-assign flush_done = (state == S_FL_DONE);
-
-
-// ============================================================================
-// Aceptación de la petición
-// ============================================================================
-
-logic accept;
-
-assign accept = l2_req && l2_gnt;
-
-assign idle = (state == S_IDLE) && !l2_rvalid;
-
-
-// ============================================================================
-// Mezcla de bytes: la línea vieja con los bytes marcados en la máscara
-// ============================================================================
-
-function automatic [LINE_W-1:0] merge_bytes(
-    input [LINE_W-1:0]     old_line,
-    input [LINE_W-1:0]     new_line,
-    input [LINE_MASK_W-1:0] be_mask);
-
-    integer b;
-
-    begin
-        for (b = 0; b < LINE_BYTES; b = b + 1) begin
-            if (be_mask[b])
-                merge_bytes[8*b +: 8] = new_line[8*b +: 8];
-            else
-                merge_bytes[8*b +: 8] = old_line[8*b +: 8];
+    if (r2_st == D_DECIDE) begin
+        if (dec_rd_hit) begin
+            n3_read   = 1'b1;
+            n3_touch  = 1'b1;
+            n3_way    = hit_way;
+            n3_rline  = hit_line;
+            n3_rdirty = IS_EXCL ? hit_dirty : 1'b0;
+            if (IS_EXCL) begin
+                n3_wr        = 1'b1;        // la línea se MUEVE: se invalida
+                n3_valid_bit = 1'b0;
+                n3_line      = hit_line;
+                n3_dirty     = 1'b0;
+            end
+        end
+        else if (dec_wr_hit) begin
+            n3_wr    = 1'b1;
+            n3_touch = 1'b1;
+            n3_way   = hit_way;
+            n3_line  = merge_bytes(hit_line, r2_wline, r2_be);
+            n3_dirty = (r2_be == FULL_MASK) ? (hit_dirty | r2_wdirty) : 1'b1;
+        end
+        else begin                          // escritura de línea completa que falla
+            n3_wr    = 1'b1;
+            n3_fill  = 1'b1;
+            n3_way   = fill_way_sel;
+            n3_line  = r2_wline;
+            n3_dirty = r2_wdirty;
         end
     end
-endfunction
+    else if (r2_st == D_FETCH && r2_we) begin
+        n3_wr    = 1'b1;                    // write-allocate: línea vieja + bytes nuevos
+        n3_fill  = 1'b1;
+        n3_line  = merge_bytes(read_line, r2_wline, r2_be);
+        n3_dirty = 1'b1;
+    end
+    else if (r2_st == D_FETCH || r2_st == D_RESP) begin
+        n3_wr    = 1'b1;                    // NINE: la L2 guarda su copia
+        n3_fill  = 1'b1;
+        n3_line  = (r2_st == D_FETCH) ? read_line : r2_line;
+        n3_dirty = (r2_st == D_FETCH) ? read_forwarded : r2_dirty;
+    end
+    else begin                              // D_SEND: todo quedó guardado en r2
+        n3_wr    = r2_s3_wr;
+        n3_valid_bit = r2_s3_valid;
+        n3_touch = r2_s3_touch;
+        n3_fill  = r2_s3_fill;
+        n3_read  = r2_s3_read;
+    end
+end
+
+// La cola entrega su cabeza a S2 cuando S2 está libre o queda libre
+assign pop = q0_v && (!r2_v || s2_retire) && (fl_st == F_NONE);
 
 
 // ============================================================================
-// Máquina de estados
+// Registros
 // ============================================================================
+
+logic [1:0] q_cnt_next;
+
+always @(*) begin
+    q_cnt_next = {1'b0, q0_v} + {1'b0, q1_v} + {1'b0, accept} - {1'b0, pop};
+end
 
 always @(posedge clk) begin
 
-    // ---- valores por defecto de las salidas de un ciclo -------------------
-    l2_rvalid   <= 1'b0;
-    read_req    <= 1'b0;
-    evict_valid <= 1'b0;
-    touch_pulse <= 1'b0;
-    fill_pulse  <= 1'b0;
-    wr_en       <= 1'b0;
-    clr_dirty_en<= 1'b0;
-    l2_gnt      <= 1'b0;
-
-    // Los eventos son pulsos de un ciclo: se limpian al principio de cada ciclo.
+    // pulsos de un ciclo
+    l2_rvalid       <= 1'b0;
+    read_req        <= 1'b0;
+    clr_dirty_en    <= 1'b0;
     ev_l2_rd_hit    <= 1'b0;
     ev_l2_rd_miss   <= 1'b0;
     ev_l2_wr_hit    <= 1'b0;
@@ -545,517 +628,301 @@ always @(posedge clk) begin
 
     if (reset) begin
 
-        state     <= S_IDLE;
-        l2_gnt    <= 1'b1;
-        cnt       <= 8'd0;
-        is_read_q <= 1'b0;
-        rd_hit_q  <= 1'b0;
-        wr_hit_q  <= 1'b0;
-        w_fetch_q <= 1'b0;
-        req_way   <= '0;
-        scan_ptr  <= 9'd0;
-        flush_line_q <= '0;
-        flush_tag_q  <= '0;
-        flush_set_q  <= '0;
-        flush_way_q  <= '0;
+        q0_v <= 1'b0; q1_v <= 1'b0;
+        r2_v <= 1'b0; r2_st <= D_DECIDE;
+        r3_v <= 1'b0; r4_v <= 1'b0;
+        evict_valid <= 1'b0;
+        fl_st    <= F_NONE;
+        scan_ptr <= 9'd0;
+        l2_gnt   <= 1'b1;
     end
     else begin
 
-        case (state)
-
-        // ------------------------------------------------------------------
-        // S_IDLE: libre. Se acepta una petición como máximo por ciclo.
-        // ------------------------------------------------------------------
-        S_IDLE: begin
-
+        // ---------------- S1: cola ----------------
+        // Las edades cuentan los ciclos desde la aceptación (1 en t+1)
+        if (pop) begin
+            q0_v      <= q1_v || (accept && q1_v);
+            q0_we     <= q1_we;     q0_addr  <= q1_addr;  q0_wline <= q1_wline;
+            q0_be     <= q1_be;     q0_wdirty<= q1_wdirty; q0_age  <= age_inc(q1_age);
+            q1_v      <= 1'b0;
             if (accept) begin
-
-                l2_gnt    <= 1'b0;
-                cnt       <= 8'd1;
-                req_set   <= bus_set;
-                req_tag   <= addr_tag;
-                req_addr  <= l2_addr;
-                is_read_q <= !l2_we;
-
-                if (!l2_we) begin
-                    // ================= LECTURA =============================
-
-                    if (hit) begin
-
-                        // ---- Acierto ----
-                        rd_hit_q <= 1'b1;
-                        req_way  <= hit_way;
-                        resp_line  <= hit_line;
-                        resp_dirty <= IS_EXCL ? hit_dirty : 1'b0;
-
-                        ev_l2_rd_hit <= 1'b1;
-
-                        // El uso de la vía se avisa al reemplazo. Con exclusiva
-                        // la vía además se invalida (la línea se MUEVE).
-                        touch_pulse <= 1'b1;
-                        touch_set   <= bus_set;
-                        touch_way   <= hit_way;
-
-                        if (IS_EXCL) begin
-                            wr_en    <= 1'b1;
-                            wr_set   <= bus_set;
-                            wr_way   <= hit_way;
-                            wr_tag   <= addr_tag;
-                            wr_line  <= hit_line;
-                            wr_dirty <= 1'b0;
-                            wr_valid <= 1'b0;    // la L2 ya no tiene la línea
-
-                            // Invalidación hacia atrás: la L2 tira su copia
-                            // porque la línea pasa a estar solo en la L1-D.
-                            ev_l2_invalid <= 1'b1;
-                        end
-
-                        state <= S_RD_WAIT;
-                    end
-                    else begin
-
-                        // ---- Fallo: hay que traer la línea ----
-                        rd_hit_q <= 1'b0;
-
-                        ev_l2_rd_miss <= 1'b1;
-
-                        if (IS_EXCL) begin
-                            // Con exclusiva la línea va SOLO a la L1-D: la L2
-                            // no se guarda nada, para que L1-D ∩ L2 = ∅.
-                            req_way <= '0;
-                            state   <= S_RD_WAIT;
-                        end
-                        else begin
-                            req_way <= fill_way_sel;
-
-                            if (!free_found && bus_dirty[repl_victim]) begin
-                                // El conjunto está lleno y su víctima está
-                                // sucia: hay que mandarla al eviction buffer
-                                // antes de poder meter la línea nueva.
-                                vic_line <= bus_line[repl_victim*LINE_W +: LINE_W];
-                                vic_tag  <= bus_tag[repl_victim*L2_TAG_W +: L2_TAG_W];
-                                state    <= S_EVICT;
-                            end
-                            else begin
-                                state <= S_RD_WAIT;
-                            end
-                        end
-                    end
+                if (q1_v) begin
+                    q1_v <= 1'b1; q1_we <= l2_we; q1_addr <= l2_addr; q1_wline <= l2_wline;
+                    q1_be <= l2_be; q1_wdirty <= l2_wdirty; q1_age <= 8'd1;
                 end
                 else begin
-                    // ================= ESCRITURA ===========================
-
-                    w_fetch_q <= 1'b0;
-
-                    if (hit) begin
-
-                        // ---- Acierto: se mezclan los bytes ----
-                        wr_hit_q   <= 1'b1;
-                        req_way    <= hit_way;
-                        store_line <= merge_bytes(hit_line, l2_wline, l2_be);
-
-                        ev_l2_wr_hit <= 1'b1;
-
-                        // Una escritura parcial siempre deja la línea sucia
-                        // (tiene datos que la RAM no tiene). Una escritura de
-                        // la línea completa conserva el bit sucio que trae.
-                        store_dirty <= (l2_be == {LINE_MASK_W{1'b1}})
-                                       ? (hit_dirty | l2_wdirty)
-                                       : 1'b1;
-
-                        state <= S_WR_STORE;
-                    end
-                    else begin
-
-                        // ---- Fallo: hay que guardar la línea ----
-                        wr_hit_q <= 1'b0;
-                        req_way  <= fill_way_sel;
-                        w_line   <= l2_wline;
-                        w_be     <= l2_be;
-
-                        ev_l2_wr_miss <= 1'b1;
-
-                        if (l2_be == {LINE_MASK_W{1'b1}}) begin
-
-                            // Línea completa: no hace falta traer nada, los
-                            // datos ya vienen. Con exclusiva es el caso normal:
-                            // la L1-D desaloja y manda la línea entera.
-                            store_line  <= l2_wline;
-                            store_dirty <= l2_wdirty | (free_found ? 1'b0
-                                                                   : bus_dirty[repl_victim]);
-
-                            if (!free_found && bus_dirty[repl_victim]) begin
-                                vic_line <= bus_line[repl_victim*LINE_W +: LINE_W];
-                                vic_tag  <= bus_tag[repl_victim*L2_TAG_W +: L2_TAG_W];
-                                state    <= S_EVICT;
-                            end
-                            else begin
-                                state <= S_WR_STORE;
-                            end
-                        end
-                        else begin
-
-                            // Escritura parcial: hay que traer la línea vieja
-                            // (write-allocate) y mezclarla.
-                            w_fetch_q <= 1'b1;
-
-                            if (!free_found && bus_dirty[repl_victim]) begin
-                                vic_line <= bus_line[repl_victim*LINE_W +: LINE_W];
-                                vic_tag  <= bus_tag[repl_victim*L2_TAG_W +: L2_TAG_W];
-                                state    <= S_EVICT;
-                            end
-                            else begin
-                                // Se pide la línea vieja al nivel inferior.
-                                // Ojo: aquí l2_addr es la dirección de la
-                                // petición en curso; req_addr todavía vale la
-                                // de la petición anterior (se actualiza en
-                                // este mismo ciclo).
-                                state     <= S_WR_FETCH;
-                                read_req  <= 1'b1;
-                                read_addr <= {l2_addr[31:L2_INDEX_LSB], {L2_INDEX_LSB{1'b0}}};
-                                ev_l2_read_req <= 1'b1;
-                            end
-                        end
-                    end
+                    q0_v <= 1'b1; q0_we <= l2_we; q0_addr <= l2_addr; q0_wline <= l2_wline;
+                    q0_be <= l2_be; q0_wdirty <= l2_wdirty; q0_age <= 8'd1;
                 end
             end
-            else if (flush_req) begin
-
-                // Empieza el vaciado. La L2 no acepta más peticiones hasta
-                // que termine: el permiso se retira y el núcleo se detiene.
-                //
-                // Ojo: esta rama solo se toma si NO había una petición en
-                // curso (si la hubiera, el if (accept) de arriba ya la habría
-                // atendido). La señal l2_gnt ya está en alto en este ciclo,
-                // así que no se puede dejar a medias una aceptación.
-                scan_ptr <= 9'd0;
-                state    <= S_FL_SCAN;
-                l2_gnt   <= 1'b0;
-
-            end
-            else begin
-
-                // Libre: se da el permiso para la siguiente petición.
-                l2_gnt <= 1'b1;
-
+        end
+        else begin
+            q0_age <= age_inc(q0_age);
+            q1_age <= age_inc(q1_age);
+            if (accept) begin
+                if (!q0_v) begin
+                    q0_v <= 1'b1; q0_we <= l2_we; q0_addr <= l2_addr; q0_wline <= l2_wline;
+                    q0_be <= l2_be; q0_wdirty <= l2_wdirty; q0_age <= 8'd1;
+                end
+                else begin
+                    q1_v <= 1'b1; q1_we <= l2_we; q1_addr <= l2_addr; q1_wline <= l2_wline;
+                    q1_be <= l2_be; q1_wdirty <= l2_wdirty; q1_age <= 8'd1;
+                end
             end
         end
 
-        // ------------------------------------------------------------------
-        // S_EVICT: la línea sucia sale al eviction buffer.
-        // ------------------------------------------------------------------
-        //
-        // El contador sigue corriendo durante el desalojo: así la latencia de
-        // un fallo NO depende de que haya que desalojar una línea antes. El
-        // desalojo se paga con el presupuesto de 8 ciclos del acceso.
+        // Permiso del próximo ciclo: lugar en la cola y sin vaciado
+        l2_gnt <= (q_cnt_next < 2'd2) && !flush_req && (fl_st == F_NONE);
 
-        S_EVICT: begin
+        // ---------------- S4: respuesta de un acierto ----------------
+        r4_age <= age_inc(r4_age);
+        if (s4_emit) begin
+            l2_rvalid <= 1'b1;
+            l2_rline  <= r4_line;
+            l2_rdirty <= r4_dirty;
+            r4_v      <= 1'b0;
+        end
 
-            // La línea sucia se mantiene en el bus hasta que el nivel inferior
-            // la acepte. Ojo: evict_valid es un pulso de UN ciclo, pero no
-            // puede aparecer en el mismo ciclo en que se decide desalojar, porque
-            // es una salida registrada: aquí se pone en alto y el handshake se
-            // mira en el ciclo SIGUIENTE. Si se comprobara evict_ready en el
-            // ciclo de entrada, el pulso se cancelaría solo y el nivel inferior
-            // no vería nunca la línea.
-            evict_valid <= 1'b1;
-            cnt        <= cnt + 8'd1;
+        // ---------------- S3: datos ----------------
+        r3_age <= age_inc(r3_age);
+        if (s3_adv) begin
+            r3_v <= 1'b0;
+            if (r3_fill)
+                ev_l2_fill <= 1'b1;
+            if (r3_read) begin
+                r4_v     <= 1'b1;
+                r4_line  <= r3_rline;
+                r4_dirty <= r3_rdirty;
+                r4_age   <= age_inc(r3_age);
+            end
+        end
 
-            // La L2 le está entregando una línea al nivel inferior.
-            ev_l2_write_req <= 1'b1;
+        if (s2_to_s3) begin
+            r3_v         <= 1'b1;
+            r3_wr        <= n3_wr;
+            r3_valid_bit <= n3_valid_bit;
+            r3_touch     <= n3_touch;
+            r3_fill      <= n3_fill;
+            r3_read      <= n3_read;
+            r3_set       <= r2_set;
+            r3_way       <= n3_way;
+            r3_tag       <= r2_tag;
+            r3_line      <= n3_line;
+            r3_dirty     <= n3_dirty;
+            r3_rline     <= n3_rline;
+            r3_rdirty    <= n3_rdirty;
+            r3_age       <= age_inc(r2_age);
+        end
 
-            if (evict_valid && evict_ready) begin
+        // ---------------- respuesta de un fallo (sale desde S2) ----------------
+        if (s2_resp_now) begin
+            l2_rvalid <= 1'b1;
+            l2_rline  <= (r2_st == D_FETCH) ? read_line : r2_line;
+            l2_rdirty <= IS_EXCL ? ((r2_st == D_FETCH) ? read_forwarded : r2_dirty) : 1'b0;
+        end
 
-                // La línea ya está en el buffer: se puede seguir.
-                evict_valid <= 1'b0;
+        // ---------------- S2: etiquetas y decisión ----------------
+        r2_age <= age_inc(r2_age);
 
-                // La línea sucia salió de la L2 por reemplazo.
-                ev_l2_evict <= 1'b1;
+        if (r2_v) begin
+            case (r2_st)
 
-                if (is_read_q) begin
-                    state <= S_RD_WAIT;
+            D_DECIDE: if (!hazard) begin
+
+                ev_l2_rd_hit  <= dec_rd_hit;
+                ev_l2_rd_miss <= dec_rd_miss;
+                ev_l2_wr_hit  <= dec_wr_hit;
+                ev_l2_wr_miss <= dec_wr_miss;
+                ev_l2_invalid <= dec_rd_hit && IS_EXCL;
+
+                // Se guarda la decisión por si S2 tiene que esperar
+                r2_way      <= n3_way;
+                r2_line     <= dec_rd_hit ? n3_rline : n3_line;
+                r2_dirty    <= dec_rd_hit ? n3_rdirty : n3_dirty;
+                r2_s3_wr    <= n3_wr;
+                r2_s3_valid <= n3_valid_bit;
+                r2_s3_touch <= n3_touch;
+                r2_s3_fill  <= n3_fill;
+                r2_s3_read  <= n3_read;
+                r2_vic_line <= bus_line[repl_victim*LINE_W +: LINE_W];
+                r2_vic_tag  <= bus_tag[repl_victim*L2_TAG_W +: L2_TAG_W];
+
+                if (dec_simple) begin
+                    if (!s3_free)
+                        r2_st <= D_SEND;
+                end
+                else if (dec_rd_miss) begin
+                    r2_way <= fill_way_sel;
+                    if (!IS_EXCL && vic_dirty) begin
+                        r2_st <= D_EVICT;
+                        r2_after_evict_wait  <= 1'b1;
+                        r2_after_evict_fetch <= 1'b0;
+                    end
+                    else
+                        r2_st <= D_WAIT;
+                end
+                else if (dec_wr_miss && r2_be == FULL_MASK) begin
+                    // víctima sucia: desalojar y después guardar. El bit sucio
+                    // se calcula igual que en la versión bloqueante.
+                    r2_way   <= fill_way_sel;
+                    r2_line  <= r2_wline;
+                    r2_dirty <= r2_wdirty | vic_dirty;
+                    r2_st    <= D_EVICT;
+                    r2_after_evict_wait  <= 1'b0;
+                    r2_after_evict_fetch <= 1'b0;
                 end
                 else begin
-                    if (w_fetch_q) begin
-                        state     <= S_WR_FETCH;
-                        read_req  <= 1'b1;
-                        read_addr <= {req_addr[31:L2_INDEX_LSB], {L2_INDEX_LSB{1'b0}}};
+                    // escritura parcial que falla: write-allocate
+                    r2_way <= fill_way_sel;
+                    if (vic_dirty) begin
+                        r2_st <= D_EVICT;
+                        r2_after_evict_wait  <= 1'b0;
+                        r2_after_evict_fetch <= 1'b1;
+                    end
+                    else begin
+                        r2_st          <= D_FETCH;
+                        read_req       <= 1'b1;
+                        read_addr      <= {r2_addr[31:L2_INDEX_LSB], {L2_INDEX_LSB{1'b0}}};
+                        ev_l2_read_req <= 1'b1;
+                    end
+                end
+            end
+
+            D_EVICT: begin
+                evict_valid     <= 1'b1;
+                ev_l2_write_req <= 1'b1;
+                if (evict_valid && evict_ready) begin
+                    evict_valid <= 1'b0;
+                    ev_l2_evict <= 1'b1;
+                    if (r2_after_evict_wait)
+                        r2_st <= D_WAIT;
+                    else if (r2_after_evict_fetch) begin
+                        r2_st          <= D_FETCH;
+                        read_req       <= 1'b1;
+                        read_addr      <= {r2_addr[31:L2_INDEX_LSB], {L2_INDEX_LSB{1'b0}}};
                         ev_l2_read_req <= 1'b1;
                     end
                     else begin
-                        state <= S_WR_STORE;
+                        // línea completa: guardar (store + llenado)
+                        r2_s3_wr <= 1'b1; r2_s3_valid <= 1'b1; r2_s3_touch <= 1'b0;
+                        r2_s3_fill <= 1'b1; r2_s3_read <= 1'b0;
+                        r2_st <= D_SEND;
                     end
                 end
             end
-        end
 
-        // ------------------------------------------------------------------
-        // S_RD_WAIT: cuenta los 8 ciclos del acceso.
-        // ------------------------------------------------------------------
-        S_RD_WAIT: begin
+            D_WAIT: if (r2_age >= L2_HIT_CYCLES - 3) begin
+                read_req       <= 1'b1;
+                read_addr      <= {r2_addr[31:L2_INDEX_LSB], {L2_INDEX_LSB{1'b0}}};
+                ev_l2_read_req <= 1'b1;
+                r2_st          <= D_FETCH;
+            end
 
-            cnt <= cnt + 8'd1;
-
-            if (rd_hit_q) begin
-                // Acierto: la respuesta sale en el ciclo t+8.
-                if (cnt >= L2_HIT_CYCLES-1) begin
-                    l2_rvalid <= 1'b1;
-                    l2_rline  <= resp_line;
-                    l2_rdirty <= resp_dirty;
-                    state     <= S_IDLE;
-                    l2_gnt    <= 1'b1;
+            D_FETCH: if (read_ready && !s2_retire) begin
+                // La línea llegó pero no puede seguir todavía: se guarda
+                if (!r2_we) begin
+                    r2_line  <= read_line;
+                    r2_dirty <= IS_EXCL ? read_forwarded : read_forwarded;
+                    r2_st    <= s2_resp_now ? D_SEND : D_RESP;
+                    // con NINE, si la respuesta ya salió, falta el llenado
+                    r2_s3_wr <= 1'b1; r2_s3_valid <= 1'b1; r2_s3_touch <= 1'b0;
+                    r2_s3_fill <= 1'b1; r2_s3_read <= 1'b0;
+                end
+                else begin
+                    r2_line  <= merge_bytes(read_line, r2_wline, r2_be);
+                    r2_dirty <= 1'b1;
+                    r2_s3_wr <= 1'b1; r2_s3_valid <= 1'b1; r2_s3_touch <= 1'b0;
+                    r2_s3_fill <= 1'b1; r2_s3_read <= 1'b0;
+                    r2_st    <= D_SEND;
                 end
             end
-            else begin
-                // Fallo: se pide la línea al nivel inferior en t+5, para que
-                // la respuesta total sea t + 8 + Tmem. La latencia del nivel
-                // inferior es Tmem y el ciclo final lo pone el registro de la
-                // respuesta.
-                if (cnt >= L2_HIT_CYCLES-3) begin
-                    read_req  <= 1'b1;
-                    read_addr <= {req_addr[31:L2_INDEX_LSB], {L2_INDEX_LSB{1'b0}}};
-                    state     <= S_RD_FETCH;
-                    ev_l2_read_req <= 1'b1;
-                end
-            end
-        end
 
-        // ------------------------------------------------------------------
-        // S_RD_FETCH: llega la línea del nivel inferior.
-        // ------------------------------------------------------------------
-        S_RD_FETCH: begin
-
-            if (read_ready) begin
-
-                if (!IS_EXCL) begin
-                    // Con NINE la L2 guarda su copia de la línea.
-                    wr_en    <= 1'b1;
-                    wr_set   <= req_set;
-                    wr_way   <= req_way;
-                    wr_tag   <= req_tag;
-                    wr_line  <= read_line;
-                    wr_dirty <= read_forwarded;   // el buffer solo guarda sucias
-                    wr_valid <= 1'b1;
-
-                    fill_pulse <= 1'b1;
-                    fill_set   <= req_set;
-                    fill_way   <= req_way;
-
-                    // Con NINE la línea entra a la L2: es un llenado.
-                    ev_l2_fill <= 1'b1;
-                end
-
-                // Con exclusiva l2_rdirty dice si la línea venía sucia del
-                // buffer (el buffer solo guarda líneas sucias).
-                l2_rvalid <= 1'b1;
-                l2_rline  <= read_line;
-                l2_rdirty <= IS_EXCL ? read_forwarded : 1'b0;
-
-                state  <= S_IDLE;
-                l2_gnt <= 1'b1;
-            end
-        end
-
-        // ------------------------------------------------------------------
-        // S_WR_FETCH: llega la línea vieja para el write-allocate.
-        // ------------------------------------------------------------------
-        S_WR_FETCH: begin
-
-            if (read_ready) begin
-                fetch_line <= merge_bytes(read_line, w_line, w_be);
-                store_line <= merge_bytes(read_line, w_line, w_be);
-                store_dirty <= 1'b1;
-                state <= S_WR_STORE;
-            end
-        end
-
-        // ------------------------------------------------------------------
-        // S_WR_STORE: la línea se escribe en la L2.
-        // ------------------------------------------------------------------
-        S_WR_STORE: begin
-
-            wr_en    <= 1'b1;
-            wr_set   <= req_set;
-            wr_way   <= req_way;
-            wr_tag   <= req_tag;
-            wr_line  <= store_line;
-            wr_dirty <= store_dirty;
-            wr_valid <= 1'b1;
-
-            if (wr_hit_q) begin
-                // Ya estaba en la caché: es un uso, no un llenado.
-                touch_pulse <= 1'b1;
-                touch_set   <= req_set;
-                touch_way   <= req_way;
-            end
-            else begin
-                fill_pulse <= 1'b1;
-                fill_set   <= req_set;
-                fill_way   <= req_way;
-
-                // La línea entra a la L2: es un llenado.
-                ev_l2_fill <= 1'b1;
+            D_RESP: if (s2_resp_now && !s2_retire) begin
+                // salió la respuesta; con NINE falta el llenado en S3
+                r2_s3_wr <= 1'b1; r2_s3_valid <= 1'b1; r2_s3_touch <= 1'b0;
+                r2_s3_fill <= 1'b1; r2_s3_read <= 1'b0;
+                r2_st <= D_SEND;
             end
 
-            // Ojo: aquí NO se vuelve a dar el permiso. La escritura en los
-            // arreglos ocurre en el flanco que cierra S_WR_COMMIT, así que
-            // hasta ese momento la L2 todavía tiene la línea vieja. Aceptar
-            // una petición en ese instante compararía la etiqueta contra el
-            // contenido viejo (fallaría el acierto) y, en un llenado, mandaría
-            // dos líneas a la misma vía.
-            state <= S_WR_COMMIT;
+            default: ;
+            endcase
         end
 
-        // ------------------------------------------------------------------
-        // S_WR_COMMIT: la línea ya está en los arreglos.
-        // ------------------------------------------------------------------
-        //
-        // En este ciclo ocurre el flanco que escribe los arreglos, porque
-        // wr_en se puso en alto al final de S_WR_STORE. Al terminar, la L2
-        // vuelve a estar libre y puede volver a dar el permiso.
+        if (s2_retire)
+            r2_v <= 1'b0;
 
-        S_WR_COMMIT: begin
-
-            state  <= S_IDLE;
-            l2_gnt <= 1'b1;
+        if (pop) begin
+            r2_v      <= 1'b1;
+            r2_st     <= D_DECIDE;
+            r2_we     <= q0_we;
+            r2_addr   <= q0_addr;
+            r2_wline  <= q0_wline;
+            r2_be     <= q0_be;
+            r2_wdirty <= q0_wdirty;
+            r2_age    <= age_inc(q0_age);
         end
 
-        // ------------------------------------------------------------------
-        // S_FL_SCAN: el vaciado recorre las 512 líneas buscando las sucias.
-        // ------------------------------------------------------------------
-        //
-        // El barrido usa el mismo puerto de lectura que los accesos: durante
-        // el barrido, bus_set apunta al conjunto que se está revisando (ver
-        // el multiplexor de bus_set).
+        // ---------------- vaciado ----------------
+        case (fl_st)
 
-        S_FL_SCAN: begin
+        F_NONE: if (flush_req && pipe_empty && !accept && !l2_rvalid) begin
+            scan_ptr <= 9'd0;
+            fl_st    <= F_SCAN;
+        end
 
-            l2_gnt <= 1'b0;
-
+        F_SCAN: begin
             if (bus_valid[scan_way] && bus_dirty[scan_way]) begin
-
-                // La línea sucia baja al eviction buffer. Se copian aquí los
-                // tres datos que hacen falta después (la línea, su etiqueta y
-                // su posición) porque el puntero del barrido va a seguir
-                // avanzando.
                 flush_line_q <= bus_line[scan_way*LINE_W +: LINE_W];
                 flush_tag_q  <= bus_tag[scan_way*L2_TAG_W +: L2_TAG_W];
                 flush_set_q  <= scan_set;
                 flush_way_q  <= scan_way;
-                state        <= S_FL_EVICT;
-
+                fl_st        <= F_EVICT;
             end
-            else begin
-
-                if (scan_ptr == SCAN_LAST) begin
-                    // Ya se han revisado todas las líneas.
-                    state <= S_FL_WAIT;
-                end
-                else begin
-                    scan_ptr <= scan_ptr + 9'd1;
-                end
-
-            end
-        end
-
-        // ------------------------------------------------------------------
-        // S_FL_EVICT: la línea sucia sale al eviction buffer.
-        // ------------------------------------------------------------------
-        //
-        // El handshake es el mismo que usa el desalojo por reemplazo
-        // (S_EVICT): evict_valid se pone en alto y el handshake se mira en el
-        // ciclo SIGUIENTE, con el valor ya registrado. Si se comprobara
-        // evict_ready en el ciclo de entrada, el pulso se cancelaría solo y el
-        // buffer nunca vería la línea.
-
-        S_FL_EVICT: begin
-
-            evict_valid <= 1'b1;
-
-            // La L2 le está entregando una línea al nivel inferior.
-            ev_l2_write_req <= 1'b1;
-
-            if (evict_valid && evict_ready) begin
-
-                // La línea ya está en el buffer: su copia en la L2 queda
-                // limpia, porque a partir de ahora la L2 y la RAM tienen lo
-                // mismo. La etiqueta y los datos no se tocan.
-                evict_valid  <= 1'b0;
-                clr_dirty_en <= 1'b1;
-                clr_dirty_set<= flush_set_q;
-                clr_dirty_way<= flush_way_q;
-
-                // Esta línea sucia bajó a la RAM: es un write-back.
-                ev_l2_writeback <= 1'b1;
-
+            else if (scan_ptr == SCAN_LAST)
+                fl_st <= F_WAIT;
+            else
                 scan_ptr <= scan_ptr + 9'd1;
+        end
 
-                if (scan_ptr == SCAN_LAST)
-                    state <= S_FL_WAIT;
-                else
-                    state <= S_FL_SCAN;
-
+        F_EVICT: begin
+            evict_valid     <= 1'b1;
+            ev_l2_write_req <= 1'b1;
+            if (evict_valid && evict_ready) begin
+                evict_valid     <= 1'b0;
+                clr_dirty_en    <= 1'b1;
+                clr_dirty_set   <= flush_set_q;
+                clr_dirty_way   <= flush_way_q;
+                ev_l2_writeback <= 1'b1;
+                scan_ptr        <= scan_ptr + 9'd1;
+                fl_st           <= (scan_ptr == SCAN_LAST) ? F_WAIT : F_SCAN;
             end
         end
 
-        // ------------------------------------------------------------------
-        // S_FL_WAIT: ya no quedan líneas sucias en la L2.
-        // ------------------------------------------------------------------
-        //
-        // Falta que el nivel inferior termine: las líneas que se le entregaron
-        // al eviction buffer tienen que llegar a la RAM. lower_drained lo dice
-        // (el buffer está vacío, o sea, la RAM ya confirmó las escrituras).
+        F_WAIT: if (lower_drained) fl_st <= F_DONE;
 
-        S_FL_WAIT: begin
-
-            l2_gnt <= 1'b0;
-
-            if (lower_drained) begin
-                state <= S_FL_DONE;
-            end
-        end
-
-        // ------------------------------------------------------------------
-        // S_FL_DONE: el vaciado terminó.
-        // ------------------------------------------------------------------
-        //
-        // flush_done está en alto mientras flush_req siga en 1 (igual que en
-        // la L1-D). Cuando flush_req baja, la L2 vuelve a estar libre.
-
-        S_FL_DONE: begin
-
-            if (!flush_req) begin
-                state  <= S_IDLE;
-                l2_gnt <= 1'b1;
-            end
-        end
-
-        default: begin
-            state  <= S_IDLE;
+        F_DONE: if (!flush_req) begin
+            fl_st  <= F_NONE;
             l2_gnt <= 1'b1;
         end
 
+        default: fl_st <= F_NONE;
         endcase
     end
 end
 
 
 // ============================================================================
-// Salidas que dependen del estado
+// Línea que va al eviction buffer
 // ============================================================================
 
-// La dirección de la línea que va al eviction buffer.
 always @(*) begin
-    if (state == S_EVICT) begin
-        evict_addr = {{(32-PADDR_W){1'b0}}, vic_tag, req_set, {L2_INDEX_LSB{1'b0}}};
-        evict_line = vic_line;
-    end
-    else if (state == S_FL_EVICT) begin
-        // Vaciado: la dirección es la de la línea sucia que se está sacando,
-        // la que quedó capturada en S_FL_SCAN. No se puede usar scan_set
-        // porque el puntero del barrido ya ha avanzado.
+    if (fl_st == F_EVICT) begin
         evict_addr = {{(32-PADDR_W){1'b0}}, flush_tag_q, flush_set_q, {L2_INDEX_LSB{1'b0}}};
         evict_line = flush_line_q;
+    end
+    else if (r2_v && r2_st == D_EVICT) begin
+        evict_addr = {{(32-PADDR_W){1'b0}}, r2_vic_tag, r2_set, {L2_INDEX_LSB{1'b0}}};
+        evict_line = r2_vic_line;
     end
     else begin
         evict_addr = 32'b0;
@@ -1063,5 +930,16 @@ always @(*) begin
     end
 end
 
+
+// ============================================================================
+// Comprobaciones (solo simulación)
+// ============================================================================
+
+`ifndef SYNTHESIS
+always @(posedge clk) begin
+    if (!reset && s4_emit && s2_resp_now)
+        $error("l2_cache: dos respuestas en el mismo ciclo");
+end
+`endif
 
 endmodule
