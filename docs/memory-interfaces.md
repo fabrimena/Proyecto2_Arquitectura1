@@ -383,7 +383,7 @@ flush_req = 1'b0;
   `flush_done` de la jerarquía = los dos `flush_done`, y se mantiene mientras `flush_req` siga en 1.
   Con `L2_MODEL = 1`: la L1-D terminó y `l2_model` ya escribió todo en DMEM.
 - Duración: cerca de 56 ciclos por línea sucia que llega a la RAM. Después de cifrar `imagen.bmp`
-  (9270 bytes) el vaciado tarda 16631 ciclos; en el peor caso (640 líneas sucias) unos 37000. Por eso
+  (9270 bytes) el vaciado tarda 16378 ciclos; en el peor caso (640 líneas sucias) unos 37000. Por eso
   el límite de espera de los testbenches de `tests/rtl` es de 100000 ciclos (`+FLUSH_MAXCYCLES`).
 - Modos 0 y 1: no hay nada que vaciar y `flush_done` sigue a `flush_req`.
 - El programa puede seguir después de un vaciado. Con exclusiva, las líneas sucias que se mandaron a la
@@ -485,7 +485,8 @@ accesos en los dos, se atienden en fases y el núcleo sigue congelado hasta la �
     dos cachés justificadas, los diagramas L1/L2, la cadena de vaciado y las latencias.
 11. Reemplazo de la L2: pseudo-LRU de árbol (por defecto) y Random con LFSR, ambos implementados y
     probados (#22, Alejandro). El pseudo-LRU es una **aproximación** del LRU, no un LRU exacto.
-12. L2 en 4 etapas (crédito extra, D11): pendiente; hoy la L2 es bloqueante.
+12. L2 en 4 etapas (crédito extra, D11): hecha, con los mismos puertos. Acepta una petición por ciclo y
+    mantiene los tiempos del bus (hit 8, miss 8 + Tmem); `tb_l2_pipeline` la prueba.
 
 ## 10. Pruebas
 
