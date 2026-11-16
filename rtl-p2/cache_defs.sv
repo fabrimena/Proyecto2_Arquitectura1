@@ -21,6 +21,7 @@
       RAW, tamaño del write buffer y número de MSHR).
    4. Formato de una entrada del write buffer y bus L1-D <-> L2 (versión 2).
    5. Las etapas del acceso segmentado a caché (notas de clase 6.3.1).
+   6. Geometría, tiempos y políticas de la caché L2 (Alejandro).
 
  Nota de compatibilidad con Icarus Verilog 12:
    Igual que isa_defs.sv, este archivo solo declara localparam (nada de
@@ -321,5 +322,98 @@ localparam logic L2_REQ_WRITE_MASK = 1'b1;   // escribir los bytes marcados
 //   buffer vacío -> la L2 manda las suyas al eviction buffer -> eviction
 //   buffer vacío -> flush_done. Las dos primeras partes son de la L1-D.
 
+
+
+// ============================================================================
+// 6. Geometría y políticas de la caché L2 (bloque de Alejandro)
+// ============================================================================
+//
+// La L2 unificada está fijada por el enunciado (sección 3.2.3):
+//
+//   Tamaño total ........ 16 KB (4096 palabras de 32 bits)
+//   Asociatividad ....... 4 vías (4-way set associative)
+//   Tamaño de línea ..... 32 bytes = 8 palabras de 32 bits
+//   Política escritura .. write-back (obligatoria para todos los grupos,
+//                        enunciado 7.1.4)
+//   Hit time ............ 8 ciclos
+//
+// De ahí salen, con las fórmulas de las notas de clase (secciones 6.2.1 y 6.2.2):
+//
+//   Número de líneas    NL = 16384 / 32 = 512 líneas
+//   Número de conjuntos  NS = 512 / 4   = 128 conjuntos
+//
+// Es decir: la L2 es una tabla de 128 filas (conjuntos) y cada fila tiene 4
+// "casillas" (vías). Cada casilla guarda una línea completa de 8 palabras.
+//
+// Con los 16 bits de dirección física (PADDR_W) y los 5 bits de desplazamiento
+// de bloque (BLOCK_OFF_W), la dirección se parte así:
+//
+//    15     12 11         5 4      2 1    0
+//   +---------+------------+--------+------+
+//   | Etiqueta |   Índice   | Palabra| Byte |
+//   |  4 bits  |   7 bits   | 3 bits |2 bits|
+//   +---------+------------+--------+------+
+//                              \______________/
+//                           desplazamiento de bloque
+//                                 (5 bits)
+//
+//   - Índice  (7 bits): en qué conjunto buscar    -> log2(128) = 7
+//   - Etiqueta(4 bits): lo que sobra; se compara contra la etiqueta guardada
+//                       para confirmar que la línea encontrada es la correcta.
+//
+// La geometría NO es una decisión de diseño del grupo: la fija el enunciado.
+// Por eso estas constantes no se tocan al cambiar de política.
+
+localparam int L2_SIZE_BYTES = 16384;                       // 16 KB
+localparam int L2_WAYS       = 4;                           // 4 vías
+localparam int L2_LINES      = L2_SIZE_BYTES / LINE_BYTES;   // 512 líneas
+localparam int L2_SETS       = L2_LINES / L2_WAYS;          // 128 conjuntos
+
+localparam int L2_INDEX_W    = $clog2(L2_SETS);             // 7
+localparam int L2_TAG_W      = PADDR_W - L2_INDEX_W - BLOCK_OFF_W; // 4
+localparam int L2_WAY_W      = $clog2(L2_WAYS);             // 2 (bits de una vía)
+
+// Posición de cada campo dentro de la dirección física (16 bits).
+localparam int L2_INDEX_LSB  = BLOCK_OFF_W;                 // 5
+localparam int L2_INDEX_MSB  = L2_INDEX_LSB + L2_INDEX_W - 1;  // 11
+localparam int L2_TAG_LSB    = L2_INDEX_MSB + 1;            // 12
+localparam int L2_TAG_MSB    = PADDR_W - 1;                 // 15
+
+// --- Tiempos de la L2 (enunciado 3.2.3 y 3.3) -------------------------------
+// Un hit de L2 tarda 8 ciclos: si la petición se acepta en el ciclo t,
+// l2_rvalid sale en t + 8. Lo mismo que usa la L2 de prueba (l2_model.sv).
+localparam int L2_HIT_CYCLES = 8;
+
+// --- Penalidad de la memoria principal (enunciado 3.2.5) ---------------------
+// Tmem = 25 + 7 x (100 MHz / fmem), en ciclos del procesador. Con fmem = 25 MHz
+// (razón 4x) salen 25 + 28 = 53 ciclos, que es el ejemplo del enunciado.
+// Este número lo usa el pipeline para contar los ciclos perdidos por un miss
+// de L2 (L1 miss + L2 miss = 8 + Tmem). Si el grupo elige otra frecuencia de
+// memoria, este valor se ajusta aquí y en ningún otro sitio.
+localparam int T_MEM_CYCLES   = 53;
+
+// --- Política de reemplazo de la L2 (enunciado 7.1.4) ----------------------
+// El enunciado deja tres opciones: "Pseudo-LRU (tree-based o bit-based),
+// Random, o LFU aproximado con contadores de 2-3 bits".
+//   RP2_PLRU  : pseudo-LRU de árbol (tree-based). Con 4 vías son 3 bits por
+//               conjunto. Es una APROXIMACIÓN del LRU exacto, no el LRU
+//               exacto: hay que documentarlo así.
+//   RP2_RANDOM: aleatorio con un LFSR de 8 bits; la víctima sale de sus 2
+//               bits bajos.
+// Se numeran aparte de RP_LRU / RP_FIFO / RP_RANDOM de la L1-D porque son
+// políticas DISTINTAS: en la L1-D no tiene sentido un pseudo-LRU de 4 vías
+// (la L1-D tiene 2) y aquí el enunciado no pide FIFO.
+localparam logic [1:0] RP2_PLRU   = 2'd0;
+localparam logic [1:0] RP2_RANDOM = 2'd1;
+localparam logic [1:0] L2_DEFAULT_REPL_POLICY = RP2_PLRU;
+
+// --- Política de inclusión L1-D / L2 (enunciado 3.2.4) ---------------------
+// La L2 usa la misma política de inclusión que la L1-D, para que los dos
+// niveles no se contradigan: los códigos INCL_* de la sección 3 valen igual
+// para los dos niveles. Por defecto se sigue el valor de la L1-D
+// (INCL_EXCLUSIVE, que es el crédito extra aprobado por el profesor).
+// Si el grupo confirmara que la inclusividad cambia, se cambia solo esta
+// línea y las dos caché quedan alineadas.
+localparam logic [1:0] L2_DEFAULT_INCL_POLICY = L1D_DEFAULT_INCL_POLICY;
 
 `endif

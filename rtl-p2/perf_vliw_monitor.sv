@@ -17,7 +17,11 @@ module perf_vliw_monitor (
     output logic bundle_complete,
     output logic branch_recovery,
     output logic memory_stall,
-    output logic [3:0] wb_non_nop_mask // Máscara del WB que puede consumirse en este flanco.
+    output logic [3:0] wb_non_nop_mask, // Máscara del WB que puede consumirse en este flanco.
+    // Validez completa PRE de WB, aun sin avance o con máscara NOP cero.
+    // Se expone el estado ya transportado por PIPELINE, sin añadir registros.
+    // Las etapas usan este nivel de ocupación; bundle_complete exige avance.
+    output logic wb_valid
 );
 
 logic [3:0] id_non_nop_mask;
@@ -38,7 +42,7 @@ perf_pipeline_monitor PIPELINE (
     .id_valid(id_valid), .id_non_nop_mask(id_non_nop_mask),
     .ex_branch_taken(effective_branch), .ex_exception(effective_exception),
     .ex_valid(), .ex_non_nop_mask(), .ex_cancel_cause(),
-    .wb_valid(), .wb_non_nop_mask(wb_non_nop_mask), .wb_cancel_cause(),
+    .wb_valid(wb_valid), .wb_non_nop_mask(wb_non_nop_mask), .wb_cancel_cause(),
     .bundle_complete(bundle_complete)
 );
 

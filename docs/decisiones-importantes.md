@@ -16,15 +16,15 @@ lo mismo. La única extensión del ISA es la que permite el enunciado (sección 
 | Bloque | Estado en `develop` | Responsable |
 |:---|:---|:---|
 | Congelamiento del núcleo y modelo de stalls | Hecho y probado (`tb_pipeline_stall`) | Fabricio |
-| Contadores de ciclos, bundles, instrucciones, saltos y eventos de la L1-D | Hechos y probados, sin conectar a `top` | Javier |
-| L1-D y write buffer | Hechos y probados solos: write-through, NINE, no-write-allocate, LRU, forwarding, 4 entradas, 1 MSHR. Sin conectar a `top` y sin puerto B | José |
-| Memoria principal y eviction buffer | Sin empezar | Dylan |
-| L2 | Sin empezar | Alejandro |
-| ROM de instrucciones, puerto B y conexión de la jerarquía en `top` | Pendientes | Fabricio |
+| Contadores de ciclos, bundles, instrucciones, saltos y eventos de la L1-D | Hechos y probados; `perf_vliw_monitor` y `perf_stage_counters` ya están instanciados en `top`. Faltan `perf_cache_l1d`, `perf_memory` y `perf_cache_l2` | Javier |
+| L1-D y write buffer | Hechos y probados: write-back, write-allocate, LRU, forwarding, 4 entradas, MSHR de stores, bus versión 2 y vaciado. Conectados en `mem_hierarchy.sv` con el arbitro del puerto B | José |
+| Memoria principal y eviction buffer | Hechos y probados: `mem_controller.sv` (25 MHz, `MEM_DIV` = 4, Tmem = 53, timeout de 256 ciclos) y `eviction_buffer.sv` (4 entradas, reenvío de línea sucia). Falta conectarlos en `mem_hierarchy.sv` (#27) | Dylan |
+| L2 | Hecha y probada: bus versión 2, write-back y write-allocate, `INCL_EXCLUSIVE` por defecto y `INCL_NINE` como parámetro, PLRU de árbol y Random, vaciado de líneas sucias y diez eventos `ev_l2_*`. El almacenamiento está en `l2_arrays.sv`. Falta conectarla en `mem_hierarchy.sv` (#27) | Alejandro |
+| ROM de instrucciones, puerto B y conexión de la jerarquía en `top` | Hechos: `rom_sync.sv`, `l1d_port_arbiter.sv` y `mem_hierarchy.sv` instanciados en `top` con `MEM_MODE = 2`, con la jerarquía completa (L2 real, eviction buffer y controlador) desde el #27 | Fabricio |
 
-`make sim`: 33 PASS, 0 FAIL. `make test-programs`: 14 OK. Hay 60 warnings de Icarus, todos de
-`rtl-p2/l1d_write_buffer.sv` (`@*` sensible a todo un arreglo, en `tb_l1d_write_buffer`, `tb_l1d_cache`
-y `tb_perf_cache_l1d_k1a`); el proyecto 1 terminó con 0 y conviene dejarlo igual (José).
+`make sim`: 63 PASS, 0 FAIL. `make test-programs`: 14 OK. Quedan 2 warnings de Icarus, los dos en
+`rtl-p2/eviction_buffer.sv` (`@*` sensible a todo un arreglo, en los testbenches que instancian el
+buffer); el proyecto 1 terminó con 0 y conviene dejarlo igual (Dylan).
 
 ## 2. Resumen
 
@@ -49,6 +49,26 @@ y `tb_perf_cache_l1d_k1a`); el proyecto 1 terminó con 0 y conviene dejarlo igua
 | 17 | Puerto B (cripto) | Entra a la L1-D: lectura de B, acceso de A y escritura de `camcon` | Pendiente | Fabricio |
 | 18 | Instrucciones nuevas | **`vaciarc`, `medir` y `lcont`**, tipo `1001101`, slot 1 | No se agregaban | Javier, Fabricio |
 | 19 | Contadores por etapa | Ocupado, burbuja y congelado en IF, ID, EX y WB | Pendiente (#8) | Javier |
+
+**Estado de implementación (15 de noviembre de 2026).** La columna "Antes" conserva el punto de partida
+de cada decisión; lo de hoy es esto:
+
+- Las decisiones **10** (L2) y **12** (memoria principal) ya están implementadas y probadas: la L2 en
+  `rtl-p2/l2_cache.sv` (con su almacenamiento en `rtl-p2/l2_arrays.sv`) y la memoria en
+  `rtl-p2/mem_controller.sv`, con sus testbenches en verde.
+- Las decisiones **13** (cruce de relojes), **14** (timeout) y **15** (eviction buffer) también están
+  implementadas en `rtl-p2/mem_controller.sv` y `rtl-p2/eviction_buffer.sv`.
+- La decisión **16** (vaciado) está implementada en las dos cachés: la L1-D recorre sus líneas sucias y
+  la L2 recorre las suyas; las dos están encadenadas en `mem_hierarchy.sv` (#27).
+- La decisión **3** (inclusión exclusiva) está implementada en la L1-D y en la L2, y el checker
+  `rtl-p2/excl_checker.sv` comprueba en simulación que ninguna línea esté en las dos. El documento
+  `docs/memory-hierarchy.md` ya reúne ambas cachés con sus políticas.
+- Latencias de la jerarquía completa (D12): 0 ciclos con hit en la L1-D, 8 con hit en la L2 y 64 cuando
+  falla en las dos (8 + Tmem = 53 + 3 del eviction buffer y del cruce de relojes).
+- La decisión **18** (instrucciones `vaciarc`, `medir` y `lcont`) está conectada en `top` y probada
+  (`tb_cache_isa`, PR #62).
+- La decisión **11** está completa: la L1-D tiene el camino del miss en etapas y la L2 está segmentada en
+  4 etapas, probada con `tb_l2_pipeline` (sección 4.3).
 
 ## 3. Decisiones obligatorias que faltaban
 
@@ -272,6 +292,23 @@ El enunciado (3.3) lo deja como mejora avanzada; la división de tareas ya lo ha
   un ciclo.
 - **Por qué:** es lo que convierte el non-blocking en ganancia real. Sin una L2 segmentada, los misses
   pendientes se atienden uno detrás del otro.
+- **Estado y resultado (16 de noviembre de 2026):** implementada en `rtl-p2/l2_cache.sv` con los mismos
+  puertos, así que no cambió nada más de la jerarquía. S1 es una cola de 2 entradas; un fallo y el
+  desalojo de una víctima sucia esperan en S2; la respuesta de un fallo sale directo desde S2. Un hit
+  sigue tardando 8 ciclos y un miss 8 + Tmem. `tb_l2_pipeline` manda peticiones seguidas y compara
+  contra un modelo de la memoria, en exclusiva y en NINE. Comparación con la versión bloqueante:
+
+  | Medida | Bloqueante | 4 etapas |
+  |:---|---:|---:|
+  | 24 escrituras seguidas (`tb_l2_pipeline`) | 70 ciclos | 24 ciclos |
+  | Lectura después de una escritura | 3 ciclos después | 1 ciclo después |
+  | `make archivo` en modo 2 (mensaje, imagen, datos) | 1886, 41814, 4622 | 1886, 41814, 4622 |
+  | Vaciado después de cifrar `imagen.bmp` | 16631 | 16378 |
+  | Benchmarks en modo 2 (secuencial, aleatorio, stride) | 872, 2606, 10236 | 872, 2606, 10260 |
+
+  En los programas casi no cambia porque la L1-D tiene una sola lectura a la L2 en vuelo y no drena su
+  write buffer mientras espera, así que la L2 casi nunca recibe dos peticiones juntas. Los datos son los
+  mismos en todos los casos.
 
 **Bus L1-D/L2 versión 2** (reemplaza la sección 5 de `memory-interfaces.md`):
 
@@ -330,6 +367,9 @@ el slot y la semántica en `docs/` y comunicarla a CE1108.
   `measure_enable` de los contadores y el stall de `vaciarc`. Javier también agrega los 3 mnemónicos al
   ensamblador (con `lcont` en la revisión N+3 como una carga) y sus pruebas, documenta el tipo en
   `docs/isa.md` y `docs/compiler-integration.md` y avisa formalmente a CE1108.
+- **Estado:** conectadas en `top` (PR #62) y probadas con `tb_cache_isa`. `vaciarc` cuesta 2 ciclos sin
+  caché y, con la jerarquía, lo que tarda el vaciado; mientras tanto el bundle siguiente no accede a
+  memoria. Los selectores 9 a 12 (L2 y RAM) leen 0 hasta que se conecten sus contadores (#26).
 
 ## 5. Configuración por defecto y comparaciones
 
@@ -345,7 +385,7 @@ el slot y la semántica en `docs/` y comunicarla a CE1108.
 | Reemplazo de la L1-D | LRU, FIFO y Random |
 | Reemplazo de la L2 | PLRU y Random |
 | Misses pendientes | `N_MSHR` = 1, 2 y 4 |
-| L2 | Bloqueante contra 4 etapas |
+| L2 | Bloqueante contra 4 etapas (medido en la sección 4.3) |
 | Memoria | 25 MHz (Tmem 53) contra 50 MHz (Tmem 39) |
 
 Con los benchmarks secuencial, aleatorio y con stride (#29), `make archivo` con un archivo de 18 KB y

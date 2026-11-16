@@ -12,13 +12,17 @@
  lo que hacía la memoria del proyecto 1 con el mismo bundle: todo el bundle
  lee antes de escribir y, si A y B escriben la misma palabra, gana B.
 
- La jerarquía es la de top: l1d_port_arbiter, l1d_cache con su configuración
- por defecto (write-back, write-allocate, exclusiva, LRU, write buffer de 4,
- 2 MSHR y bus versión 2) y l2_model sobre una instancia de rtl/memory.sv.
+ La jerarquía es la completa de top (MEM_MODE = 2): l1d_port_arbiter,
+ l1d_cache, l2_cache, eviction_buffer y mem_controller, con su configuración
+ por defecto (write-back, write-allocate, exclusiva, LRU y PLRU, write buffer
+ de 4, 2 MSHR, bus versión 2, eviction buffer de 4 y RAM a 25 MHz). La RAM es
+ una instancia de rtl/memory.sv con el reloj de la memoria (m_clk = clk_mem).
 
  Casos:
-   A. Latencias: carga que falla 8 ciclos; carga y store que aciertan 0;
-      store que falla con un MSHR libre 0; vcr igual que una carga.
+   A. Latencias: hit en la L1-D 0 ciclos; falla en la L1-D y acierta en la
+      L2 8 ciclos; falla en las dos 64 ciclos (8 de la L2 + Tmem = 53 de la
+      RAM + 3 del eviction buffer y del cruce de relojes); store que falla
+      con un MSHR libre 0; vcr igual que una carga.
    B. Puerto B: vcr y camcon solos y con un acceso de A en el mismo bundle
       (1 y 2 ciclos más si todo acierta); camcon rota la palabra una sola
       vez; vcr y camcon leen el valor de antes del store de A en la misma
@@ -30,7 +34,8 @@
    D. Prueba aleatoria: cargas, stores de palabra y de byte, vcr y camcon
       sobre 32 líneas que compiten por 4 conjuntos (víctimas, MSHR,
       llenados); cada dato leído se compara con la referencia; un vaciado a
-      la mitad y otro al final.
+      la mitad y otro al final; y el checker de exclusividad
+      (excl_checker.sv) no encontró ninguna línea en los dos niveles.
 ================================================================================
 */
 
@@ -67,7 +72,8 @@ logic        stall;
 logic        flush_req = 1'b0;
 logic        flush_done;
 
-// Puerto de DMEM
+// Puerto de DMEM y su reloj (clk_mem)
+logic        m_clk;
 logic        m_we;
 logic [3:0]  m_be;
 logic [31:0] m_addr;
@@ -90,11 +96,12 @@ mem_hierarchy DUT (
     .re_b(re_b), .we_b(we_b), .addr_b(addr_b), .wdata_b(wdata_b), .rdata_b(rdata_b),
     .stall(stall),
     .flush_req(flush_req), .flush_done(flush_done),
+    .m_clk(m_clk),
     .m_we(m_we), .m_be(m_be), .m_addr(m_addr), .m_wdata(m_wdata), .m_rdata(m_rdata)
 );
 
 memory #(.SIZE_WORDS(DMEM_BYTES / 4)) DMEM (
-    .clk(clk), .we(m_we), .be(m_be), .addr(m_addr), .wdata(m_wdata), .rdata(m_rdata)
+    .clk(m_clk), .we(m_we), .be(m_be), .addr(m_addr), .wdata(m_wdata), .rdata(m_rdata)
 );
 
 
@@ -201,6 +208,9 @@ endfunction
 // ============================================================================
 
 int          miss_lat;
+
+localparam int L2_HIT  = 8;             // hit de la L2 (enunciado)
+localparam int L2_MISS = 8 + 53 + 3;    // L2 + Tmem a 25 MHz + eviction buffer y cruce de relojes
 int          fl_cycles;
 logic [31:0] old;
 int          seed = 7;
@@ -224,12 +234,12 @@ initial begin
 
 
     // ========================================================================
-    tb_section("A. Latencias de la L1-D a través del árbitro");
+    tb_section("A. Latencias de la jerarquía a través del árbitro");
     // ========================================================================
 
     run_bundle(A_CARGA, 32'h1000, 0, B_NADA, 0, 0);
     miss_lat = n_stalls;
-    check("carga que falla: 8 ciclos de stall", n_stalls, 8);
+    check("carga que falla en la L1-D y en la L2: 8 + 53 + 3 ciclos", n_stalls, L2_MISS);
     check("carga que falla: dato", got_a, exp_a);
 
     run_bundle(A_CARGA, 32'h1004, 0, B_NADA, 0, 0);
@@ -242,7 +252,8 @@ initial begin
     run_bundle(A_GUARDAP, 32'h2040, 32'h3333_4444, B_NADA, 0, 0);
     check("store que falla con un MSHR libre: 0 ciclos", n_stalls, 0);
 
-    idle(20);
+    // El llenado del MSHR también va a la RAM: esperar a que termine
+    idle(100);
 
     run_bundle(A_NADA, 0, 0, B_VCR, 32'h3080, 0);
     check("vcr que falla: lo mismo que una carga", n_stalls, miss_lat);
@@ -255,6 +266,18 @@ initial begin
     run_bundle(A_CARGA, 32'h2040, 0, B_NADA, 0, 0);
     check("carga de la línea del MSHR, ya llena: 0 ciclos", n_stalls, 0);
     check("carga del store que falló: dato", got_a, 32'h3333_4444);
+
+    // 0x0280, 0x0A80 y 0x1280 caen en el mismo conjunto de la L1-D (cada 2 KB).
+    // La tercera saca a 0x0280 (la usada hace más tiempo), que con la política
+    // exclusiva baja a la L2. Al pedirla otra vez falla en la L1-D y acierta
+    // en la L2.
+    run_bundle(A_CARGA, 32'h0280, 0, B_NADA, 0, 0);
+    run_bundle(A_CARGA, 32'h0A80, 0, B_NADA, 0, 0);
+    run_bundle(A_CARGA, 32'h1280, 0, B_NADA, 0, 0);
+    idle(40);
+    run_bundle(A_CARGA, 32'h0284, 0, B_NADA, 0, 0);
+    check("carga que falla en la L1-D y acierta en la L2: 8 ciclos", n_stalls, L2_HIT);
+    check("carga que acierta en la L2: dato", got_a, exp_a);
 
 
     // ========================================================================
@@ -397,6 +420,10 @@ initial begin
     flush_req = 1'b0;
 
     $display("    3000 bundles, %0d ciclos de stall en total", total_stalls);
+
+    // Checker de exclusividad (rtl-p2/excl_checker.sv): revisó cada ciclo
+    check_true("checker de exclusividad activo", DUT.g_l2_real.g_excl.EXCL.checked_cycles > 1000);
+    check("ninguna línea en la L1-D y en la L2 a la vez", DUT.g_l2_real.g_excl.EXCL.violations, 0);
 
 
     tb_finish("tb_mem_hierarchy");

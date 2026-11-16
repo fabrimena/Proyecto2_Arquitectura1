@@ -63,6 +63,9 @@ ALIASES.update({f"s{i}": i + 16 for i in range(16)})
 LSU_OPS = {"guardap": 0, "guardab": 1, "cargai": 8, "cargabai": 9}
 BRU_OPS = {"igualsi": 1, "igualno": 2, "menora": 4, "mayoroigual": 8}
 CRYPTO_OPS = {"fsl": 0, "fsli": 1, "ell": 2, "vcr": 3, "camcon": 4, "setpwd": 5}
+# Extensión opcional del proyecto II, separada de los 34 mnemónicos originales.
+# Solo el slot LSU la admite; el tipo distinto conserva sus codificaciones.
+CACHE_OPS = {"vaciarc": 0, "medir": 1, "lcont": 2}
 
 
 class AssemblyError(ValueError):
@@ -178,6 +181,22 @@ def encode_instruction(text: str, *, pc: int = 0,
     def result(word, reads=(), writes=(), slot=0, target=None, conditional=False, indirect=False):
         return Instruction(word, tuple(r for r in reads if r),
                            tuple(r for r in writes if r), text.strip(), slot, target, conditional, indirect)
+
+    if mnemonic in CACHE_OPS:
+        # Se construye desde cero: ningún operando puede ocupar un campo RSV.
+        # lcont declara el destino como productor, incluso con selector reservado;
+        # así las comprobaciones RAW/WAW y N+3 del grafo también cubren esta carga.
+        word = (0b1001101 << 25) | (CACHE_OPS[mnemonic] << 21)
+        if mnemonic == "vaciarc":
+            count(0)
+            return result(word, slot=1)
+        if mnemonic == "medir":
+            count(1)
+            return result(word | bounded(operands[0], 0, 1), slot=1)
+        count(2)
+        rd = register(operands[0])
+        selector = bounded(operands[1], 0, 63)
+        return result(word | (rd << 11) | selector, writes=(rd,), slot=1)
 
     if mnemonic in LSU_OPS:
         count(3)
