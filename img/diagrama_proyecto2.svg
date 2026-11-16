@@ -1,0 +1,250 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1060" width="1600" height="1060">
+  <title>Diagrama del sistema del proyecto 2: núcleo VLIW, ROM síncrona, jerarquía de datos, RAM y contadores</title>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+    </marker>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b85450"/>
+    </marker>
+    <marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1f5f99"/>
+    </marker>
+    <style>
+      text { font-family: 'Segoe UI', Helvetica, Arial, sans-serif; fill: #1a1a1a; }
+      .b { font-weight: 700; font-size: 15px; }
+      .bs { font-weight: 700; font-size: 13px; }
+      .s { font-size: 12.5px; }
+      .st { font-weight: 700; font-size: 20px; }
+      .dt { font-weight: 700; font-size: 15px; }
+      .logic { fill: #dae8fc; stroke: #6c8ebf; stroke-width: 2; }
+      .store { fill: #fff2cc; stroke: #d6b656; stroke-width: 2; }
+      .reg { fill: #e6e6e6; stroke: #666666; stroke-width: 2; }
+      .sim { fill: #dae8fc; stroke: #6c8ebf; stroke-width: 2; stroke-dasharray: 6 4; }
+      .dcore { fill: none; stroke: #333333; stroke-width: 2; stroke-dasharray: 10 6; }
+      .dclk { fill: none; stroke: #1f5f99; stroke-width: 2; stroke-dasharray: 10 6; }
+      .dmem { fill: none; stroke: #2e7d32; stroke-width: 2; stroke-dasharray: 10 6; }
+      .w { stroke: #222; stroke-width: 2; fill: none; }
+      .red { stroke: #b85450; stroke-width: 2.2; fill: none; }
+      .obs { stroke: #1f5f99; stroke-width: 1.8; fill: none; stroke-dasharray: 4 4; }
+      .tr { fill: #b85450; }
+      .tb { fill: #1f5f99; }
+      .tg { fill: #2e7d32; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1600" height="1060" fill="#ffffff"/>
+
+  <!-- ===================== Núcleo (core_clk) ===================== -->
+  <text x="300" y="20" class="dt">Núcleo VLIW (top.sv) · reloj core_clk</text>
+  <rect x="300" y="30" width="600" height="580" rx="6" class="dcore"/>
+  <text x="314" y="62" class="st">IF</text>
+  <text x="314" y="234" class="st">ID</text>
+  <text x="314" y="345" class="st">EX</text>
+  <text x="314" y="546" class="st">WB</text>
+
+  <!-- IF -->
+  <rect x="350" y="70" width="170" height="50" rx="4" class="logic"/>
+  <text x="435" y="92" text-anchor="middle" class="b">PC</text>
+  <text x="435" y="110" text-anchor="middle" class="s">pc_branch</text>
+  <rect x="700" y="70" width="180" height="75" rx="4" class="logic"/>
+  <text x="790" y="102" text-anchor="middle" class="b">fetch</text>
+  <text x="790" y="122" text-anchor="middle" class="s">bundle + PC</text>
+
+  <rect x="350" y="160" width="530" height="24" class="reg"/>
+  <text x="615" y="177" text-anchor="middle" class="bs">IF/ID</text>
+  <line x1="790" y1="145" x2="790" y2="158" class="w" marker-end="url(#a)"/>
+
+  <!-- ID -->
+  <line x1="515" y1="184" x2="515" y2="198" class="w" marker-end="url(#a)"/>
+  <rect x="350" y="200" width="330" height="56" rx="4" class="logic"/>
+  <text x="515" y="223" text-anchor="middle" class="b">dispatch + 4 decodificadores</text>
+  <text x="515" y="243" text-anchor="middle" class="s">slot 0 ALU · 1 LSU · 2 BRU · 3 CRIPTO</text>
+  <rect x="700" y="200" width="180" height="56" rx="4" class="store"/>
+  <text x="790" y="223" text-anchor="middle" class="b">Banco de registros</text>
+  <text x="790" y="243" text-anchor="middle" class="s">32 × 32 bits · sin bypass</text>
+  <line x1="515" y1="256" x2="515" y2="270" class="w" marker-end="url(#a)"/>
+  <line x1="790" y1="256" x2="790" y2="270" class="w" marker-end="url(#a)"/>
+
+  <rect x="350" y="272" width="530" height="24" class="reg"/>
+  <text x="615" y="289" text-anchor="middle" class="bs">ID/EX</text>
+
+  <!-- EX -->
+  <line x1="410" y1="296" x2="410" y2="306" class="w" marker-end="url(#a)"/>
+  <line x1="546" y1="296" x2="546" y2="306" class="w" marker-end="url(#a)"/>
+  <line x1="682" y1="296" x2="682" y2="306" class="w" marker-end="url(#a)"/>
+  <line x1="819" y1="296" x2="819" y2="306" class="w" marker-end="url(#a)"/>
+  <rect x="350" y="308" width="120" height="60" rx="4" class="logic"/>
+  <text x="410" y="333" text-anchor="middle" class="b">ALU</text>
+  <text x="410" y="352" text-anchor="middle" class="s">slot 0</text>
+  <rect x="486" y="308" width="120" height="60" rx="4" class="logic"/>
+  <text x="546" y="333" text-anchor="middle" class="b">LSU</text>
+  <text x="546" y="352" text-anchor="middle" class="s">slot 1</text>
+  <rect x="622" y="308" width="120" height="60" rx="4" class="logic"/>
+  <text x="682" y="333" text-anchor="middle" class="b">BRU</text>
+  <text x="682" y="352" text-anchor="middle" class="s">slot 2</text>
+  <rect x="758" y="308" width="122" height="60" rx="4" class="logic"/>
+  <text x="819" y="333" text-anchor="middle" class="b">CRIPTO</text>
+  <text x="819" y="352" text-anchor="middle" class="s">bóveda y ESTADO</text>
+
+  <!-- Puertos de datos hacia la jerarquía -->
+  <polyline points="546,370 546,445 968,445" class="w" marker-start="url(#a)" marker-end="url(#a)"/>
+  <text x="556" y="402" class="bs">puerto A (LSU)</text>
+  <text x="556" y="420" class="s">cargas y stores</text>
+  <polyline points="850,370 850,410 968,410" class="w" marker-start="url(#a)" marker-end="url(#a)"/>
+  <text x="842" y="390" text-anchor="end" class="bs">puerto B (cripto)</text>
+  <text x="842" y="404" text-anchor="end" class="s">vcr y camcon</text>
+
+  <line x1="410" y1="368" x2="410" y2="470" class="w" marker-end="url(#a)"/>
+  <rect x="350" y="472" width="530" height="24" class="reg"/>
+  <text x="615" y="489" text-anchor="middle" class="bs">EX/WB (ALU) · LSU, BRU y CRIPTO registran su resultado por dentro</text>
+
+  <!-- WB -->
+  <line x1="515" y1="496" x2="515" y2="510" class="w" marker-end="url(#a)"/>
+  <rect x="350" y="512" width="330" height="56" rx="4" class="logic"/>
+  <text x="515" y="535" text-anchor="middle" class="b">wb</text>
+  <text x="515" y="555" text-anchor="middle" class="s">hasta 5 escrituras en el banco</text>
+
+  <!-- ===================== ROM síncrona ===================== -->
+  <rect x="40" y="60" width="220" height="110" rx="4" class="store"/>
+  <text x="150" y="86" text-anchor="middle" class="b">ROM de instrucciones</text>
+  <text x="150" y="108" text-anchor="middle" class="s">rom_sync · 1024 bundles · 16 KB</text>
+  <text x="150" y="127" text-anchor="middle" class="s">síncrona: lee con next_pc</text>
+  <text x="150" y="146" text-anchor="middle" class="s">en el flanco de core_clk</text>
+  <line x1="350" y1="88" x2="262" y2="88" class="w" marker-end="url(#a)"/>
+  <text x="325" y="80" text-anchor="middle" style="font-size:11px">next_pc</text>
+  <line x1="260" y1="135" x2="698" y2="135" class="w" marker-end="url(#a)"/>
+  <text x="610" y="128" text-anchor="middle" class="s">bundle de 128 bits</text>
+
+  <!-- ===================== Reloj del núcleo ===================== -->
+  <rect x="40" y="430" width="200" height="110" rx="4" class="logic"/>
+  <text x="140" y="455" text-anchor="middle" class="b">Reloj del núcleo</text>
+  <text x="140" y="477" text-anchor="middle" class="s">core_en = !cache_stall</text>
+  <text x="140" y="495" text-anchor="middle" class="s">(latch, con clk en 0)</text>
+  <text x="140" y="517" text-anchor="middle" class="s">core_clk = clk &amp; core_en</text>
+  <line x1="240" y1="485" x2="298" y2="485" class="w" marker-end="url(#a)"/>
+  <text x="269" y="477" text-anchor="middle" style="font-size:11px">core_clk</text>
+  <line x1="140" y1="430" x2="140" y2="172" class="w" marker-end="url(#a)"/>
+  <text x="148" y="300" class="s">core_clk</text>
+
+  <!-- cache_stall -->
+  <polyline points="990,460 990,480 920,480 920,650 140,650 140,542" class="red" marker-end="url(#ar)"/>
+  <text x="530" y="642" text-anchor="middle" class="s tr">cache_stall: el acceso a memoria no termina en este ciclo, se congela el bundle completo</text>
+
+  <!-- ===================== Contadores (clk) ===================== -->
+  <rect x="960" y="30" width="600" height="230" rx="6" class="dclk"/>
+  <text x="975" y="55" class="bs tb">Contadores de rendimiento (top.sv) · reloj clk</text>
+  <rect x="980" y="72" width="270" height="105" rx="4" class="logic"/>
+  <text x="1115" y="96" text-anchor="middle" class="b">perf_vliw_monitor</text>
+  <text x="1115" y="118" text-anchor="middle" class="s">ciclos, bundles, instrucciones</text>
+  <text x="1115" y="136" text-anchor="middle" class="s">stalls por memoria</text>
+  <text x="1115" y="154" text-anchor="middle" class="s">penalización de saltos</text>
+  <rect x="1270" y="72" width="270" height="105" rx="4" class="logic"/>
+  <text x="1405" y="96" text-anchor="middle" class="b">perf_stage_counters</text>
+  <text x="1405" y="118" text-anchor="middle" class="s">ciclos ocupados, con burbuja</text>
+  <text x="1405" y="136" text-anchor="middle" class="s">y congelados en IF, ID, EX y WB</text>
+  <text x="975" y="196" class="s">Solo observan: ninguna salida vuelve al control del núcleo.</text>
+  <rect x="980" y="205" width="560" height="45" rx="4" class="logic"/>
+  <text x="1260" y="224" text-anchor="middle" class="bs">cache_isa_unit (D18): vaciarc, medir y lcont del slot 1</text>
+  <text x="1260" y="241" text-anchor="middle" class="s">medir pausa los contadores · lcont los lee · vaciarc pide el vaciado</text>
+  <polyline points="900,340 928,340 928,228 978,228" class="w" marker-end="url(#a)"/>
+  <text x="934" y="278" style="font-size:11px">slot 1</text>
+  <text x="934" y="291" style="font-size:11px">(EX)</text>
+  <line x1="1500" y1="250" x2="1500" y2="298" class="w" marker-end="url(#a)"/>
+  <text x="1492" y="284" text-anchor="end" class="s">flush_req de vaciarc</text>
+  <line x1="900" y1="125" x2="958" y2="125" class="obs" marker-end="url(#ab)"/>
+  <text x="929" y="117" text-anchor="middle" style="font-size:11px" class="tb">observa</text>
+
+  <!-- ===================== Jerarquía de datos (clk) ===================== -->
+  <rect x="940" y="300" width="620" height="590" rx="6" class="dclk"/>
+  <text x="955" y="325" class="bs tb">Jerarquía de datos (mem_hierarchy) · reloj clk, 100 MHz</text>
+
+  <rect x="970" y="380" width="240" height="80" rx="4" class="logic"/>
+  <text x="1090" y="404" text-anchor="middle" class="b">l1d_port_arbiter</text>
+  <text x="1090" y="424" text-anchor="middle" class="s">1. lectura de B · 2. acceso de A</text>
+  <text x="1090" y="442" text-anchor="middle" class="s">3. escritura de B (camcon)</text>
+
+  <line x1="1090" y1="462" x2="1090" y2="508" class="w" marker-start="url(#a)" marker-end="url(#a)"/>
+  <text x="1100" y="489" class="s">puerto único</text>
+
+  <rect x="970" y="510" width="240" height="90" rx="4" class="store"/>
+  <text x="1090" y="532" text-anchor="middle" class="b">L1-D (l1d_cache)</text>
+  <text x="1090" y="551" text-anchor="middle" class="s">4 KB · 2 vías · líneas de 32 B</text>
+  <text x="1090" y="569" text-anchor="middle" class="s">write-back · LRU · hit sin stall</text>
+  <text x="1090" y="587" text-anchor="middle" class="s">write buffer de 4 · 2 MSHR</text>
+
+  <rect x="1300" y="500" width="240" height="70" rx="4" class="logic"/>
+  <text x="1420" y="521" text-anchor="middle" class="bs">perf_cache_l1d</text>
+  <text x="1420" y="539" text-anchor="middle" class="bs">perf_cache_l1d_latency</text>
+  <text x="1420" y="558" text-anchor="middle" class="s">accesos, hits, misses, latencia</text>
+  <line x1="1210" y1="530" x2="1298" y2="530" class="obs" marker-end="url(#ab)"/>
+
+  <rect x="1300" y="590" width="240" height="80" rx="4" class="sim"/>
+  <text x="1420" y="613" text-anchor="middle" class="bs">excl_checker</text>
+  <text x="1420" y="632" text-anchor="middle" class="s">solo en simulación</text>
+  <text x="1420" y="651" text-anchor="middle" class="s">ninguna línea en L1-D y L2</text>
+  <line x1="1210" y1="596" x2="1298" y2="596" class="obs" marker-end="url(#ab)"/>
+  <line x1="1210" y1="666" x2="1298" y2="666" class="obs" marker-end="url(#ab)"/>
+
+  <line x1="1050" y1="600" x2="1050" y2="658" class="w" marker-end="url(#a)"/>
+  <line x1="1130" y1="660" x2="1130" y2="602" class="w" marker-end="url(#a)"/>
+  <text x="1140" y="619" class="bs">bus v2</text>
+  <text x="1140" y="636" class="s">↓ víctimas, l2_wdirty</text>
+  <text x="1140" y="653" class="s">↑ líneas, l2_rdirty</text>
+
+  <rect x="970" y="660" width="240" height="90" rx="4" class="store"/>
+  <text x="1090" y="682" text-anchor="middle" class="b">L2 (l2_cache)</text>
+  <text x="1090" y="701" text-anchor="middle" class="s">16 KB · 4 vías · hit de 8 ciclos</text>
+  <text x="1090" y="719" text-anchor="middle" class="s">write-back · PLRU · bloqueante</text>
+  <text x="1090" y="737" text-anchor="middle" class="s">exclusiva con la L1-D</text>
+
+  <line x1="1090" y1="752" x2="1090" y2="788" class="w" marker-start="url(#a)" marker-end="url(#a)"/>
+  <text x="1100" y="766" class="s">evict_*: víctimas sucias</text>
+  <text x="1100" y="782" class="s">read_*: lecturas</text>
+
+  <rect x="970" y="790" width="240" height="70" rx="4" class="store"/>
+  <text x="1090" y="813" text-anchor="middle" class="b">eviction buffer</text>
+  <text x="1090" y="832" text-anchor="middle" class="s">4 líneas sucias</text>
+  <text x="1090" y="849" text-anchor="middle" class="s">reenvía la línea en un miss</text>
+
+  <line x1="1212" y1="825" x2="1298" y2="825" class="w" marker-start="url(#a)" marker-end="url(#a)"/>
+  <text x="1255" y="817" text-anchor="middle" class="s">ram_*</text>
+
+  <rect x="1300" y="790" width="240" height="70" rx="4" class="logic"/>
+  <text x="1420" y="813" text-anchor="middle" class="b">mem_controller</text>
+  <text x="1420" y="832" text-anchor="middle" class="s">cruce de relojes · Tmem = 53</text>
+  <text x="1420" y="849" text-anchor="middle" class="s">timeout de 256 y un reintento</text>
+
+  <!-- vaciado -->
+  <line x1="700" y1="830" x2="938" y2="830" class="w" marker-start="url(#a)" marker-end="url(#a)"/>
+  <text x="820" y="821" text-anchor="middle" class="s">flush_req / flush_done</text>
+  <text x="820" y="848" text-anchor="middle" class="s">(vaciado, testbenches)</text>
+
+  <!-- ===================== RAM (clk_mem) ===================== -->
+  <line x1="1500" y1="862" x2="1500" y2="963" class="w" marker-start="url(#a)" marker-end="url(#a)"/>
+  <text x="1490" y="907" text-anchor="end" class="s">1 palabra de 32 bits</text>
+  <text x="1490" y="923" text-anchor="end" class="s">por ciclo de clk_mem</text>
+  <rect x="1240" y="932" width="320" height="118" rx="6" class="dmem"/>
+  <text x="1255" y="953" class="bs tg">reloj clk_mem = clk / 4 (25 MHz)</text>
+  <rect x="1300" y="965" width="240" height="70" rx="4" class="store"/>
+  <text x="1420" y="990" text-anchor="middle" class="b">RAM de datos (DMEM)</text>
+  <text x="1420" y="1010" text-anchor="middle" class="s">memory.sv · 64 KB · little-endian</text>
+
+  <!-- ===================== Leyenda ===================== -->
+  <rect x="40" y="950" width="26" height="18" class="logic"/>
+  <text x="74" y="964" class="s">lógica</text>
+  <rect x="150" y="950" width="26" height="18" class="store"/>
+  <text x="184" y="964" class="s">almacenamiento</text>
+  <rect x="320" y="950" width="26" height="18" class="reg"/>
+  <text x="354" y="964" class="s">registro de segmentación</text>
+  <line x1="40" y1="995" x2="90" y2="995" class="dcore"/>
+  <text x="98" y="999" class="s">reloj core_clk (se detiene con cache_stall)</text>
+  <line x1="440" y1="995" x2="490" y2="995" class="dclk"/>
+  <text x="498" y="999" class="s">reloj clk (100 MHz, nunca se detiene)</text>
+  <line x1="40" y1="1030" x2="90" y2="1030" class="dmem"/>
+  <text x="98" y="1034" class="s">reloj clk_mem (25 MHz)</text>
+  <line x1="300" y1="1030" x2="350" y2="1030" class="red"/>
+  <text x="358" y="1034" class="s">control (cache_stall)</text>
+  <line x1="530" y1="1030" x2="580" y2="1030" class="obs"/>
+  <text x="588" y="1034" class="s">observación</text>
+</svg>
