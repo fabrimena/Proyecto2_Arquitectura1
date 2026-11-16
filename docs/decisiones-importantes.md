@@ -67,7 +67,8 @@ de cada decisión; lo de hoy es esto:
   falla en las dos (8 + Tmem = 53 + 3 del eviction buffer y del cruce de relojes).
 - La decisión **18** (instrucciones `vaciarc`, `medir` y `lcont`) está conectada en `top` y probada
   (`tb_cache_isa`, PR #62).
-- Falta la decisión **11** en su parte de la L2 (las 4 etapas son de Fabricio).
+- La decisión **11** está completa: la L1-D tiene el camino del miss en etapas y la L2 está segmentada en
+  4 etapas, probada con `tb_l2_pipeline` (sección 4.3).
 
 ## 3. Decisiones obligatorias que faltaban
 
@@ -291,6 +292,23 @@ El enunciado (3.3) lo deja como mejora avanzada; la división de tareas ya lo ha
   un ciclo.
 - **Por qué:** es lo que convierte el non-blocking en ganancia real. Sin una L2 segmentada, los misses
   pendientes se atienden uno detrás del otro.
+- **Estado y resultado (16 de noviembre de 2026):** implementada en `rtl-p2/l2_cache.sv` con los mismos
+  puertos, así que no cambió nada más de la jerarquía. S1 es una cola de 2 entradas; un fallo y el
+  desalojo de una víctima sucia esperan en S2; la respuesta de un fallo sale directo desde S2. Un hit
+  sigue tardando 8 ciclos y un miss 8 + Tmem. `tb_l2_pipeline` manda peticiones seguidas y compara
+  contra un modelo de la memoria, en exclusiva y en NINE. Comparación con la versión bloqueante:
+
+  | Medida | Bloqueante | 4 etapas |
+  |:---|---:|---:|
+  | 24 escrituras seguidas (`tb_l2_pipeline`) | 70 ciclos | 24 ciclos |
+  | Lectura después de una escritura | 3 ciclos después | 1 ciclo después |
+  | `make archivo` en modo 2 (mensaje, imagen, datos) | 1886, 41814, 4622 | 1886, 41814, 4622 |
+  | Vaciado después de cifrar `imagen.bmp` | 16631 | 16378 |
+  | Benchmarks en modo 2 (secuencial, aleatorio, stride) | 872, 2606, 10236 | 872, 2606, 10260 |
+
+  En los programas casi no cambia porque la L1-D tiene una sola lectura a la L2 en vuelo y no drena su
+  write buffer mientras espera, así que la L2 casi nunca recibe dos peticiones juntas. Los datos son los
+  mismos en todos los casos.
 
 **Bus L1-D/L2 versión 2** (reemplaza la sección 5 de `memory-interfaces.md`):
 
@@ -367,7 +385,7 @@ el slot y la semántica en `docs/` y comunicarla a CE1108.
 | Reemplazo de la L1-D | LRU, FIFO y Random |
 | Reemplazo de la L2 | PLRU y Random |
 | Misses pendientes | `N_MSHR` = 1, 2 y 4 |
-| L2 | Bloqueante contra 4 etapas |
+| L2 | Bloqueante contra 4 etapas (medido en la sección 4.3) |
 | Memoria | 25 MHz (Tmem 53) contra 50 MHz (Tmem 39) |
 
 Con los benchmarks secuencial, aleatorio y con stride (#29), `make archivo` con un archivo de 18 KB y
