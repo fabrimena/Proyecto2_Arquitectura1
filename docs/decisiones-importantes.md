@@ -20,7 +20,7 @@ lo mismo. La única extensión del ISA es la que permite el enunciado (sección 
 | L1-D y write buffer | Hechos y probados: write-back, write-allocate, LRU, forwarding, 4 entradas, MSHR de stores, bus versión 2 y vaciado. Conectados en `mem_hierarchy.sv` con el arbitro del puerto B | José |
 | Memoria principal y eviction buffer | Hechos y probados: `mem_controller.sv` (25 MHz, `MEM_DIV` = 4, Tmem = 53, timeout de 256 ciclos) y `eviction_buffer.sv` (4 entradas, reenvío de línea sucia). Falta conectarlos en `mem_hierarchy.sv` (#27) | Dylan |
 | L2 | Hecha y probada: bus versión 2, write-back y write-allocate, `INCL_EXCLUSIVE` por defecto y `INCL_NINE` como parámetro, PLRU de árbol y Random, vaciado de líneas sucias y diez eventos `ev_l2_*`. El almacenamiento está en `l2_arrays.sv`. Falta conectarla en `mem_hierarchy.sv` (#27) | Alejandro |
-| ROM de instrucciones, puerto B y conexión de la jerarquía en `top` | Hechos: `rom_sync.sv`, `l1d_port_arbiter.sv` y `mem_hierarchy.sv` instanciados en `top` con `MEM_MODE = 2`. Falta la jerarquía completa (L2 real, eviction buffer y controlador) | Fabricio |
+| ROM de instrucciones, puerto B y conexión de la jerarquía en `top` | Hechos: `rom_sync.sv`, `l1d_port_arbiter.sv` y `mem_hierarchy.sv` instanciados en `top` con `MEM_MODE = 2`, con la jerarquía completa (L2 real, eviction buffer y controlador) desde el #27 | Fabricio |
 
 `make sim`: 63 PASS, 0 FAIL. `make test-programs`: 14 OK. Quedan 2 warnings de Icarus, los dos en
 `rtl-p2/eviction_buffer.sv` (`@*` sensible a todo un arreglo, en los testbenches que instancian el
@@ -59,9 +59,12 @@ de cada decisión; lo de hoy es esto:
 - Las decisiones **13** (cruce de relojes), **14** (timeout) y **15** (eviction buffer) también están
   implementadas en `rtl-p2/mem_controller.sv` y `rtl-p2/eviction_buffer.sv`.
 - La decisión **16** (vaciado) está implementada en las dos cachés: la L1-D recorre sus líneas sucias y
-  la L2 recorre las suyas; falta encadenar las dos en `mem_hierarchy.sv` (#27).
-- La decisión **3** (inclusión exclusiva) está implementada en la L1-D y en la L2; falta el checker de
-  exclusividad. El documento `docs/memory-hierarchy.md` ya reúne ambas cachés con sus políticas.
+  la L2 recorre las suyas; las dos están encadenadas en `mem_hierarchy.sv` (#27).
+- La decisión **3** (inclusión exclusiva) está implementada en la L1-D y en la L2, y el checker
+  `rtl-p2/excl_checker.sv` comprueba en simulación que ninguna línea esté en las dos. El documento
+  `docs/memory-hierarchy.md` ya reúne ambas cachés con sus políticas.
+- Latencias de la jerarquía completa (D12): 0 ciclos con hit en la L1-D, 8 con hit en la L2 y 64 cuando
+  falla en las dos (8 + Tmem = 53 + 3 del eviction buffer y del cruce de relojes).
 - Falta la decisión **11** en su parte de la L2 (las 4 etapas son de Fabricio).
 
 ## 3. Decisiones obligatorias que faltaban
