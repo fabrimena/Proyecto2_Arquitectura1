@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""Fuente BAL -> módulos reales de CE1108 -> bundles -> procesador VLIW.
-
-Entradas: repositorio del compilador, BAL, expectativas DMEM y horizonte opcional.
-Requiere Flex, compilador C, Python e Icarus. Lee CE1108 sin modificarlo y genera
-adaptador, ASM, binario, logs y procedencia en el destino del llamador, que debe
-quedar fuera de CE1108. Admite el layout anterior y el reorganizado, conservando
-los generadores y su ABI. SimulationError identifica rutas, ejecución o resultados
-inválidos; OSError conserva errores de archivos. No compara optimizadores BAL ni
-certifica que un corte arbitrario corresponda al retorno semántico de main.
-"""
+"""Fuente BAL -> módulos reales de CE1108 -> bundles -> procesador VLIW."""
 from __future__ import annotations
 
 import argparse
@@ -46,60 +37,26 @@ FUNCTION_HEADERS = ('include/semantic.h', 'include/memory.h',
                     'src/generacion_interna.h', 'include/funciones_marco.h', 'include/funciones_llamada.h')
 
 
-def compiler_path(root: Path, relative: str) -> Path:
-    """Resuelve el layout original o el reorganizado sin escribir en CE1108.
-
-    Se limita a carpetas conocidas para no seleccionar otro módulo homónimo.
-    El llamador conserva el contrato del generador; no sustituye funciones ni
-    altera ABI, símbolos o ISA. Si ambos faltan, retorna la ruta de diagnóstico.
-    """
-    original=root/relative
-    if original.is_file():
-        return original
-    name=Path(relative).name
-    if relative.startswith('Analisis_Sintactico/'):
-        folder='src/Analisis_Sintactico'
-    elif relative.startswith('Analisis_Semantico/'):
-        folder='src/Analisis_Semantico'
-    elif name in ('lexer.c','lexer.l','lexer_flex.h','token.c'):
-        folder='src/Analisis_Lexico'
-    elif relative.startswith('src/'):
-        folder='src/Generacion_Codigo'
-    else:
-        return original
-    return root/folder/name
-
-
 def compile_driver(compiler_root: Path, work: Path, include_dirs=(), functions=False) -> Path:
-    """Compila el adaptador anterior con módulos del layout real de CE1108.
-
-    Lee fuentes/cabeceras del compilador y escribe Flex, ejecutable y logs solo
-    en work. functions elige el generador de funciones ya existente; no cambia
-    su ABI. Una ruta ausente o un subproceso fallido produce SimulationError.
-    -O2 optimiza el ejecutable anfitrión, no el programa VLIW que genera.
-    """
     compiler_root = compiler_root.resolve()
     modules = MODULES + (FUNCTION_MODULES if functions else ())
     headers = HEADERS + (FUNCTION_HEADERS if functions else ())
-    required = [compiler_path(compiler_root,p) for p in modules + headers]
+    required = [compiler_root / p for p in modules + headers]
     missing = [str(p) for p in required if not p.is_file()]
     if missing:
-        raise SimulationError('faltan módulos de CE1108 en el layout original o reorganizado:\n' + '\n'.join(missing))
+        raise SimulationError('faltan módulos de CE1108; use feat-analisis-semantico:\n' + '\n'.join(missing))
     work.mkdir(parents=True, exist_ok=True)
     generated = work / 'lexer_flex.c'
-    run_logged([tool('FLEX', 'flex'), '-o', str(generated), str(compiler_path(compiler_root,'src/lexer.l'))],
+    run_logged([tool('FLEX', 'flex'), '-o', str(generated), str(compiler_root/'src/lexer.l')],
                ROOT, work/'flex.log', 30)
     executable = work/'ce1108_source'
     command = [tool('CC', 'cc'), '-std=c11', '-Wall', '-Wextra', '-Wpedantic', '-Werror', '-O2',
-               '-I', str(compiler_root/'include'), '-I', str(compiler_root/'src'),
-               '-I',str(compiler_root/'src/Analisis_Lexico'),
-               '-I',str(compiler_root/'src/Analisis_Sintactico'),
-               '-I',str(compiler_root/'src/Generacion_Codigo')]
+               '-I', str(compiler_root/'include'), '-I', str(compiler_root/'src')]
     for path in include_dirs:
         command.extend(['-I', str(Path(path).resolve())])
     driver = 'ce1108_functions.c' if functions else 'ce1108_source.c'
     command.extend([str(ROOT/'tools'/driver),
-                    *[str(compiler_path(compiler_root,p)) for p in modules], str(generated), '-o', str(executable)])
+                    *[str(compiler_root/p) for p in modules], str(generated), '-o', str(executable)])
     run_logged(command, ROOT, work/'driver_compile.log', 30)
     return executable
 
@@ -157,7 +114,7 @@ def run_source(compiler_root: Path, source: Path, expected_path: Path,
     provenance = {'status': 'pending', 'mode': 'functions' if functions else 'linear', 'cycles': cycles_used, 'architecture_commit': architecture_commit.stdout.strip() if architecture_commit.returncode == 0 else None,
                   'driver_sha256': hashlib.sha256((ROOT/'tools'/driver).read_bytes()).hexdigest(), 'compiler_commit': commit.stdout.strip() if commit.returncode == 0 else None,
                   'source_sha256': hashlib.sha256(content).hexdigest(), 'bundles': len(program.bundles),
-                  'modules_sha256': {p: hashlib.sha256(compiler_path(compiler_root,p).read_bytes()).hexdigest()
+                  'modules_sha256': {p: hashlib.sha256((compiler_root/p).read_bytes()).hexdigest()
                                      for p in tracked},
                   'expected_memory': {hex(a): hex(v) for a, v in expected.items()},
                   'initialization': 'gp y variables inicializados por el código generado; sin precarga del testbench'}

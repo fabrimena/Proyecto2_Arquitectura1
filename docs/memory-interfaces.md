@@ -1,8 +1,8 @@
 # Interfaces de la jerarquía de memoria (Proyecto Grupal 2)
 
-> Curso: CE4301 – Arquitectura de Computadores I, II Semestre 2026
-> Profesor: Dr.-Ing. Jeferson González Gómez
-> Estado: secciones 2 a 8 implementadas; la jerarquía completa (L1-D, L2, eviction buffer y controlador de memoria) está integrada en `rtl-p2/mem_hierarchy.sv` y se usa con `MEM_MODE = 2`
+> Curso: CE4301 – Arquitectura de Computadores I, II Semestre 2026  
+> Profesor: Dr.-Ing. Jeferson González Gómez  
+> Estado: secciones 2 a 8 implementadas; la jerarquía completa (L1-D, L2, eviction buffer y controlador de memoria) está integrada en `rtl-p2/mem_hierarchy.sv` y se usa con `MEM_MODE = 2`  
 > Equipo: Dylan Guerrero González, José García Izaguirre, Javier Hernández Castillo, Alejandro Vásquez Oviedo, Fabricio Mena Mejia
 
 Cómo se conectan el núcleo del proyecto 1, la L1-D, la L2 y la memoria principal. La idea es que cada
@@ -390,7 +390,7 @@ flush_req = 1'b0;
   L2 quedan inválidas en la L1-D y se vuelven a pedir.
 
 Adaptar los testbenches de las herramientas es el issue #28 (Javier). La instrucción `vaciarc` (crédito
-extra, `decisiones-importantes.md` 4.4) ya usa esta cadena desde PR #62.
+extra, `decisiones-importantes.md` 4.4) va a usar la misma cadena.
 
 ### 7.1. Vaciado de la L2 (D16)
 
@@ -479,9 +479,8 @@ accesos en los dos, se atienden en fases y el núcleo sigue congelado hasta la �
 8. Vaciado de la L2: implementado (Alejandro) y encadenado con el de la L1-D en `mem_hierarchy.sv`
    (sección 7).
 9. Eventos de la L2: los diez pulsos `ev_l2_*` de un ciclo están implementados en `rtl-p2/l2_cache.sv`
-   y verificados en los testbenches (#23, Alejandro). El cierre #26 conecta
-   perf_cache_l2 y perf_memory sin interpretar arreglos privados; write_req
-   mide ciclos de oferta y no escrituras aceptadas.
+   y verificados con los contadores de los testbenches (#23, Alejandro). Con eso `perf_cache_l2.sv`
+   puede contar sin interpretar el bus (#26, Javier); falta su implementación.
 10. Documento de jerarquía: `docs/memory-hierarchy.md` creado (#34, Alejandro) con las políticas de las
     dos cachés justificadas, los diagramas L1/L2, la cadena de vaciado y las latencias.
 11. Reemplazo de la L2: pseudo-LRU de árbol (por defecto) y Random con LFSR, ambos implementados y

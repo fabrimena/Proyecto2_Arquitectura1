@@ -3,7 +3,7 @@
 Contrato de interfaz entre nuestro procesador y el compilador del grupo de Compiladores (CE1108), y
 evidencia de la validación conjunta (sección 6 del enunciado). Nuestro ensamblador funciona sin el
 compilador y cubre las 34 instrucciones del ISA original. La extensión opcional de caché
-y medición está conectada a `top` (PR #62), incluidos L2/RAM en este cierre.
+y medición tiene soporte de ensamblado y componentes independientes; su conexión a `top` está pendiente.
 
 ## Contrato
 
@@ -182,29 +182,4 @@ por lo que exige reinicio coordinado; no acredita persistencia. No hay HALT ni t
 ejecuta si aparecen en el slot 1 y ningún programa anterior cambia. `medir` pausa los contadores,
 `lcont` escribe su registro como una carga (regla N+3) y `vaciarc` vacía la jerarquía completa hasta
 la RAM antes de que el bundle siguiente acceda a memoria. `tb_cache_isa` las prueba sobre el
-procesador completo. Los contadores 9 a 12 están conectados a la L2 real y a aceptaciones/ocupación RAM;
-en modos sin jerarquía o con MODEL1 permanecen en cero por ausencia de esas fuentes.
-
-
-## Estado de cierre del Proyecto II (16 de noviembre de 2026)
-
-Las secciones de resultados de octubre son evidencia histórica. El adaptador
-resuelve ahora el layout original y las carpetas reorganizadas de CE1108
-(`src/Analisis_Lexico`, `src/Analisis_Sintactico`, `src/Analisis_Semantico`,
-`src/Generacion_Codigo`), sin modificar módulos ni ABI de aquel repositorio.
-Los ocho tests del modo fuente y los tres de funciones vuelven a pasar.
-
-`tools/comparar_optimizaciones.py` valida fuentes congeladas generadas por balc,
-ASM/MEM/BALB coherentes, semántica esperada y estados completos M2/RTL0/RTL2.
-El modo `--compiler-root` prepara factorial, whale y puntajes tradicionales;
-`--manifest` permite registrar variantes reales con argv/nivel/corte/observables.
-Solo se admiten actualmente BALB sin datos iniciales y entrada0: el resto se
-rechaza explícitamente para no perder inicialización.
-
-No hay niveles -O productivos acreditados. Las opciones --dce/--unroll/--reorder
-trabajan sobre IR y no generan ASM optimizado; -h sí muestra ayuda y --help no
-está reconocido. CFLAGS=-O2 no es una optimización VLIW. #31 permanece PARCIAL
-hasta ejecutar dos niveles reales, distintos y funcionalmente comparables.
-Cortes3403/247/2748 proceden del contrato de observación B5, sin certificar main.
-Ver [análisis vigente](performance-analysis.md#cierre-integrado-16-de-noviembre-de-2026-26-2931-36)
-y [verificación](verificacion-cierre-javier.md).
+procesador completo. Los contadores 9 a 12 (L2 y RAM) se leen como 0 hasta que se conecten (#26).

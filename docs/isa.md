@@ -1,8 +1,8 @@
 # Especificación del ISA — Proyecto Grupal 1
 
-> Archivo: `docs/isa.md`
-> Curso: CE4301 – Arquitectura de Computadores I, II Semestre 2026
-> Profesor: Dr.-Ing. Jeferson González Gómez
+> Archivo: `docs/isa.md`  
+> Curso: CE4301 – Arquitectura de Computadores I, II Semestre 2026  
+> Profesor: Dr.-Ing. Jeferson González Gómez  
 > Equipo: Dylan Guerrero González, José García Izaguirre, Javier Hernández Castillo, Alejandro Vásquez Oviedo, Fabricio Mena Mejia
 >
 > - `isa.md` describe el contrato visible al programador: formato de bundle y slots, codificación binaria, set de instrucciones, modos de direccionamiento, registros, gestión de la bóveda de llaves desde el punto de vista del programador, y la *instruction reference sheet* (green card).
@@ -486,7 +486,7 @@ Para `fsl` y `fsli` se eligió ejecutar una ronda por instrucción, no las cuatr
 
 `setpwd` se reserva para el provisionamiento inicial y utiliza el bit `INIT` de `ESTADO` como condición de acceso. De esta manera, `AUTH = 0` no basta para reconfigurar la contraseña: una ejecución válida de `setpwd` limpia `INIT` y bloquea nuevos intentos fuera de la fase de inicialización.
 
-**Nota de aislamiento:** las subllaves únicamente salen de la bóveda de manera implícita al ejecutarse `fsl`/`fsli`; no existen instrucciones que copien contenido de la bóveda a registros de propósito general ni a memoria.
+**Nota de aislamiento:** las subllaves únicamente salen de la bóveda de manera implícita al ejecutarse `fsl`/`fsli`; no existen instrucciones que copien contenido de la bóveda a registros de propósito general ni a memoria. 
 
 ### Explicación de las instrucciones
 
@@ -1094,7 +1094,7 @@ Cada slot conserva el prefijo común de la ISA. Los bits `[31:25]` corresponden 
 | 7 bits | 4 bits | 21 bits |
 
 
-## Green card de la ISA del proyecto VLIW
+## Green card de la ISA del proyecto VLIW 
 
 Todas las instrucciones miden 32 bits: **Tipo de operación** [31:25] (7 bits) + **ID de operación** [24:21] (4 bits) + operandos (21 bits, según el tipo). Los campos de registro usan 5 bits (x0–x31).
 
@@ -1206,8 +1206,7 @@ del bundle. No agrega una etapa ni una instrucción HALT. Es opcional para CE110
 **D18-A: conectadas en `top` (PR #62).** El decoder LSU original no reconoce este tipo y lo
 deja inactivo; `rtl-p2/decoder_cache_isa.sv` lo decodifica en ID y `rtl-p2/cache_isa_unit.sv` lo
 ejecuta cuando el bundle sale de EX. `tb_cache_isa` las prueba sobre el procesador completo en los
-modos 0, 1 y 2. El cierre #26 conecta los contadores 9 a 12 a la L2 real y al controlador
-RAM; en modos sin jerarquía real se leen como cero por ausencia de esas fuentes. El
+modos 0, 1 y 2. Los contadores 9 a 12 (L2 y RAM) se leen como 0 hasta que se conecten (#26). El
 enganche está en [`microarchitecture.md`](microarchitecture.md), sección 10.
 
 ### Codificación y efectos
@@ -1262,15 +1261,10 @@ mov x5,x4 | nop | nop | nop
 ```
 
 Leer ambas mitades son dos instrucciones y dos instantáneas diferentes: no hay captura atómica
-de 64 bits. Pausar con `medir 0` permite obtener un par coherente con la habilitación integrada.
+de 64 bits. Pausar con `medir 0` permitirá obtener un par coherente cuando el enable esté integrado.
 El IPC continúa calculándose fuera del RTL: instrucciones/ciclos; con cero ciclos corresponde N/D.
 
 ### Contrato de ejecución de la unidad independiente
-
-Esta sección conserva el contrato y las limitaciones del bloque aislado D18-A.
-Las referencias siguientes a una integración futura son históricas: el enganche
-actual, los retiros y la persistencia se verifican en `tb_cache_isa` y
-`tb_perf_d18_cierre`. Ver [verificación del cierre](verificacion-cierre-javier.md).
 
 `cache_isa_unit` usa **clk general**, no `core_clk`. Entradas y controles deben ser estables
 antes del flanco positivo. Reset es síncrono y prioritario: habilita medición, borra respuesta

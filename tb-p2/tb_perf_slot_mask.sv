@@ -77,7 +77,7 @@ function automatic logic [15:0] reference_ids(input int slot, input int kind);
                7'h40: return 16'h00ff; // IMM: 0..7
                default: return 16'h0000;
            endcase
-        1: return kind == 7'h49 ? 16'h0303 : kind == 7'h4d ? 16'h0007 : 16'h0000; // LSU: 0, 1, 8, 9
+        1: return kind == 7'h49 ? 16'h0303 : 16'h0000; // LSU: 0, 1, 8, 9
         2: case (kind)
                7'h41: return 16'h0116; // COND: 1, 2, 4, 8
                7'h4b: return 16'h0003; // JUMP: 0, 1
@@ -150,15 +150,13 @@ initial begin
             // Cambiar todos los bits de operandos no debe cambiar la clasificación:
             // D1 reconoce tipo e ID, no valida las restricciones de esos operandos.
             word[20:0] = 21'h1fffff;
-            // D18 sí valida RSV: todos los operandos a1 son codificación ilegal.
-            if(kind==7'h4d)expected[1]=0;
             expect_mask($sformatf("tipo=%02h ID=%h operandos=1", kind, id),
                         {4{word}}, expected);
         end
     end
     // Confirma que la referencia enumera exactamente las 34 operaciones previstas.
     check("18 operaciones ALU", recognized[0], 18);
-    check("4 LSU y 3 D18", recognized[1], 7);
+    check("4 operaciones LSU", recognized[1], 4);
     check("6 operaciones BRU", recognized[2], 6);
     check("6 operaciones CRIPTO", recognized[3], 6);
 
@@ -202,16 +200,6 @@ initial begin
     value[31:21] = 11'bzzzzzzzzzzz;
     expect_mask("prefijo Z no coincide con una operación", value, 0);
 
-    // Los operandos legales lcont abarcan x0 y ambas mitades incluso reservadas;
-    // cada bit RSV o X/Z invalida sin alterar los 34 casos anteriores.
-    for(integer d=0;d<32;d++)for(integer sel=0;sel<64;sel++)begin
-        word=32'h9a400000|(d<<11)|sel;
-        expect_mask("lcont válido",{64'd0,word,32'd0},4'b0010);
-    end
-    for(integer b=0;b<21;b++)begin
-        word=32'h9a000000|(32'd1<<b);
-        expect_mask("vaciarc RSV",{64'd0,word,32'd0},0);
-    end
     tb_finish("tb_perf_slot_mask");
 end
 

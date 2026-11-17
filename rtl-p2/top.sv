@@ -132,16 +132,7 @@ module top #(
 
     // Elimina solo los observadores al elaborar con cero. No selecciona otra
     // CPU, reloj o memoria: permite contrastar pasividad en hardware idéntico.
-    parameter bit PERF_ENABLE  = 1'b1,
-    // Políticas propagadas sin cambios internos de caché; valores por defecto vigentes.
-    parameter logic WRITE_POLICY = 1'b1,
-    parameter logic ALLOC_POLICY = WRITE_POLICY,
-    parameter logic [1:0] INCL_POLICY = 2'd2,
-    parameter logic [1:0] L1_REPL_POLICY = 2'd0,
-    parameter logic [1:0] L2_REPL_POLICY = 2'd0,
-    parameter int N_MSHR = 2,
-    parameter int WB_DEPTH = 4,
-    parameter int EB_DEPTH = 4
+    parameter bit PERF_ENABLE  = 1'b1
 ) (
 
     input  logic         clk,
@@ -333,8 +324,6 @@ logic [4:0]  cisa_wb_rd;
 logic [31:0] cisa_wb_data;
 logic        perf_measure_eff;  // los contadores cuentan: entrada y medir en 1
 logic        flush_req_all;     // vaciado pedido por el testbench o por vaciarc
-wire [9:0][63:0] l2_counts; // Eventos públicos de la L2 real; cero con modelo.
-wire [5:0][63:0] ram_counts; // Aceptaciones/ocupación de MC, en clk general.
 logic [3:0][63:0] l1d_counts;   // lecturas y escrituras de la L1-D con hit y miss
 
 
@@ -758,18 +747,13 @@ generate
         assign flush_done = flush_req_all;  // no hay caché que vaciar
         assign dmem_clk   = clk;
         assign l1d_counts = '0;
-        assign l2_counts = '0;
-        assign ram_counts = '0;
     end
     else if (MEM_MODE == 2) begin : g_mem_cache
 
         mem_hierarchy #(
             .PERF_ENABLE(PERF_ENABLE),
             .L2_MODEL(L2_MODEL),
-            .MEM_DIV(MEM_DIV), .EB_DEPTH(EB_DEPTH),
-            .WRITE_POLICY(WRITE_POLICY), .ALLOC_POLICY(ALLOC_POLICY), .INCL_POLICY(INCL_POLICY),
-            .L1_REPL_POLICY(L1_REPL_POLICY), .L2_REPL_POLICY(L2_REPL_POLICY),
-            .N_MSHR(N_MSHR), .WB_DEPTH(WB_DEPTH)
+            .MEM_DIV(MEM_DIV)
         ) HIER (
             .clk(clk),
             .reset(reset),
@@ -792,7 +776,7 @@ generate
             .flush_req(flush_req_all),
             .flush_done(flush_done),
             .perf_measure_enable(perf_measure_eff),
-            .perf_l1d_counts(l1d_counts), .perf_l2_counts(l2_counts), .perf_ram_counts(ram_counts),
+            .perf_l1d_counts(l1d_counts),
 
             .m_clk(dmem_clk),
             .m_we(dmem_we),
@@ -814,8 +798,6 @@ generate
         assign flush_done  = flush_req_all; // no hay caché que vaciar
         assign dmem_clk    = clk;
         assign l1d_counts  = '0;
-        assign l2_counts = '0;
-        assign ram_counts = '0;
 
         assign dmem_we      = mem_we_c;
         assign dmem_be      = mem_be;
@@ -1107,7 +1089,7 @@ end
 
 // Contadores que lee lcont, en el orden de su campo sel (isa.md). Los de la
 // L1-D salen de mem_hierarchy (cero en los modos 0 y 1). Los de la L2 y la
-// RAM (9 a 12) provienen de decisiones L2 y aceptaciones/ocupación reales de MC.
+// RAM (9 a 12) todavía no tienen contador conectado y se leen como cero (#26).
 logic [63:0] cisa_counters [0:12];
 
 always @(*) begin
@@ -1121,10 +1103,10 @@ always @(*) begin
     cisa_counters[6]  = l1d_counts[1];      // lecturas con miss
     cisa_counters[7]  = l1d_counts[2];      // escrituras con hit
     cisa_counters[8]  = l1d_counts[3];      // escrituras con miss
-    cisa_counters[9]  = l2_counts[0] + l2_counts[2]; // Hits clasificados de lectura/escritura.
-    cisa_counters[10] = l2_counts[1] + l2_counts[3]; // Misses clasificados, no ofertas.
-    cisa_counters[11] = ram_counts[0] + ram_counts[1]; // Peticiones aceptadas una sola vez.
-    cisa_counters[12] = ram_counts[2]; // Ocupación real de transferencia, no latencia estimada.
+    cisa_counters[9]  = 64'd0;
+    cisa_counters[10] = 64'd0;
+    cisa_counters[11] = 64'd0;
+    cisa_counters[12] = 64'd0;
 end
 
 cache_isa_unit CACHE_ISA (
