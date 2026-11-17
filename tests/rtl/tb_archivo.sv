@@ -46,7 +46,9 @@
 `include "isa_defs.sv"
 
 
-module tb_archivo;
+// Modo cero conserva la demo original. El mismo programa puede elaborarse
+// sobre la jerarquía real; el protocolo de vaciado y los oráculos no cambian.
+module tb_archivo #(parameter int MEM_MODE=0, L2_MODEL=0, MEM_DIV=4);
 
     // El límite protege la simulación sin sustituir el protocolo por un retardo.
     // Se configura solo para pruebas/diagnóstico; la persistencia siempre exige done=1.
@@ -131,7 +133,7 @@ module tb_archivo;
 logic clk;
 logic reset;
 
-top DUT (
+top #(.MEM_MODE(MEM_MODE),.L2_MODEL(L2_MODEL),.MEM_DIV(MEM_DIV)) DUT (
     .clk(clk),
     .reset(reset), .flush_req(flush_req), .flush_done(flush_done),
     .debug_result(),

@@ -1,9 +1,9 @@
 # Organización interna (microarquitectura)
 
-> Curso: CE4301 – Arquitectura de Computadores I, II Semestre 2026  
-> Profesor: Dr.-Ing. Jeferson González Gómez  
-> Proyecto Grupal 2: jerarquía de memoria y análisis de rendimiento (entrega: 20 de noviembre de 2026)  
-> Base: procesador VLIW del Proyecto Grupal 1 (entrega del 14 de octubre de 2026)  
+> Curso: CE4301 – Arquitectura de Computadores I, II Semestre 2026
+> Profesor: Dr.-Ing. Jeferson González Gómez
+> Proyecto Grupal 2: jerarquía de memoria y análisis de rendimiento (entrega: 20 de noviembre de 2026)
+> Base: procesador VLIW del Proyecto Grupal 1 (entrega del 14 de octubre de 2026)
 > Equipo: Dylan Guerrero González, José García Izaguirre, Javier Hernández Castillo, Alejandro Vásquez Oviedo, Fabricio Mena Mejia
 
 Cómo se implementa en SystemVerilog el procesador VLIW de [`isa.md`](isa.md) y cómo se le conecta la
@@ -322,8 +322,9 @@ salida vuelve al control del núcleo ni de la caché.
 La entrada `perf_measure_enable` de `top` y la instrucción `medir` pausan la cuenta sin borrarla (cuentan
 si las dos están en 1), y `PERF_ENABLE = 0` quita los contadores al elaborar. Un programa los lee con
 `lcont` (sección 10). La L2 entrega diez eventos `ev_l2_*` de un ciclo y `rtl-p2/perf_memory.sv` mide la
-memoria principal; estos contadores todavía no están conectados en `mem_hierarchy` (#26) y `lcont` los lee
-como 0.
+memoria principal. En el cierre #26 se conectan perf_cache_l2 y perf_memory a los
+eventos públicos de L2 y MC. lcont9–12 observa sus acumulados; MODEL1 y modos0/1
+conectan cero por ausencia de estos productores.
 
 ## 10. Instrucciones de caché y medición (D18)
 
@@ -341,8 +342,8 @@ excepción la anulan, igual que al resto del bundle.
 
 Los contadores de `lcont` son: 0 a 4 de `perf_vliw_monitor` (ciclos, bundles, instrucciones, stalls por
 memoria y ciclos perdidos por saltos), 5 a 8 de `perf_cache_l1d` (lecturas y escrituras de la L1-D con hit
-y miss; 0 en los modos 0 y 1) y 9 a 12 (L2 y RAM), que se leen como 0 hasta que se conecten sus contadores
-(#26).
+y miss; 0 en los modos 0 y 1) y 9 a 12: hits/misses L2, accesos aceptados RAM
+y busy RAM, conectados por el cierre #26.
 
 **`vaciarc` y el bundle siguiente.** Cuando `vaciarc` sale de EX, el bundle siguiente entra a EX y el
 núcleo se congela (`cisa_hold` entra a `cache_stall`). Mientras dura el vaciado, los accesos a memoria de
@@ -415,7 +416,18 @@ memoria después del vaciado.
 | WB | `rtl/pipeline_ex_wb.sv`, `rtl/wb.sv` |
 | Jerarquía de datos | `rtl-p2/mem_hierarchy.sv`, `rtl-p2/l1d_port_arbiter.sv`, `rtl-p2/l1d_cache.sv`, `rtl-p2/l1d_arrays.sv`, `rtl-p2/l1d_replacement.sv`, `rtl-p2/l1d_write_buffer.sv`, `rtl-p2/l2_cache.sv`, `rtl-p2/l2_arrays.sv`, `rtl-p2/l2_replacement.sv`, `rtl-p2/eviction_buffer.sv`, `rtl-p2/mem_controller.sv` y `rtl/memory.sv` (RAM) |
 | Modelos de prueba | `rtl-p2/mem_stall_model.sv` (modo 1), `rtl-p2/l2_model.sv` (`L2_MODEL = 1`), `rtl-p2/excl_checker.sv` (solo simulación) |
-| Contadores | `rtl-p2/perf_vliw_monitor.sv`, `rtl-p2/perf_slot_mask.sv`, `rtl-p2/perf_pipeline_monitor.sv`, `rtl-p2/perf_counters.sv`, `rtl-p2/perf_stage_counters.sv`, `rtl-p2/perf_cache_l1d.sv`, `rtl-p2/perf_cache_l1d_latency.sv`, `rtl-p2/perf_memory.sv` |
+| Contadores | `rtl-p2/perf_vliw_monitor.sv`, `rtl-p2/perf_slot_mask.sv`, `rtl-p2/perf_pipeline_monitor.sv`, `rtl-p2/perf_counters.sv`, `rtl-p2/perf_stage_counters.sv`, `rtl-p2/perf_cache_l1d.sv`, `rtl-p2/perf_cache_l1d_latency.sv`, `rtl-p2/perf_memory.sv`, `rtl-p2/perf_cache_l2.sv` |
 | Instrucciones de caché (D18) | `rtl-p2/decoder_cache_isa.sv` (ID) y `rtl-p2/cache_isa_unit.sv` (EX y WB) |
 | Integración | `rtl-p2/top.sv` (conexiones, flush, excepción, reloj del núcleo y `MEM_MODE`), `rtl/isa_defs.sv` y `rtl-p2/cache_defs.sv` (códigos y parámetros) |
 | Pruebas | Un testbench por módulo en `tb/` y `tb-p2/`, más los de sistema: `tb_top`, `tb_pipeline_integracion` y `tb_pipeline_cripto` (proyecto 1); `tb_pipeline_stall`, `tb_rom_sync`, `tb_port_b`, `tb_mem_hierarchy`, `tb_cache_isa` y `tb_l2_pipeline` (proyecto 2). Detalle en [simulation.md](simulation.md) |
+
+
+## 14. Observación y parámetros del cierre
+
+Los parámetros públicos de top y mem_hierarchy propagan políticas de escritura,
+asignación, inclusión y reemplazo L1/L2, N_MSHR, WB_DEPTH y EB_DEPTH. Los defaults
+conservan la configuración de esta sección; no cambian algoritmos de caché.
+Instrumentación y habilitación de medición no realimentan arbitraje, clocks,
+solicitudes ni flush. Las pruebas comparan PERF_ENABLE0/1 al mismo tiempo exacto.
+La semántica de ventanas, eventos y sus poblaciones está en
+[performance-analysis.md](performance-analysis.md).

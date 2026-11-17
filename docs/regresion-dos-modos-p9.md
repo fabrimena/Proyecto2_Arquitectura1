@@ -1,5 +1,9 @@
 # Issue #9 — Regresión arquitectónica en dos modos
 
+El informe original corresponde a su commit con proveedor provisional. La sección
+«Vigencia tras integrar L2 real» al final describe el estado actual y la reparación
+de las rutas CE1108; los bloqueos anteriores permanecen solo como evidencia histórica.
+
 `regresion-dos-modos-p9.md` describe la selección real de memoria, las capturas
 del simulador y su comparación. Sus entradas son programas, referencias de ISA
 y resultados RTL; sus salidas son el informe A–AL, estadísticas y evidencia
@@ -524,3 +528,13 @@ Relacionado con #9. Sin cambios del RTL de producción ni benchmarks del #29.
 ```
 
 Propuesta solamente: sin staging, commit, push, merge, rebase, cherry-pick o PR.
+
+
+## Vigencia tras integrar L2 real
+
+La evidencia anterior describe su commit y proveedor histórico. En e461b70 con
+el cierre de métricas, la suite mantiene16 métodos y pasa sobre la jerarquía
+real. run_program conserva llamadas posicionales y esquema base1 de stats;
+observation_schema2 agrega parámetros verificados, métricas y procedencia.
+No cambia la comparación de32 GPR/16384 palabras ni el vaciado obligatorio.
+Ver [verificación actual](verificacion-cierre-javier.md).

@@ -48,10 +48,10 @@ sudo apt install iverilog gtkwave make python3
 `make sim` clasifica cada testbench como `PASS` (imprimió `[PASS]` y terminó con código 0), `FAIL`
 (imprimió `[FAIL]` o terminó con error), `SIN-CHEQUEO` (corrió pero no se autoverifica) o `NO-COMPILA`
 (detalle en `build/<tb>/compile.log`), y termina con error si hay algún `FAIL` o `NO-COMPILA`.
-Resultado actual:
+Resultado del cierre con L2 real (línea base: 65 PASS):
 
 ```
-Resumen: 22 PASS, 0 FAIL, 0 NO-COMPILA, 0 SIN-CHEQUEO
+Resumen: 69 PASS, 0 FAIL, 0 NO-COMPILA, 0 SIN-CHEQUEO
 ```
 
 Cada testbench deja en `build/<tb>/` el ejecutable (`sim.vvp`), `compile.log`, `sim.log` y su `.vcd`.
@@ -428,3 +428,26 @@ Todos son autoverificables:
 
 Fuera de `make sim`: `make archivo` cifra y descifra un archivo real y `make test-programs` ejecuta los
 programas de `examples/` sobre el RTL.
+
+
+## Pruebas del cierre de métricas L2/RAM
+
+Ejecutar en una copia externa si se necesita conservar el repositorio sin
+artefactos de build. Make descubre automáticamente los bancos nuevos:
+
+| Comando | Propiedad |
+|---|---|
+| `make tb_perf_cache_l2` | Diez eventos, reset, pausa, oferta retenida, acarreo y wrap64 |
+| `make tb_perf_integracion_hierarquia` | Pasividad activa/inactiva, exclusiva/NINE, DIV2/4, modelo y toda DMEM |
+| `make tb_perf_d18_cierre` | Selectores9–12, mitades, reserva, medir y vaciarc en0/1/REAL/MODEL |
+| `make tb_perf_ram_faults` | MC real: una aceptación por solicitud, reintento, dos timeout y un error |
+
+`run_program --config archivo.json` transmite parámetros por -P y acredita la
+instancia elaborada con ELAB_CONFIG. execution.json conserva el esquema base1
+y añade observation_schema2 con VLIW/etapas/L1/L2/RAM, hashes y comandos. El
+snapshot precede al mantenimiento, que conserva handshake y captura persistente.
+`tools/comparar_configuraciones.py` emite CSV/JSON/Markdown; su modo --capacity
+calienta18KiB antes de abrir la ventana. `tools/comparar_optimizaciones.py`
+valida BAL tradicional frente a M2/RTL, sin afirmar niveles -O inexistentes.
+Ver comandos y resultados en [README](../README.md) y
+[verificacion-cierre-javier.md](verificacion-cierre-javier.md).
