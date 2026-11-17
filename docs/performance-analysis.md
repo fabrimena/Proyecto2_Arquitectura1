@@ -719,7 +719,11 @@ no se aplica automáticamente a stores non-blocking y caché víctima exclusiva.
 No se suman latencias de niveles que se superponen ni se atribuye flush a
 las demandas ya cerradas. Las tablas conservan los denominadores originales.
 
-### Revisión del requisito AMAT del issue #26
+### Revisión histórica del requisito AMAT del issue #26 (base 4a16239)
+
+Este diagnóstico describe las capturas sin extensión temporal. El cierre
+posterior de este documento agrega observadores y sustituye el estado PARCIAL
+para las capturas nuevas; no modifica ni completa artificialmente las antiguas.
 
 El [issue #26](https://github.com/fabrimena/Proyecto2_Arquitectura1/issues/26)
 requiere accesos, hits, misses, tasas y AMAT de cada nivel. El enunciado oficial,
@@ -872,7 +876,7 @@ En ambas políticas la segunda pasada demanda576 lecturas L1. Exclusiva evita
 lecturas RAM en esa pasada y NINE necesita256; no se infiere esta diferencia
 solo de 20KiB frente a16KiB: hay evidencia de eventos reales y colisiones.
 
-### #31: resultado parcial comprobado
+### #31: resultado parcial histórico (solo CLI tradicional)
 
 El comparador ejecuta balc real con fuente BAL congelada, registra commit,
 argv, hashes de fuente/ASM/BALB/MEM y módulos M2, verifica las imágenes contra
@@ -915,3 +919,250 @@ entrega y se repitieron las pruebas en almacenamiento persistente externo.
 
 Reproducción y detalle por issue: [verificación del cierre](verificacion-cierre-javier.md).
 Guion de defensa: [aporte de Javier](guion-defensa-javier.md).
+
+## Cierre temporal por transacción y DCE productivo (#26, #31 y #38)
+
+La rama `feat/javier-cierre-final-amat-ce1108` parte de `origin/develop` en
+`4a16239ecf3ce36a34be7c53f99ab05e6edfcc76`. Este SHA identifica la base,
+**no el último commit de entrega**. Los cambios siguen pendientes de revisión,
+commit y publicación autorizados. No se modifican los algoritmos de cachés,
+controlador, buffers, pipeline, ROM, ISA ni el repositorio de CE1108.
+
+### Definiciones temporales y contrato de observación
+
+El enunciado §5.2 y las Notas de Clase v0.4 §6.2 permiten calcular la media
+ponderada sobre la MISMA población. Cada nivel conserva su denominador:
+
+| Medida | Inicio y final | Población | Unidad |
+|---|---|---|---|
+| AMAT observado L1-D | Primer PRE estable del puerto arbitrado hasta clasificación sin stall, incluyendo el flanco final | Demandas K1-B completas y habilitadas íntegramente | Ciclos `clk` de servicio |
+| AMAT observado de lecturas L2 | Flanco PRE con `l2_req && l2_gnt` hasta consumo PRE de `l2_rvalid` | Lecturas aceptadas, clasificadas y respondidas, sin pausa | Distancia de flancos `clk` |
+| Latencia media RAM | PRE con `req_accept` hasta PRE con `ram_ready` | Transferencias exitosas completas sin pausa, separadas read/write | Distancia de flancos `clk` |
+| Tiempo fallido RAM | Aceptación hasta `error_event` | Transferencias fallidas completas sin pausa | Distancia de flancos `clk`, fuera de la media exitosa |
+
+Las medias L1/L2 satisfacen `ΣT/N = HR × media_hit + MR × media_miss` para
+sus propias cohortes. Una clase vacía tiene media `null`; su contribución a la
+ponderación es cero, sin multiplicar un `null` como si fuera una medición.
+Una población vacía tiene tasas y media `null`/N/D. RAM no es caché: no tiene
+hit/miss rate aplicable. Se conserva su utilización `busy/ciclos medidos`,
+pero **no** se usa como latencia `busy/aceptaciones`.
+
+No se suman medias L1+L2+RAM: los tiempos pueden solaparse y las solicitudes
+L2 incluyen víctimas de línea completa. El AMAT observado L1 describe servicio
+al puerto arbitrado, no persistencia de stores, espera previa del árbitro,
+throughput, penalización media de CPU ni tiempo total de un programa.
+La fórmula serial anidada del ejemplo6.2 exige otras hipótesis/poblaciones.
+
+### Observador L2 pasivo
+
+`perf_cache_l2_latency.sv` consume solo puertos públicos. El primer FIFO conserva
+las aceptaciones de lecturas y escrituras; los eventos RH/RM/WH/WM clasifican
+posteriormente la entrada más antigua. El segundo FIFO conserva exclusivamente
+las lecturas clasificadas hasta su respuesta en orden. Clasificar un store no
+fabrica un `rvalid`. Se procesa clasificación → respuesta → aceptación del flanco,
+impidiendo que una nueva petición justifique una clasificación anterior huérfana.
+
+Los FIFO de16 entradas superan las colas/etapas actualmente vivas del productor.
+Un overflow, clasificación múltiple, tipo incorrecto o respuesta huérfana suma
+error e invalida seguimiento hasta reset. No se adivina una asociación posterior.
+Cada `req && gnt` cuenta una operación distinta, aunque los niveles/valores se
+repitan. Una oferta retenida sin grant no inicia una transacción.
+El contrato del productor garantiza el orden; sin IDs/datos en esta interfaz,
+una permutación que parezca legal no puede identificarse solo con estos puertos.
+Las pruebas funcionales L2 verifican por separado datos y orden de respuestas.
+Una L2 futura fuera de orden requeriría IDs y otro contrato de observación.
+
+El vector `[PERF_L2_LATENCY]` tiene14 campos en orden creciente:
+
+| Índice | Contenido |
+|---|---|
+| 0,1 | Lecturas hit/miss completas y elegibles |
+| 2,3 | Servicio acumulado de esas lecturas hit/miss |
+| 4 | Suma `T_i−1` de lecturas elegibles; no es stall del CPU |
+| 5,6 | Respuestas excluidas; errores de protocolo |
+| 7,8 | Lecturas pendientes; solicitudes aún sin clasificación |
+| 9,10 | Lecturas/escrituras aceptadas desde reset, incluso en pausa |
+| 11,12 | Escrituras clasificadas; respuestas observadas, incluso en pausa |
+| 13 | Lecturas pendientes que ya no son elegibles |
+
+Las escrituras L2 son posted. No se mide un AMAT de escritura ni un tiempo de
+actualización de arrays/persistencia a partir de aceptación o clasificación.
+La interfaz observada no acredita inequívocamente el inicio de oferta de cada
+store con identidad estable, por lo que esa latencia tampoco se publica.
+Se conservan las tasas globales RH/RM/WH/WM y, separadamente, las tasas de la
+cohorte de lecturas completas. No se mezclan sus denominadores.
+
+### Observador RAM pasivo y fronteras de reloj
+
+`perf_memory_latency.sv` asocia una única aceptación pendiente al éxito público
+`ram_ready` o al fracaso `error_event`. No usa el nivel persistente `mem_error`
+como otro error por ciclo ni estados privados de MC. `ram_ready` ya existe:
+**no se modifica `mem_controller.sv` ni se añade un puerto al controlador**.
+`mem_hierarchy.sv` solo deriva observaciones y publica dos vectores adicionales;
+`top.sv`, los selectores `lcont`0–12 y su temporización quedan intactos.
+
+Un `timeout_event` sin `error_event` inicia el único reintento del contrato actual.
+El segundo timeout simultáneo con error termina el mismo acceso; no acepta ni
+reintenta uno nuevo. El observador conserva tipo, fechas y número de intentos.
+Esta inferencia debe revisarse si cambia la política de reintentos del productor.
+Fallos y tiempos fallidos se publican aparte. Una pausa tampoco convierte un
+fracaso en éxito ni en acceso nuevo.
+
+MC publica su respuesta mediante NBA. La distancia entre aceptación PRE y
+**consumo PRE** de esa respuesta es40 con DIV2 y54 con DIV4 en los ensayos
+normales. El contrato nominal `TMEM=25+7×DIV` y busy dan39/53: se refieren a
+otras fronteras. No se resta un ciclo para forzar el valor nominal. El banco
+fecha los dos flancos independientemente, incluye CDC/reintentos reales y
+contrasta un gemelo sin observador ciclo a ciclo. La referencia es siempre
+`clk` general de100MHz, no `core_clk` ni ciclos de `clk_mem`.
+
+El vector `[PERF_RAM_LATENCY]` tiene22 campos:
+
+| Índice | Contenido |
+|---|---|
+| 0,1 | Éxitos completos elegibles read/write |
+| 2,3 | Servicio de esos read/write |
+| 4 | Espera exitosa `Σ(T_i−1)` |
+| 5,6 | Fallos completos elegibles; servicio fallido |
+| 7,8 | Éxitos/fallos excluidos |
+| 9,10 | Timeouts de la cohorte exitosa/fallida |
+| 11,12 | Reintentos de la cohorte exitosa/fallida |
+| 13 | Errores de asociación/protocolo |
+| 14,15 | Pendiente; pendiente elegible (0/1) |
+| 16,17 | Aceptaciones/finales observados desde reset |
+| 18,19 | Duración y tipo del último final observado (write=1) |
+| 20,21 | Fechas de aceptación/finalización de ese último acceso terminado |
+
+Los campos del último final no describen el inicio de la transferencia que aún
+puede estar pendiente. No se fabrica una fecha final para completar una media.
+El diagnóstico conserva identidad incluso mientras la ventana está apagada.
+
+### Ventanas, reset y compatibilidad de datos
+
+Reset síncrono tiene prioridad sobre todos los eventos y se comparte con el
+productor. Reiniciar solo el observador con transacciones vivas pierde historia;
+una respuesta huérfana es error, no acceso contado desde un inicio inventado.
+Cada flanco deshabilitado invalida las operaciones pendientes. Las que empiezan
+apagadas o atraviesan una pausa se siguen hasta su final y quedan excluidas,
+aunque se reanude antes de responder. Un pendiente al corte no integra la media.
+Los contadores primarios de servicio/completados no avanzan en pausa; los
+**diagnósticos de seguimiento** sí. No son lecturas de `lcont` ni controlan al CPU.
+Todos los tiempos y acumulados son64 bits; interpretar medias exige época sin wrap.
+
+`PERF_ENABLE=0` elimina los observadores. MODEL1 y modos0/1 exportan vectores
+cero y disponibilidad falsa: eso significa medida inexistente, no latencia cero.
+El banco captura POST antes de cerrar la ventana y hacer el flush externo.
+Las operaciones de mantenimiento posteriores se siguen, pero no se añaden a
+las cohortes de ejecución capturadas.
+
+`execution.json` conserva schema1 y observación2; agrega `temporal_schema=1`
+solo cuando aparecen ambos marcadores nuevos. Un log histórico sin marcadores
+conserva exactamente su objeto anterior. Un par incompleto/duplicado o un error
+de protocolo se rechaza. El analizador publica schema2 y admite ambos tipos de
+captura; los tiempos ausentes siguen `null`. Se corrigió la interpretación del
+puerto K1-B: últimos campos **exclusiones, errores, pendiente**. La API antigua
+de fixtures `l1_amat(..., wire_layout=False)` se conserva; las capturas reales
+se leen siempre con `wire_layout=True`, comprobado sin cambiar los13 tests previos.
+
+### Resultados nuevos en la referencia REAL exclusiva
+
+Dos rondas nuevas de los tres benchmarks, misma imagen por par0/2, verifican
+los32 registros,16384 palabras,96 operaciones lógicas y checksum1056 después
+del vaciado. La matriz de nueve configuraciones se repite también en54 capturas
+nuevas; las54 históricas se conservan y se releen, sin llamarlas ejecuciones nuevas.
+
+| Programa | Ciclos (sin cambio) | AMAT L1 | Reads L2 completos | Servicio L2 | AMAT lectura L2 | RAM éxitos / aceptados | Servicio RAM exitoso | Media RAM |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Secuencial | 872 | 1 | 4 | 256 | 64 | 4/4 | 216 | 54 |
+| Aleatorio | 2606 | 19.0625 | 32 | 2048 | 64 | 32/32 | 1728 | 54 |
+| Stride | 10260 | 98.7916666667 | 96 | 9551 | 99.4895833333 | 178/179 | 9612 | 54 |
+
+Las lecturas de estos tres ensayos son misses L2; media hit N/D. Los hits se
+acreditan además en integración exclusiva/NINE y en la campaña de capacidad.
+Stride registra96 reads y94 escrituras posted clasificadas en L2; sus190 eventos
+no son el denominador de las96 respuestas. RAM tiene96 éxitos read y82 write,
+con una escritura aún pendiente al corte: no se usan179 aceptaciones para la media.
+Su busy histórico9443 incluye9 ciclos de esa pendiente; tampoco es servicio9612.
+La diferencia64/99.49 no es un error del parámetro nominal: el stride incluye
+colas y tráfico de víctimas/eviction buffer. No se suman latencias superpuestas.
+
+### CE1108: dos variantes productivas verificadas
+
+La copia local auditada está en `feat/i1a-integracion-vliw`, HEAD
+`08c8701c7bc6e58461f54b69a90a1a6fe85d0145`; `origin/develop` local es7463123.
+No se presenta esa rama como una versión oficial diferente ni se cambia a ella
+remotamente. Los fuentes DCE del IDE son idénticos a `origin/develop`; el backend
+utilizado se identifica por SHA/binario y sus módulos en cada captura.
+`balc --dce/--unroll/--reorder` sigue siendo IR sin ASM productivo.
+Pero `ide_dce_analizar` entrega `codigo_nuevo`: el IDE puede aplicar ese fuente
+al backend normal. El diagnóstico anterior limitado a CLI era incompleto.
+
+`ce1108_aplicar_dce.c` solo adapta esa API; no implementa DCE. `ce1108_dce.py`
+consulta la receta de enlace `make -Bn tests/test_ide_dce`, la enlaza externamente
+y registra comandos/hashes. La ruta pasada al IDE es la salida externa porque
+la API crea temporales junto a esa ruta. No se escribe en Compiladores.
+No se acredita `bring` a módulos locales ni datos BALB iniciales no vacíos.
+
+El comparador admite `transform: "ide-dce"`, observables semánticos nombrados y
+mapas de direcciones por variante. Las posiciones se derivan de `balc -m` y el
+marco; cada estado completo se compara con M2 independiente y RTL0/RTL2. Entre
+variantes se exigen los mismos valores semánticos, no igualdad de temporales.
+Puntajes conserva resultado24, combinado13 y total37; la copia muerta de
+`acumular(0)` desaparece, pero la llamada se mantiene. El ejemplo de funciones
+conserva el arreglo de resultados `[cuadrado(4), suma_hasta(5)] = [16,15]`.
+
+| Programa | Variante | Bundles estáticos | Instrucciones estáticas | Corte B5 (avances) | Ciclos RTL2 |
+|---|---|---:|---:|---:|---:|
+| Puntajes | tradicional | 801 | 267 | 2748 | 2748 |
+| Puntajes | IDE-DCE | 795 | 265 | 2742 | 2742 |
+| Funciones | tradicional | 528 | 176 | 6193 | 6193 |
+| Funciones | IDE-DCE | 435 | 145 | 2176 | 2176 |
+
+Son ocho ejecuciones RTL y cuatro sesiones M2, además de las tres referencias
+tradicionales factorial/whale/puntajes (cortes3403/247/2748). Factorial y whale
+no producen cambios con este DCE y se rechazan como supuestos niveles nuevos.
+B5 se vuelve a ejecutar para las imágenes transformadas: retiro WB, corredor
+NOP y ausencia de efectos previos pendientes. El pipeline permanece ACTIVO;
+no se certifica semánticamente `main`, no hay HALT ni porcentajes denominados
+speedup de una función. Las diferencias de ciclos son hasta cortes declarados.
+No se inventan niveles -O ni se confunde CFLAGS=-O2 con optimización BAL.
+
+### Reproducción y estado de cierre
+
+Los destinos siguientes deben ser NUEVOS y externos. CE1108 se consulta en lectura:
+
+```bash
+make tb_perf_cache_l2_latency
+make tb_perf_memory_latency
+make tb_perf_amat_integracion
+python3 -m unittest discover -s tests -p 'test_amat_temporal.py' -v
+CE1108_ROOT="$CE1108_ROOT" python3 -m unittest discover -s tests -p 'test_ce1108_dce.py' -v
+python3 tools/comparar_optimizaciones.py --compiler-root "$CE1108_ROOT" --ide-dce --output /tmp/p31-dce-nuevo
+python3 tools/comparar_configuraciones.py --output /tmp/p30-temporal-nuevo --repeat 2
+python3 tools/analizar_amat.py --report /tmp/p30-temporal-nuevo/comparaciones.json --output /tmp/amat-nuevo
+```
+
+`--ide-dce` prepara exclusivamente el snapshot y fuentes con B5 acreditado.
+Otro commit requiere nuevos cortes/evidencia y `--manifest`; no se reutilizan
+los horizontes por suposición. El informe externo conserva los comandos B5,
+los símbolos, las capturas y los hashes. El PR68 sigue abierto; sus archivos
+`memory-hierarchy.md` y `simulation.md` se conservan sin cambios. Sus presupuestos
+nominales61/64 no sustituyen los tiempos por transacción/congestión medidos aquí.
+
+**#26: completo en las métricas observables definidas** (L1, reads L2, RAM;
+posted sin respuesta y tasas RAM no aplicables se explican, no se inventan).
+**#31: comparación real completa en estos dos contrastes tradicional/IDE-DCE**;
+no constituye una familia general -O ni garantiza equivalencia universal.
+**#38: parcial**, preparación individual lista; faltan revisión colectiva,
+presentación, integración/publicación autorizadas y entrega formal con SHA final.
+La URL es https://github.com/fabrimena/Proyecto2_Arquitectura1 y el campo SHA
+queda **PENDIENTE DE INTEGRACIÓN FINAL**, nunca4a16239 como sustituto de entrega.
+
+En capacidad18KiB se verificaron además cuatro capturas nuevas (dos rondas):
+exclusiva tiene576 lecturas L2 hit completas, servicio4608 y media8; NINE tiene
+320 hit/256 miss completos, servicio18944 y media32.8888888889, ponderada como
+`(320×8 + 256×64)/576`. RAM en NINE registra256 éxitos, servicio13824 y media54;
+en exclusiva no hay transacciones RAM elegibles y la media es N/D. En ambos
+hay576 respuestas L2 y576 éxitos RAM excluidos del calentamiento: son diagnóstico
+desde reset, no operaciones recuperadas al reabrir `medir`. Los ciclos medidos
+8639/22975 y el estado completo coinciden con la campaña histórica.

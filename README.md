@@ -217,12 +217,15 @@ CE1108 se consulta sin modificarlo. Preparar su ejecutable previamente con sus
 herramientas. La variante tradicional puede validarse con:
 
 ```bash
+export CE1108_ROOT=/ruta/a/Proyecto2_Compiladores
 python3 tools/comparar_optimizaciones.py --compiler-root "$CE1108_ROOT" --output /tmp/p31-nuevo
 CE1108_ROOT="$CE1108_ROOT" python3 -m unittest discover -s tests -p 'test_comparar_optimizaciones.py' -v
 ```
 
-Actualmente #31 es PARCIAL: DCE/unrolling/reorder reportan IR y no producen niveles
-ASM optimizados; no existen opciones productivas -O0…-O3. El comparador acepta
+Las opciones CLI DCE/unrolling/reorder reportan IR; no existen opciones
+productivas -O0…-O3. El IDE sí aplica DCE al fuente mediante su API pública:
+la comparación tradicional/IDE-DCE está verificada para puntajes y el ejemplo
+de funciones, con marcos y cortes propios por variante. El comparador acepta
 un manifiesto para futuros niveles reales y rechaza copias de la misma imagen.
 Sus cortes son observaciones declaradas, no certificaciones de retorno de main.
 
@@ -233,3 +236,24 @@ Sus cortes son observaciones declaradas, no certificaciones de retorno de main.
 | [benchmarks-memoria-p29.md](docs/benchmarks-memoria-p29.md) | Oráculos y resultados históricos/actuales de #29 |
 | [verificacion-cierre-javier.md](docs/verificacion-cierre-javier.md) | Cobertura por issue, pruebas, medidas y limitaciones |
 | [guion-defensa-javier.md](docs/guion-defensa-javier.md) | Demostración y defensa del aporte de Javier |
+
+La instrumentación temporal nueva agrega cohortes completas L2/RAM, respetando
+`medir` y dejando intactos `lcont`0–12 y `vaciarc`. AMAT L2 describe **lecturas**;
+los stores posted no tienen respuesta de escritura. La media RAM separa éxito,
+fallo, retry y operaciones excluidas/pendientes. No se suman niveles solapados.
+Los logs anteriores se siguen leyendo; no se inventan sus tiempos ausentes.
+
+```bash
+make tb_perf_cache_l2_latency tb_perf_memory_latency tb_perf_amat_integracion
+python3 -m unittest discover -s tests -p 'test_amat_temporal.py' -v
+python3 tools/analizar_amat.py --report /tmp/p30-nuevo/comparaciones.json --output /tmp/amat-nuevo
+python3 tools/comparar_optimizaciones.py --compiler-root "$CE1108_ROOT" --ide-dce --output /tmp/p31-dce-nuevo
+CE1108_ROOT="$CE1108_ROOT" python3 -m unittest discover -s tests -p 'test_ce1108_dce.py' -v
+```
+
+Cada salida debe ser nueva. `--ide-dce` usa cortes B5 acreditados en el snapshot
+CE1108 indicado en el informe; otro productor requiere un manifiesto y cortes
+nuevos. Ver las poblaciones, resultados y limitaciones del
+[cierre temporal](docs/performance-analysis.md#cierre-temporal-por-transacción-y-dce-productivo-26-31-y-38).
+La contribución técnica no completa la entrega colectiva #38: revisión,
+presentación, publicación/integración y SHA final siguen pendientes.

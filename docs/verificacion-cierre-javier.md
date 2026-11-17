@@ -2,6 +2,15 @@
 
 ## Estado y alcance
 
+Estado vigente: rama `feat/javier-cierre-final-amat-ce1108`, base
+`4a16239ecf3ce36a34be7c53f99ab05e6edfcc76`. Los observadores temporales completan
+#26 para L1, lecturas L2 y RAM; la API productiva DCE acredita dos contrastes
+reales de #31. #38 continúa parcial por revisión/presentación/entrega colectiva.
+Los resultados anteriores se conservan como antecedentes y el cierre temporal
+al final de este documento distingue las ejecuciones nuevas de las históricas.
+
+### Antecedente del cierre integrado en 4a16239
+
 Rama `feat/javier-cierre-metricas-rendimiento-p2`, base/HEAD conservado
 `e461b70b1195ea402b5352e43ab1f357309a8ffe` de origin/develop. Se creó con árbol e
 índice limpios tras fetch autorizado e inspección de los cinco commits posteriores
@@ -21,12 +30,12 @@ No se atribuye integridad de archivos ignorados a un manifiesto inicial perdido.
 | #7 VLIW | COMPLETO | 292 verificaciones base; transporte, anulación, BRU/stalls y pasividad sobre top |
 | #8 etapas | COMPLETO | Contadores existentes, regresión y60 capturas de top |
 | #9 regresión de modos | COMPLETO | 16 métodos, memoria real, 32 GPR y65536 bytes |
-| #26 caché/memoria | PARCIAL | Accesos/tasas L1/L2 y AMAT observado L1 verificados; falta AMAT L2 por cohorte temporal |
+| #26 caché/memoria | COMPLETO en métricas observables definidas | AMAT L1, lecturas L2 y media RAM por cohortes; posted sin respuesta y tasas RAM N/A explícitos |
 | D18 | COMPLETO | Clasificación37 operaciones, RSV estrictos, lcont0–12, medir/vaciarc y N+3 |
 | #28 flush | COMPLETO | Diez métodos y persistencia real, sin relajar quiescencia |
 | #29 benchmarks | COMPLETO | Tres fuentes/oráculos intactos,872 avances, L2 real,18KiB y capacidad |
 | #30 configuraciones | COMPLETO en la matriz probada | Nueve configuraciones×tres fuentes×dos rondas; referencia bloqueante real |
-| #31 optimizaciones BAL | PARCIAL | Comparador probado; tradicional de tres BAL validado frente a M2/RTL; faltan dos niveles productivos |
+| #31 optimizaciones BAL | COMPLETO en dos contrastes reales | Tradicional/IDE-DCE para puntajes y funciones; cada variante contra M2/RTL0/RTL2; no niveles -O ficticios |
 | #36 análisis | COMPLETO | Capítulo de cierre con poblaciones, resultados, interpretación y límites |
 | #37 README | COMPLETO | Arquitectura P2, comandos, reproducción y mapa documental |
 | #38 aporte/defensa | PARCIAL: preparación técnica lista | Informe/guion/evidencias listos; falta publicación/integración autorizada y registrar el SHA final de entrega |
@@ -181,18 +190,18 @@ Compiladores solo se lee; se compara un manifiesto nuevo tomado al reanudar.
 No se garantiza reconstruir su estado ignorado anterior al apagado. Los dos
 bytecodes Python generados al principio se apartan a evidencia; no son fuente.
 
-Pendiente externo: CE1108 necesita al menos dos niveles productivos distintos,
+Diagnóstico histórico, anterior a verificar IDE-DCE: CE1108 necesita al menos dos niveles productivos distintos,
 con ABI/cortes/observables comparables, para cerrar #31. Se conserva compatibilidad
 tradicional sin implementar otro optimizador. CDC para síntesis y restricciones
 físicas requieren trabajo colectivo; las pruebas son simulación funcional.
 Revisión/commit/publicación/PR/merge dependen de la decisión del usuario/equipo.
 No hay fallos nuevos conocidos sin resolver en el alcance probado.
 
-Pendiente interno de #26: el requisito incluye AMAT de cada nivel, no solo
+Pendiente histórico de #26, resuelto por el cierre temporal posterior: el requisito incluye AMAT de cada nivel, no solo
 contadores de tráfico. K1-B permite el AMAT observado L1 de demandas completas;
 las capturas L2 no conservan tiempos de aceptación/respuesta por transacción.
 Se registra por ello PARCIAL. La revisión y las fórmulas están en
-[performance-analysis.md](performance-analysis.md#revisión-del-requisito-amat-del-issue-26).
+[performance-analysis.md](performance-analysis.md#revisión-histórica-del-requisito-amat-del-issue-26-base-4a16239).
 La inclusión exclusiva y los stores non-blocking no impiden medir latencias:
 impiden sustituir sus poblaciones por las del modelo serial sin acreditarlas.
 
@@ -221,3 +230,58 @@ persistente de esta revisión se identifica en el informe final de la sesión.
 Para defender contratos y evitar interpretaciones incorrectas, consultar
 [guion-defensa-javier.md](guion-defensa-javier.md). El detalle de eventos/ratios y
 los registros históricos se conservan en [performance-analysis.md](performance-analysis.md).
+
+## Campaña temporal definitiva sobre 4a16239
+
+Rama `feat/javier-cierre-final-amat-ce1108`, sin staging ni commit nuevo. El
+cierre anterior está integrado en4a16239; esta campaña no altera esos resultados
+ni el historial. Evidencia externa persistente:
+`/home/javier/Documentos/evidencias-arquitectura-amat-final-4a16239-20261116`.
+
+La línea base ejecutó21 comandos, todos con código0:69 testbenches PASS y178
+métodos Python. La validación final efectiva ejecuta26 comandos, todos con
+código0:72 testbenches PASS,0 FAIL,0 NO-COMPILA,0 SIN-CHEQUEO y211 métodos Python,
+sin skips. Se mantienen los13 tests anteriores del analizador y los32 de
+comparadores; se agregan25 métodos temporales y8 del DCE productivo.
+Los tres bancos nuevos comprueban191 casos L2,33 checks RAM dirigidos más los
+controladores reales DIV2/4 y10797 flancos del diario de integración en cuatro
+configuraciones. Los checks por flanco agrupan varias propiedades; no se suman
+como si cada campo o ejecución repetida fuera otro testbench.
+
+Durante la campaña final se agotó `/home`: seis comandos terminaron120/2 por
+infraestructura, incluidos fallos al escribir logs con tee. No se contaron
+como controles negativos ni como éxitos funcionales. Tras conservar comprimidos
+los build terminados y verificar sus hashes, se repitieron los seis en destinos
+y binarios nuevos: todos código0. Los resultados originales, recuperaciones y
+su correspondencia permanecen en los reportes externos; no se ocultan fallos.
+
+La relectura histórica encontró capturas sin `measurement_control`; el primer
+análisis terminó1. Se admitió explícitamente la ausencia como null, sin inventar
+armado de ventana, y una prueba nueva cubre ese caso. La relectura de las54
+capturas termina0 y conserva sus latencias L2/RAM como null. La campaña actual
+contiene54 capturas nuevas y4 de capacidad; dos rondas adicionales0/2 conservan
+32 GPR,65536 bytes, imagen,96 accesos lógicos y checksum1056.
+
+La implementación usa dos observadores nuevos y conexiones pasivas en jerarquía.
+No se modifica top, MC, caches, buffers, ROM, ISA ni etapas. Reset y `medir`
+comparten la ventana actual; `lcont`0–12 y `vaciarc` conservan su contrato.
+La instrumentación temporal y los mapas/cortes CE1108 se describen en el
+[cierre temporal](performance-analysis.md#cierre-temporal-por-transacción-y-dce-productivo-26-31-y-38).
+
+#26 queda completo para medias observables L1/read-L2/RAM, con stores posted
+sin respuesta y tasas de caché RAM no aplicables explícitos. #31 queda completo
+en dos contrastes productivos tradicional/IDE-DCE (puntajes y funciones), más
+las tres referencias tradicionales verificadas contra M2/RTL0/RTL2. La copia
+CE1108 usada se identifica por rama, commit, módulos y ejecutable; no se declara
+una familia -O ni una versión oficial final del compilador.
+#38 sigue parcial: revisión del equipo, presentación y entrega formal con el
+SHA del último commit efectivamente publicado/integrado permanecen pendientes.
+La plantilla formal externa conserva **PENDIENTE DE INTEGRACIÓN FINAL**.
+
+El contraste bloqueante también se reelaboró en una copia experimental externa:
+solo `l2_cache.sv` se toma del commit5c699068; los demás RTL y observadores son
+idénticos al snapshot actual. Doce ejecuciones0/2 dan seis contrastes estrictos
+con `blocking_contrasts`, sin relajar su comprobación de inventario/hashes ni
+modificar el comparador #30. Sus872/2606/10236 ciclos se conservan frente a
+872/2606/10260 actuales. La procedencia distingue la copia mixta del árbol puro
+del commit histórico; no se cambia ninguna caché de la rama de trabajo.

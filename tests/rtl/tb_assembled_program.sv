@@ -195,6 +195,14 @@ module tb_assembled_program #(
     endtask
     generate if (MEM_MODE==2) begin : cache_metrics
         task automatic capture;
+            // Misma captura POST que GPR/K1-B, antes de cerrar la ventana y
+            // vaciar. Pendientes y exclusiones se exportan, nunca se completan
+            // artificialmente para reducir el denominador de una media.
+            $write("[PERF_L2_LATENCY]");
+            for (int k=0;k<14;k++) $write(" %0d",DUT.g_mem_cache.HIER.perf_l2_latency[k]);
+            $write("\n[PERF_RAM_LATENCY]");
+            for (int k=0;k<22;k++) $write(" %0d",DUT.g_mem_cache.HIER.perf_ram_latency[k]);
+            $write("\n");
             $write("[PERF_L1]");
             for (int k=0;k<19;k++) $write(" %0d",DUT.g_mem_cache.HIER.perf_event_counts[k]);
             $write("\n[PERF_K1B] %0d %0d %0d %0d %0d %0d\n",
@@ -207,6 +215,10 @@ module tb_assembled_program #(
         endtask
     end else begin : cache_metrics
         task automatic capture;
+            // Cero significa observador inexistente, no una latencia medida de
+            // cero ciclos. Python acredita disponibilidad con modo y parámetros.
+            $display("[PERF_L2_LATENCY] 0 0 0 0 0 0 0 0 0 0 0 0 0 0");
+            $display("[PERF_RAM_LATENCY] 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0");
             $display("[PERF_L1] 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0");
             $display("[PERF_K1B] 0 0 0 0 0 0");
             for (int k=0;k<4;k++) $display("[PERF_CLASS%0d] 0 0 0",k);
