@@ -16,7 +16,7 @@ lo mismo. La única extensión del ISA es la que permite el enunciado (sección 
 | Bloque | Estado en `develop` | Responsable |
 |:---|:---|:---|
 | Congelamiento del núcleo y modelo de stalls | Hecho y probado (`tb_pipeline_stall`) | Fabricio |
-| Contadores de ciclos, bundles, instrucciones, saltos y eventos de la L1-D | Hechos y probados; `perf_vliw_monitor` y `perf_stage_counters` ya están instanciados en `top`. Faltan `perf_cache_l1d`, `perf_memory` y `perf_cache_l2` | Javier |
+| Contadores de ciclos, bundles, instrucciones, saltos y eventos de la L1-D | Hechos y probados; `perf_vliw_monitor` y `perf_stage_counters` ya están instanciados en `top`. K1-A/K1-B están conectados; este cierre agrega L2 y RAM con sus eventos públicos | Javier |
 | L1-D y write buffer | Hechos y probados: write-back, write-allocate, LRU, forwarding, 4 entradas, MSHR de stores, bus versión 2 y vaciado. Conectados en `mem_hierarchy.sv` con el arbitro del puerto B | José |
 | Memoria principal y eviction buffer | Hechos y probados: `mem_controller.sv` (25 MHz, `MEM_DIV` = 4, Tmem = 53, timeout de 256 ciclos) y `eviction_buffer.sv` (4 entradas, reenvío de línea sucia). Falta conectarlos en `mem_hierarchy.sv` (#27) | Dylan |
 | L2 | Hecha y probada: bus versión 2, write-back y write-allocate, `INCL_EXCLUSIVE` por defecto y `INCL_NINE` como parámetro, PLRU de árbol y Random, vaciado de líneas sucias y diez eventos `ev_l2_*`. El almacenamiento está en `l2_arrays.sv`. Falta conectarla en `mem_hierarchy.sv` (#27) | Alejandro |
@@ -369,7 +369,8 @@ el slot y la semántica en `docs/` y comunicarla a CE1108.
   `docs/isa.md` y `docs/compiler-integration.md` y avisa formalmente a CE1108.
 - **Estado:** conectadas en `top` (PR #62) y probadas con `tb_cache_isa`. `vaciarc` cuesta 2 ciclos sin
   caché y, con la jerarquía, lo que tarda el vaciado; mientras tanto el bundle siguiente no accede a
-  memoria. Los selectores 9 a 12 (L2 y RAM) leen 0 hasta que se conecten sus contadores (#26).
+  memoria. Los selectores 9 a 12 quedan conectados en el cierre #26: hits/misses L2,
+  aceptaciones RAM y ciclos busy. Con MODEL o sin jerarquía se informa ausencia de fuentes reales.
 
 ## 5. Configuración por defecto y comparaciones
 
@@ -430,3 +431,17 @@ exclusividad.
 Lo obligatorio va primero. Un crédito extra que no pase sus pruebas el 17 de noviembre se deja apagado
 por parámetro (`INCL_POLICY = INCL_NINE`, `N_MSHR = 1`, L2 bloqueante), sin borrarlo, y se documenta
 hasta dónde llegó.
+
+
+## 8. Cierre de las contribuciones de Javier
+
+Las propuestas/fechas anteriores conservan su carácter histórico. #7/#8/#9,
+K1-A/K1-B, adaptación de flush y benchmarks ya estaban integrados. Este cierre
+conecta diez eventos L2 y cinco señales públicas MC, extiende clasificación D18,
+acredita parámetros por elaboración y completa comparaciones #30 reproducibles.
+La prueba de18KiB mide demandas/transferencias, además del roundtrip correcto.
+No se atribuyen a Javier las cachés, buffers, CDC ni la segmentación de L2.
+
+#31 continúa PARCIAL por falta de dos niveles reales de salida ASM de balc;
+los informes IR no son variantes máquina. El estado por issue y la evidencia
+se mantienen en [verificacion-cierre-javier.md](verificacion-cierre-javier.md).

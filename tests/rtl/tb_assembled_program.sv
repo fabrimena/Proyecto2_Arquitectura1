@@ -10,7 +10,13 @@
 // MEM_MODE se resuelve al elaborar: -P del módulo raíz llega a top. Cero
 // conserva los consumidores anteriores; un plusarg solo verifica lo elaborado.
 module tb_assembled_program #(
-    parameter int MEM_MODE = 0
+    parameter int MEM_MODE = 0,
+    // Parámetros de elaboración: los defaults conservan la jerarquía vigente.
+    // No se utilizan plusargs para alterar políticas después de elaborar.
+    parameter int L2_MODEL=0, MEM_DIV=4, PERF_ENABLE=1, ROM_SYNC=1,
+    parameter int WRITE_POLICY=1, ALLOC_POLICY=WRITE_POLICY, INCL_POLICY=2,
+    parameter int L1_REPL_POLICY=0, L2_REPL_POLICY=0, N_MSHR=2,
+    parameter int WB_DEPTH=4, EB_DEPTH=4, STALL_CYCLES=3
 );
 
     // El límite protege la simulación sin sustituir el protocolo por un retardo.
@@ -94,7 +100,23 @@ module tb_assembled_program #(
     string mem_path, dump_path, wave_path, data_dump_path;
     integer bundles, dump_fd, cycles, data_fd;
 
-    top #(.MEM_MODE(MEM_MODE)) DUT (
+    // La ventana externa se cierra al capturar GPR; flush continúa con clk.
+    logic measurement=1;
+    // Estudios con calentamiento pueden excluir el arranque anterior al primer
+    // medir 0. Después de observarlo, la entrada externa queda en 1 y D18 gobierna
+    // la apertura. Solo cambia observación; no se detienen instrucciones o reloj.
+    initial if ($test$plusargs("DEFER_MEASUREMENT")) begin
+        measurement=0;
+        wait(DUT.cisa_measure_enable===1'b0);
+        measurement=1;
+    end
+    top #(.MEM_MODE(MEM_MODE), .L2_MODEL(L2_MODEL), .MEM_DIV(MEM_DIV),
+        .PERF_ENABLE(PERF_ENABLE), .ROM_SYNC(ROM_SYNC), .WRITE_POLICY(WRITE_POLICY),
+        .ALLOC_POLICY(ALLOC_POLICY), .INCL_POLICY(INCL_POLICY),
+        .L1_REPL_POLICY(L1_REPL_POLICY), .L2_REPL_POLICY(L2_REPL_POLICY),
+        .N_MSHR(N_MSHR), .WB_DEPTH(WB_DEPTH), .EB_DEPTH(EB_DEPTH),
+        .STALL_CYCLES(STALL_CYCLES)) DUT (
+        .perf_measure_enable(measurement),
         .clk(clk), .reset(reset), .flush_req(flush_req), .flush_done(flush_done),
         .debug_result(debug_result), .debug_rd(debug_rd),
         .debug_write(debug_write)
@@ -112,22 +134,83 @@ module tb_assembled_program #(
         $display("[MEM_MODE] solicitado=%0d efectivo=%0d",requested_mode,DUT.MEM_MODE);
     end
 
-    // Solo se elaboran estas referencias en modo 2. Revisamos parámetros
-    // públicos de la caché, nunca etiquetas o MSHR para construir un oráculo.
-    // La L2 vigente sigue siendo el modelo: esta prueba no acredita la real.
+    // Acreditación de parámetros públicos de las instancias elaboradas. El
+    // consumidor contrasta esta línea con su solicitud, incluso en modos 0/1.
+    initial begin
+        #2;
+        if(DUT.IMEM.SYNC!=ROM_SYNC) $fatal(1,"[FAIL] ROM_SYNC no propagado");
+        $display("[ELAB_CONFIG] L2_MODEL=%0d MEM_DIV=%0d PERF_ENABLE=%0d ROM_SYNC=%0d WRITE_POLICY=%0d ALLOC_POLICY=%0d INCL_POLICY=%0d L1_REPL_POLICY=%0d L2_REPL_POLICY=%0d N_MSHR=%0d WB_DEPTH=%0d EB_DEPTH=%0d STALL_CYCLES=%0d",
+            DUT.L2_MODEL,DUT.MEM_DIV,DUT.PERF_ENABLE,DUT.ROM_SYNC,DUT.WRITE_POLICY,DUT.ALLOC_POLICY,
+            DUT.INCL_POLICY,DUT.L1_REPL_POLICY,DUT.L2_REPL_POLICY,DUT.N_MSHR,DUT.WB_DEPTH,DUT.EB_DEPTH,DUT.STALL_CYCLES);
+    end
     generate if (MEM_MODE==2) begin : verify_cache_config
+        string write_name,alloc_name,inclusion_name,replacement_name,l2_name;
         initial begin
-            #1;
-            if (DUT.g_mem_cache.HIER.L1D.WRITE_POLICY !== 1'b1 ||
-                DUT.g_mem_cache.HIER.L1D.ALLOC_POLICY !== 1'b1 ||
-                DUT.g_mem_cache.HIER.L1D.INCL_POLICY !== 2'd2 ||
-                DUT.g_mem_cache.HIER.L1D.REPL_POLICY !== 2'd0 ||
-                DUT.g_mem_cache.HIER.L1D.WB_DEPTH != 4 ||
-                DUT.g_mem_cache.HIER.L1D.N_MSHR != 2 ||
-                DUT.g_mem_cache.HIER.L1D.L2_BUS_V2 !== 1'b1)
-                $fatal(1,"[FAIL] configuración de caché distinta de WB/WA/EXCLUSIVA/LRU/WB4/MSHR2/v2");
-            $display("[CACHE_CONFIG] write=WB alloc=WA inclusion=EXCLUSIVE replacement=LRU wb_depth=4 mshr=2 bus_v2=1 l2=MODEL");
+            if(WRITE_POLICY) write_name="WB"; else write_name="WT";
+            if(ALLOC_POLICY) alloc_name="WA"; else alloc_name="NWA";
+            if(INCL_POLICY==2) inclusion_name="EXCLUSIVE"; else inclusion_name="NINE";
+            if(L1_REPL_POLICY==0) replacement_name="LRU";
+            else if(L1_REPL_POLICY==1) replacement_name="FIFO"; else replacement_name="RANDOM";
+            if(L2_MODEL) l2_name="MODEL"; else l2_name="REAL";
+            #2;
+            if (DUT.g_mem_cache.HIER.L1D.WRITE_POLICY != WRITE_POLICY ||
+                DUT.g_mem_cache.HIER.L1D.ALLOC_POLICY != ALLOC_POLICY ||
+                DUT.g_mem_cache.HIER.L1D.INCL_POLICY != INCL_POLICY ||
+                DUT.g_mem_cache.HIER.L1D.REPL_POLICY != L1_REPL_POLICY ||
+                DUT.g_mem_cache.HIER.L1D.WB_DEPTH != WB_DEPTH ||
+                DUT.g_mem_cache.HIER.L1D.N_MSHR != N_MSHR ||
+                DUT.g_mem_cache.HIER.L2_MODEL != L2_MODEL ||
+                DUT.g_mem_cache.HIER.MEM_DIV != MEM_DIV ||
+                DUT.g_mem_cache.HIER.PERF_ENABLE != PERF_ENABLE)
+                $fatal(1,"[FAIL] parámetros no propagados a la jerarquía");
+            $display("[CACHE_CONFIG] write=%0s alloc=%0s inclusion=%0s replacement=%0s wb_depth=%0d mshr=%0d bus_v2=1 l2=%0s",
+                write_name,alloc_name,inclusion_name,replacement_name,WB_DEPTH,N_MSHR,l2_name);
         end
+        if (!L2_MODEL) begin : verify_real
+            initial begin
+                #2;
+                if (DUT.g_mem_cache.HIER.g_l2_real.L2.INCL_POLICY != INCL_POLICY ||
+                    DUT.g_mem_cache.HIER.g_l2_real.L2.REPL_POLICY != L2_REPL_POLICY ||
+                    DUT.g_mem_cache.HIER.g_l2_real.EB.EB_DEPTH != EB_DEPTH ||
+                    DUT.g_mem_cache.HIER.g_l2_real.MC.MEM_DIV != MEM_DIV ||
+                    DUT.g_mem_cache.HIER.g_l2_real.MC.TMEM != 25+7*MEM_DIV)
+                    $fatal(1,"[FAIL] parámetros no propagados a L2 real");
+            end
+        end
+    end endgenerate
+
+    // Snapshot POST-NBA al mismo corte de GPR. Los índices se imprimen en
+    // orden creciente: Python verifica las poblaciones antes de calcular ratios.
+    task automatic capture_metrics;
+        $display("[PERF_VLIW] %0d %0d %0d %0d %0d",DUT.perf_cycle_count,DUT.perf_bundle_count,
+            DUT.perf_instruction_count,DUT.perf_memory_stall_count,DUT.perf_branch_penalty_count);
+        for (int k=0;k<4;k++)
+            $display("[PERF_STAGE%0d] %0d %0d %0d %0d",k,DUT.perf_stage_occupied[k],DUT.perf_stage_bubbles[k],
+                DUT.perf_stage_stalls[k],DUT.perf_stage_stalled_occupied[k]);
+        $write("[PERF_L2]");
+        for (int k=0;k<10;k++) $write(" %0d",DUT.l2_counts[k]);
+        $write("\n[PERF_RAM]");
+        for (int k=0;k<6;k++) $write(" %0d",DUT.ram_counts[k]);
+        $write("\n");
+    endtask
+    generate if (MEM_MODE==2) begin : cache_metrics
+        task automatic capture;
+            $write("[PERF_L1]");
+            for (int k=0;k<19;k++) $write(" %0d",DUT.g_mem_cache.HIER.perf_event_counts[k]);
+            $write("\n[PERF_K1B] %0d %0d %0d %0d %0d %0d\n",
+                DUT.g_mem_cache.HIER.perf_completed_accesses,DUT.g_mem_cache.HIER.perf_service_cycles,
+                DUT.g_mem_cache.HIER.perf_wait_cycles,DUT.g_mem_cache.HIER.perf_excluded_accesses,
+                DUT.g_mem_cache.HIER.perf_protocol_errors,DUT.g_mem_cache.HIER.perf_pending);
+            for (int k=0;k<4;k++)
+                $display("[PERF_CLASS%0d] %0d %0d %0d",k,DUT.g_mem_cache.HIER.perf_completed_by_class[k],
+                    DUT.g_mem_cache.HIER.perf_service_by_class[k],DUT.g_mem_cache.HIER.perf_wait_by_class[k]);
+        endtask
+    end else begin : cache_metrics
+        task automatic capture;
+            $display("[PERF_L1] 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0");
+            $display("[PERF_K1B] 0 0 0 0 0 0");
+            for (int k=0;k<4;k++) $display("[PERF_CLASS%0d] 0 0 0",k);
+        endtask
     end endgenerate
 
     // Contamos todos los posedge de clk, incluso reset y mantenimiento. La
@@ -214,6 +297,12 @@ module tb_assembled_program #(
             if ((^DUT.IMEM.memory[i]) === 1'bx)
                 $fatal(1, "[FAIL] bundle %0d incompleto o desconocido", i);
 
+        // Precarga opcional completa, propiedad del experimento. Nunca modifica
+        // código generado y ocurre durante reset, antes del primer acceso CPU.
+        begin : initial_data
+            string path;
+            if ($value$plusargs("INITIAL_MEMORY=%s",path)) $readmemh(path,DUT.DMEM.mem);
+        end
         repeat (2) @(negedge clk);
         reset = 0;
         start_edges=clock_edges; start_ns=$time;
@@ -237,6 +326,9 @@ module tb_assembled_program #(
             execution_advances=advanced; execution_edges=elapsed;
             execution_ns=$time-start_ns;
         end
+        $display("[ARCH_STATE] crypto=%0d traps=%0d trap_pc=%0d",DUT.crypto_estado,DUT.trap_count,DUT.trap_pc);
+        capture_metrics(); cache_metrics.capture();
+        measurement=0; // Mantenimiento no pertenece a las demandas medidas.
         dump_fd = $fopen(dump_path, "w");
         if (!dump_fd) $fatal(1, "[FAIL] no se puede escribir el dump de registros");
         for (int r = 0; r < 32; r++) begin

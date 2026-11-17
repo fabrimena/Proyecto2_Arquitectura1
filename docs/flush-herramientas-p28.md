@@ -1,5 +1,9 @@
 # Issue #28: vaciado de caché en herramientas
 
+Registro histórico del bloque #28. La sección final «Vigencia con jerarquía real
+y métricas» distingue la validación actual con L2 real y el adaptador CE1108
+reparado de las limitaciones de la implementación inicial.
+
 Adaptación de tres bancos RTL y del ejecutor Python para observar DMEM después
 de confirmar la persistencia. Este documento recibe como referencia el código
 `490ed2a`, los fixtures existentes y las ejecuciones registradas. Describe las
@@ -501,3 +505,14 @@ Relacionado con #28. Sin cambios del RTL de producción ni integración K1-B.
 
 Propuesta solamente: no se hizo staging, commit, push ni PR. El `.pyc` ignorado
 no forma parte de los seis archivos de la propuesta.
+
+
+## Vigencia con jerarquía real y métricas
+
+El cierre mantiene el protocolo, quiescencia, límites de vaciado y sus diez
+métodos de regresión. El banco de run_program captura métricas/GPR antes de
+flush y cierra su entrada externa durante mantenimiento; después valida DMEM.
+El banco de archivo expone MEM_MODE/L2_MODEL/MEM_DIV con defaults anteriores.
+`make archivo ARCHIVO_MEM_MODE=2` utiliza la misma ruta de vaciado y verificó
+la recuperación exacta del archivo18k sobre L2 real. No se sustituye ack por
+un retardo ni se suman ciclos de mantenimiento al IPC de demandas.

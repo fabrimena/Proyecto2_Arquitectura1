@@ -57,7 +57,15 @@ module mem_hierarchy #(
     // 0 = L2 real, eviction buffer y controlador; 1 = L2 de prueba (l2_model)
     parameter bit L2_MODEL    = 1'b0,
     parameter int MEM_DIV     = 4,      // clk_mem = clk / MEM_DIV (2 a 5; D12)
-    parameter int EB_DEPTH    = 4       // líneas del eviction buffer (4 a 16; D15)
+    parameter int EB_DEPTH    = 4,      // líneas del eviction buffer (4 a 16; D15)
+    // Parámetros de comparación: solo se propagan, sin cambiar algoritmos.
+    parameter logic WRITE_POLICY = L1D_DEFAULT_WRITE_POLICY,
+    parameter logic ALLOC_POLICY = (WRITE_POLICY == WP_WRITE_BACK) ? AP_WRITE_ALLOC : AP_NO_WRITE_ALLOC,
+    parameter logic [1:0] INCL_POLICY = L1D_DEFAULT_INCL_POLICY,
+    parameter logic [1:0] L1_REPL_POLICY = L1D_DEFAULT_REPL_POLICY,
+    parameter logic [1:0] L2_REPL_POLICY = L2_DEFAULT_REPL_POLICY,
+    parameter int N_MSHR = L1D_N_MSHR_DEFAULT,
+    parameter int WB_DEPTH = WB_DEPTH_DEFAULT
 ) (
 
     input  logic         clk,           // reloj sin detener (no core_clk)
@@ -98,7 +106,11 @@ module mem_hierarchy #(
 
     // Para lcont (D18): lecturas con hit [0] y con miss [1], escrituras con
     // hit [2] y con miss [3] de la L1-D (perf_cache_l1d; cero sin PERF_ENABLE)
-    output logic [3:0][63:0] perf_l1d_counts
+    output logic [3:0][63:0] perf_l1d_counts,
+    // Acumulados pasivos; cero sin observadores o sin proveedor real.
+    // RAM: lecturas, escrituras, ocupado, medido, timeout, error.
+    output wire [9:0][63:0] perf_l2_counts,
+    output wire [5:0][63:0] perf_ram_counts
 );
 
 
@@ -167,7 +179,10 @@ wire [63:0] perf_completed_hits, perf_completed_misses, perf_service_cycles, per
 wire [63:0] perf_no_wait_accesses, perf_excluded_accesses, perf_protocol_errors;
 wire perf_pending, perf_pending_eligible;
 wire [63:0] perf_pending_wait_cycles;
-l1d_cache L1D (
+// La geometría permanece fija; solo cambian políticas explícitamente solicitadas.
+l1d_cache #(.WRITE_POLICY(WRITE_POLICY), .ALLOC_POLICY(ALLOC_POLICY),
+    .INCL_POLICY(INCL_POLICY), .REPL_POLICY(L1_REPL_POLICY),
+    .N_MSHR(N_MSHR), .WB_DEPTH(WB_DEPTH)) L1D (
     .clk(clk),
     .reset(reset),
     .re(c_re),
@@ -210,6 +225,9 @@ l1d_cache L1D (
     .ev_mshr_full_stall(perf_events[18])
 );
 
+// Fuentes públicas PRE. Nunca se cuentan niveles ram_req como aceptaciones.
+wire [9:0] perf_l2_events;
+wire mc_accept, mc_write, mc_busy, mc_timeout, mc_error;
 generate if (L2_MODEL) begin : g_l2_model
 
     // L2 de prueba: siempre acierta y lee y escribe DMEM con clk
@@ -234,6 +252,8 @@ generate if (L2_MODEL) begin : g_l2_model
         .m_rdata(m_rdata)
     );
 
+    assign perf_l2_events = '0;
+    assign {mc_accept,mc_write,mc_busy,mc_timeout,mc_error} = '0;
     assign m_clk      = clk;
     assign flush_done = l1_flush_done && l2_idle;
 end
@@ -268,7 +288,7 @@ else begin : g_l2_real
     logic              eb_busy;
     logic              l2_flush_done;
 
-    l2_cache L2 (
+    l2_cache #(.INCL_POLICY(INCL_POLICY), .REPL_POLICY(L2_REPL_POLICY)) L2 (
         .clk(clk),
         .reset(reset),
         .l2_req(l2_req),
@@ -293,7 +313,12 @@ else begin : g_l2_real
         .read_forwarded(read_forwarded),
         .flush_req(flush_req && l1_flush_done),     // paso 2: después de la L1-D
         .flush_done(l2_flush_done),
-        .lower_drained(!eb_busy)                    // paso 3: buffer y controlador vacíos
+        .lower_drained(!eb_busy),                   // paso 3: buffer y controlador vacíos
+        .ev_l2_rd_hit(perf_l2_events[0]), .ev_l2_rd_miss(perf_l2_events[1]),
+        .ev_l2_wr_hit(perf_l2_events[2]), .ev_l2_wr_miss(perf_l2_events[3]),
+        .ev_l2_fill(perf_l2_events[4]), .ev_l2_evict(perf_l2_events[5]),
+        .ev_l2_writeback(perf_l2_events[6]), .ev_l2_invalid(perf_l2_events[7]),
+        .ev_l2_read_req(perf_l2_events[8]), .ev_l2_write_req(perf_l2_events[9])
     );
 
     eviction_buffer #(.EB_DEPTH(EB_DEPTH)) EB (
@@ -338,7 +363,9 @@ else begin : g_l2_real
         .mem_word_addr(mem_word_addr),
         .mem_word_wdata(mem_word_wdata),
         .mem_word_we(mem_word_we),
-        .mem_word_rdata(m_rdata)
+        .mem_word_rdata(m_rdata),
+        .req_accept(mc_accept), .req_we_accepted(mc_write),
+        .transfer_busy(mc_busy), .timeout_event(mc_timeout), .error_event(mc_error)
     );
 
     // DMEM pasa a ser la RAM del controlador: palabras completas con clk_mem
@@ -354,8 +381,7 @@ else begin : g_l2_real
     // Checker de exclusividad (D3), solo en simulación: le pasa los bits de
     // validez y las etiquetas de las dos cachés. Con NINE no se instancia,
     // porque ahí una línea puede estar en los dos niveles.
-    if (L1D_DEFAULT_INCL_POLICY == INCL_EXCLUSIVE &&
-        L2_DEFAULT_INCL_POLICY  == INCL_EXCLUSIVE) begin : g_excl
+    if (INCL_POLICY == INCL_EXCLUSIVE) begin : g_excl
 
         logic [L1D_WAYS*L1D_SETS-1:0]           x_l1_valid;
         logic [L1D_WAYS*L1D_SETS*L1D_TAG_W-1:0] x_l1_tag;
@@ -506,6 +532,37 @@ end else begin : g_no_perf
             perf_no_wait_accesses,perf_excluded_accesses,perf_protocol_errors,
             perf_pending_wait_cycles}='0;
     assign {perf_pending,perf_pending_eligible}=2'b00;
+end endgenerate
+
+
+// Observadores reales: su única dependencia hacia la jerarquía son entradas.
+// El mismo enable de D18/ventana se aplica a L1, L2 y RAM en clk general.
+generate if (PERF_ENABLE && !L2_MODEL) begin : g_perf_real
+    perf_cache_l2 PERF_L2 (
+        .clk(clk), .reset(reset), .measure_enable(perf_measure_enable),
+        .ev_l2_rd_hit(perf_l2_events[0]), .ev_l2_rd_miss(perf_l2_events[1]),
+        .ev_l2_wr_hit(perf_l2_events[2]), .ev_l2_wr_miss(perf_l2_events[3]),
+        .ev_l2_fill(perf_l2_events[4]), .ev_l2_evict(perf_l2_events[5]),
+        .ev_l2_writeback(perf_l2_events[6]), .ev_l2_invalid(perf_l2_events[7]),
+        .ev_l2_read_req(perf_l2_events[8]), .ev_l2_write_req(perf_l2_events[9]),
+        .event_counts(perf_l2_counts), .read_accesses(), .write_accesses(),
+        .total_hits(), .total_misses(), .total_accesses(), .fill_events(),
+        .replacement_evictions(), .flush_writebacks(), .exclusive_invalidations(),
+        .lower_read_requests(), .lower_write_offer_cycles()
+    );
+    // req_we_accepted ya está calificada por aceptación en MC. Transfer_busy
+    // incluye espera y reintentos reales; no se multiplica por Tmem supuesto.
+    perf_memory PERF_RAM (
+        .clk(clk), .reset(reset), .clear(1'b0), .measure_enable(perf_measure_enable),
+        .req_accept(mc_accept), .req_we(mc_write), .transfer_busy(mc_busy),
+        .timeout_event(mc_timeout), .error_event(mc_error),
+        .read_accesses(perf_ram_counts[0]), .write_accesses(perf_ram_counts[1]),
+        .transfer_cycles(perf_ram_counts[2]), .total_cycles(perf_ram_counts[3]),
+        .timeout_count(perf_ram_counts[4]), .error_count(perf_ram_counts[5])
+    );
+end else begin : g_no_perf_real
+    assign perf_l2_counts = '0;
+    assign perf_ram_counts = '0;
 end endgenerate
 
 endmodule

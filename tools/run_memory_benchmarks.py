@@ -3,8 +3,9 @@
 
 Entradas: tres ASM/JSON versionados, reset a cero y herramientas de run_program.
 Salidas: directorio externo NUEVO con capturas, trazas, execution.json, CSV/JSON.
-No cambia RTL, ISA, políticas ni el runner anterior. Usa avances/flancos del banco,
-no tiempo de pared para rendimiento. L2 es MODEL: no exporta hits L2 ni AMAT.
+Utiliza configuración explícita y verificada del runner; conserva los oráculos
+y formatos anteriores. L2 REAL es el default; MODEL requiere petición explícita.
+Las métricas ampliadas se conservan en execution.json, sin mezclar denominadores.
 Cada invocación posee sus destinos; un error conserva diagnóstico y retorna fallo.
 """
 from __future__ import annotations
@@ -229,7 +230,7 @@ def validate_trace(path: Path, oracle: Oracle) -> None:
         raise BenchmarkError('no se observó salto final de reposo')
 
 
-def read_capture(directory: Path, mode: int, oracle: Oracle, since_ns: int = 0) -> Capture:
+def read_capture(directory: Path, mode: int, oracle: Oracle, since_ns: int = 0, configuration=None) -> Capture:
     """Valida procedencia, formato, configuración y oráculos de una ejecución nueva.
 
     directory contiene salidas exclusivas; since_ns es la frontera de creación
@@ -249,7 +250,7 @@ def read_capture(directory: Path, mode: int, oracle: Oracle, since_ns: int = 0) 
     finish = f'[OK] programa ejecutado: {oracle.bundles} bundles; 32 registros definidos'
     if output.splitlines().count(finish) != 1 or '[FAIL]' in output:
         raise BenchmarkError('finalización no acreditada')
-    parsed = runner.execution_metadata(output, mode, oracle.bundles, oracle.cycles)
+    parsed = runner.execution_metadata(output, mode, oracle.bundles, oracle.cycles, configuration)
     metadata = json.loads((directory / 'execution.json').read_text())
     if (metadata.get('schema') != 1 or metadata.get('requested_mode') != mode or
         metadata.get('effective_mode') != mode or metadata.get('stats') != parsed['stats']):
@@ -259,6 +260,15 @@ def read_capture(directory: Path, mode: int, oracle: Oracle, since_ns: int = 0) 
         f'-Ptb_assembled_program.MEM_MODE={mode}' not in metadata.get('compile_command', []) or
         f'+REQUESTED_MEM_MODE={mode}' not in metadata.get('simulation_command', [])):
         raise BenchmarkError('procedencia de elaboración incoherente')
+    # La extensión de métricas también debe coincidir con stdout. El esquema
+    # base permanece 1 para consumidores históricos de stats y dumps.
+    if (metadata.get('configuration') != parsed['configuration'] or
+        metadata.get('metrics') != parsed['metrics'] or metadata.get('validation') != 'PASS'):
+        raise BenchmarkError('configuración/contadores incompatibles con evidencia real')
+    if metadata.get('initial_memory_sha256') != hashlib.sha256(bytes(65536)).hexdigest():
+        raise BenchmarkError('datos de entrada diferentes del reset cero')
+    if any(f'-Ptb_assembled_program.{k}={v}' not in metadata.get('compile_command',[]) for k,v in parsed['configuration'].items()):
+        raise BenchmarkError('procedencia de parámetros incoherente')
     regs = {}
     for line in (directory/'registers.txt').read_text().splitlines():
         match = re.fullmatch(r'x([0-9]+) ([0-9a-fA-F]{8})', line)
@@ -301,7 +311,7 @@ def compare_captures(a: Capture, b: Capture) -> None:
         raise BenchmarkError('comparación DMEM diferente o incompleta')
 
 
-def execute_mode(oracle: Oracle, directory: Path, mode: int) -> Capture:
+def execute_mode(oracle: Oracle, directory: Path, mode: int, configuration=None) -> Capture:
     """Reserva un destino NUEVO, invoca run_program real y relee sus evidencias.
 
     Recibe referencia previa, destino externo y modo. No acepta directorios
@@ -320,8 +330,8 @@ def execute_mode(oracle: Oracle, directory: Path, mode: int) -> Capture:
     since_ns = time.time_ns()
     result = runner.run_program(oracle.source, directory, dict(enumerate(oracle.registers)),
                                 False, {a:oracle.memory[a//4] for a in oracle.addresses},
-                                oracle.cycles, True, mode)
-    state = read_capture(directory, mode, oracle, since_ns)
+                                oracle.cycles, True, mode, configuration)
+    state = read_capture(directory, mode, oracle, since_ns, configuration)
     if tuple(result[r] for r in range(32)) != state.registers:
         raise BenchmarkError('retorno API distinto del dump')
     return state
@@ -374,7 +384,7 @@ def validate_report(rows: list[dict], repetitions: int) -> None:
             raise BenchmarkError('conteos o estadísticas del reporte incoherentes')
 
 
-def run_benchmarks(output: Path, examples: Path = ROOT/'examples', repetitions: int = 1) -> dict:
+def run_benchmarks(output: Path, examples: Path = ROOT/'examples', repetitions: int = 1, configuration=None) -> dict:
     """Ejecuta la matriz completa y publica solo resultados verificados.
 
     output debe ser un destino externo inexistente; examples aporta fixtures.
@@ -402,7 +412,7 @@ def run_benchmarks(output: Path, examples: Path = ROOT/'examples', repetitions: 
             # Ambos modos leen esta misma copia externa, no una fuente que otra
             # sesión pudiera editar entre las dos elaboraciones.
             frozen_plan = replace(plan, source=source)
-            states = [execute_mode(frozen_plan, work/f'mode-{m}', m) for m in (0, 2)]
+            states = [execute_mode(frozen_plan, work/f'mode-{m}', m, configuration) for m in (0, 2)]
             compare_captures(*states)
             for state in states:
                 key = (plan.name, state.mode)
@@ -413,8 +423,8 @@ def run_benchmarks(output: Path, examples: Path = ROOT/'examples', repetitions: 
                 previous[key] = state
                 rows.append(report_row(plan, state, iteration))
     validate_report(rows, repetitions)
-    report = dict(schema=1, run_id=str(uuid.uuid4()), l2='MODEL', repetitions=repetitions,
-                  counter_interface='solo EXEC_STATS; K1/IPC/L2 no exportados por esta API',
+    report = dict(schema=1, run_id=str(uuid.uuid4()), l2='MODEL' if runner.perf_report.configuration(configuration)['L2_MODEL'] else 'REAL', repetitions=repetitions,
+                  counter_interface='observation_schema=2 en execution.json: VLIW/etapas/K1A/K1B/L2/RAM',
                   rows=rows, addresses={p.name:p.addresses for p in plans})
     with (output/'summary.csv').open('w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=COLUMNS)
@@ -434,16 +444,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', required=True, type=Path, help='directorio externo NUEVO')
     parser.add_argument('--repeat', type=int, default=1, help='rondas independientes (1..10)')
+    parser.add_argument('--config',type=Path,help='JSON de parámetros; default L2 real')
     args = parser.parse_args(argv)
     try:
-        report = run_benchmarks(args.output, repetitions=args.repeat)
+        report = run_benchmarks(args.output, repetitions=args.repeat,
+            configuration=json.loads(args.config.read_text()) if args.config else None)
     except (OSError, ValueError, KeyError, BenchmarkError, runner.SimulationError) as exc:
         print(f'[FAIL] {exc}', file=sys.stderr)
         return 1
     for row in report['rows']:
         print(f"[PASS] {row['benchmark']} modo={row['mode']} accesos={row['accesses']} "
               f"A={row['advances']} E={row['execution_edges']} S={row['stalls']} F={row['maintenance_edges']}")
-    print(f'Evidencia: {args.output.resolve()}; L2=MODEL, sin comparación de políticas del #30')
+    print(f'Evidencia: {args.output.resolve()}; L2={report["l2"]}; métricas ampliadas en execution.json')
     return 0
 
 
