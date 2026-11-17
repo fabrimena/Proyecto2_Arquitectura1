@@ -228,9 +228,10 @@ L1-D y se le entrega sucia (`l2_rdirty`).
 
 ## 4. Eventos de la L2 (para los contadores de rendimiento)
 
-`rtl-p2/l2_cache.sv` expone **diez eventos**, todos pulsos de **un ciclo**, con la misma convención que
-usa `l1d_cache.sv`. Están pensados para que los contadores de `perf_cache_l2.sv` (issue #26, de Javier)
-no tengan que interpretar el bus: basta con contar pulsos.
+`rtl-p2/l2_cache.sv` expone diez indicadores registrados. Nueve describen sucesos;
+`ev_l2_write_req` puede permanecer activo durante la oferta de una línea y mide
+ciclos de oferta. `perf_cache_l2.sv` (#26, Javier) los acumula con clk general y
+habilitación común, sin interpretar arreglos privados ni realimentar el bus.
 
 | Evento | Cuándo se pulsa |
 |:---|:---|
@@ -414,7 +415,7 @@ RAM).
 
 | Pendiente | Quién | Referencia |
 |:---|:---|:---|
-| Contadores de la L2 con los eventos `ev_l2_*` | Javier | issue #26, sección 4 |
+| Contadores L2/RAM | Javier | Conectados y verificados en el cierre #26; [análisis](performance-analysis.md) |
 | CDC para síntesis: relojes, sincronizadores y buses multibit | Dylan | `memory-main-eviction-buffer.md`, sección 3 |
 
 Los contratos de señales de cada uno de estos enlaces están en

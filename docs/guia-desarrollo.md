@@ -36,14 +36,14 @@ que crearlo. *Hecho* = implementado y probado. Si depende de otra pieza, se indi
 | José | `docs/l1d-cache.md` | Tabla de políticas con write-back, exclusiva, MSHR y bus versión 2 (#32) | D3 a D9 | Modificar |
 | Alejandro | `rtl-p2/cache_defs.sv` | Sección nueva de la L2: 16 KB, 4 vías, 128 conjuntos, líneas de 32 B, campos de la dirección, `L2_HIT_CYCLES = 8` y códigos de reemplazo (PLRU, Random) | D10 | Hecho (sección de la L2 al final del archivo, con `L2_WAYS`, `L2_SETS`, `L2_TAG_W`, `L2_HIT_CYCLES`, `RP2_PLRU` y `RP2_RANDOM`) |
 | Dylan | `rtl-p2/cache_defs.sv` | Sección nueva de la memoria: `MEM_DIV = 4`, `TMEM = 25 + 7 × MEM_DIV`, `MEM_TIMEOUT = 256` y `EB_DEPTH = 4` (4 a 16) | D12, D14, D15 | Modificar |
-| Javier | `rtl-p2/perf_cache_l1d.sv` | Eventos nuevos: víctimas limpias y sucias, movimientos de la L2 a la L1-D, hits durante un miss, stores sin stall y ciclos con los MSHR llenos | D3, D8 | Modificar, después de los cambios de José |
-| Javier | `tb-p2/tb_perf_cache_l1d_k1a.sv` | Casos de los eventos nuevos; su modelo de L2 pasa al bus versión 2 | D3, D8, D9 | Modificar |
-| Javier | `tools/assembler.py` | `vaciarc`, `medir imm` y `lcont rg, sel` (tipo `1001101`, solo slot 1); `lcont` escribe `rg`, así entra solo a la revisión N+3 como una carga | D18 (extra: instrucciones) | Modificar |
-| Javier | `tests/test_assembler.py`, `tests/test_isa.py` | Codificación exacta de las 3 instrucciones, rechazo fuera del slot 1 y regla N+3 de `lcont` | D18 | Modificar |
-| Javier | `tests/rtl/tb_archivo.sv`, `tests/rtl/tb_assembled_program.sv`, `tests/rtl/tb_ce1108_program.sv` | Antes de leer `DUT.DMEM.mem`, activar `flush_req` y esperar `flush_done` (con `MEM_MODE = 0` es inmediato) (#28) | D16 | Modificar |
-| Javier | `tools/run_program.py`, `Makefile` | Opción para elegir la configuración (`MEM_MODE` y parámetros de caché, con `defparam`) para la regresión en dos modos (#9) y las comparaciones | D16, comparaciones | Modificar |
-| Javier | `docs/isa.md`, `docs/compiler-integration.md` | Sección del tipo `1001101` (codificación, slot, semántica y tabla de `sel`) y aviso formal a CE1108 de que son opcionales para `balc` | D18 | Modificar |
-| Javier | `docs/performance-analysis.md`, `README.md` | Metodología, resultados de las comparaciones y cómo correrlas (#36, #37) | Comparaciones | Modificar, al final |
+| Javier | `rtl-p2/perf_cache_l1d.sv` | Eventos nuevos: víctimas limpias y sucias, movimientos de la L2 a la L1-D, hits durante un miss, stores sin stall y ciclos con los MSHR llenos | D3, D8 | Verificado: K1-A/K1-B conectados sobre la jerarquía real |
+| Javier | `tb-p2/tb_perf_cache_l1d_k1a.sv` | Casos de los eventos nuevos; su modelo de L2 pasa al bus versión 2 | D3, D8, D9 | Verificado: 247770 comprobaciones, sin modificar el banco anterior |
+| Javier | `tools/assembler.py` | `vaciarc`, `medir imm` y `lcont rg, sel` (tipo `1001101`, solo slot 1); `lcont` escribe `rg`, así entra solo a la revisión N+3 como una carga | D18 (extra: instrucciones) | Implementado y verificado; codificaciones y N+3 conservados |
+| Javier | `tests/test_assembler.py`, `tests/test_isa.py` | Codificación exacta de las 3 instrucciones, rechazo fuera del slot 1 y regla N+3 de `lcont` | D18 | Verificado en la regresión de 58 métodos del ensamblador |
+| Javier | `tests/rtl/tb_archivo.sv`, `tests/rtl/tb_assembled_program.sv`, `tests/rtl/tb_ce1108_program.sv` | Antes de leer `DUT.DMEM.mem`, activar `flush_req` y esperar `flush_done` (con `MEM_MODE = 0` es inmediato) (#28) | D16 | Implementado; persistencia real y regresión #28 verificadas |
+| Javier | `tools/run_program.py`, `Makefile` | Opción para elegir la configuración (`MEM_MODE` y parámetros de caché mediante `-P` del banco raíz) para la regresión en dos modos (#9) y las comparaciones | D16, comparaciones | Implementado; API compatible y parámetros reales acreditados |
+| Javier | `docs/isa.md`, `docs/compiler-integration.md` | Sección del tipo `1001101` (codificación, slot, semántica y tabla de `sel`) y aviso formal a CE1108 de que son opcionales para `balc` | D18 | Documentado; conexión D18 actual y contrato histórico diferenciados |
+| Javier | `docs/performance-analysis.md`, `README.md` | Metodología, resultados de las comparaciones y cómo correrlas (#36, #37) | Comparaciones | Actualizados con resultados y comandos verificados del cierre |
 | Todos | `docs/simulation.md` | Cada uno agrega las filas de sus testbenches nuevos | Pruebas | Modificar |
 
 ## 2. Archivos nuevos por integrante
@@ -77,9 +77,21 @@ que crearlo. *Hecho* = implementado y probado. Si depende de otra pieza, se indi
 | Javier | `rtl-p2/decoder_cache_isa.sv` | Decodifica el tipo `1001101` en el slot 1 (ID): `vaciarc`, `medir` y `lcont` | D18 (extra: instrucciones) | Hecho (el archivo ya está en el repositorio) |
 | Javier | `rtl-p2/cache_isa_unit.sv` | En EX: `medir` (registro de `measure_enable`, en 1 al reset), `lcont` (elige el contador con `sel` y registra el resultado como la LSU) y `vaciarc` (`flush_req` hasta `flush_done`, con stall) | D18 | Hecho (el archivo ya está en el repositorio) |
 | Javier | `rtl-p2/perf_stage_counters.sv` | Ciclos ocupados, con burbuja y congelados en IF, ID, EX y WB (#8) | D19 | Hecho (el archivo ya está en el repositorio) |
-| Javier | `rtl-p2/perf_cache_l2.sv` | Accesos de lectura y escritura desde la L1-D, hits y misses por tipo, movimientos y víctimas hacia la RAM (#26) | D3, D10 | Falta, pero ya puede usar los diez eventos `ev_l2_*` de `rtl-p2/l2_cache.sv` (ver la sección 4 de `docs/memory-hierarchy.md`) |
+| Javier | `rtl-p2/perf_cache_l2.sv` | Accesos de lectura y escritura desde la L1-D, hits y misses por tipo, movimientos y víctimas hacia la RAM (#26) | D3, D10 | Implementado y conectado a los diez eventos públicos; ofertas de escritura separadas de aceptaciones RAM |
 | Javier | `tb-p2/tb_cache_isa.sv` | Las 3 instrucciones sobre `top`, con `MEM_MODE` 0 y 2 | D18 | Hecho (lo hizo Fabricio junto con el enganche, PR #62; modos 0, 1 y 2) |
-| Javier | `tb-p2/tb_perf_stage_counters.sv`, `tb-p2/tb_perf_cache_l2.sv` | Pruebas de los contadores nuevos | D19, D10 | Falta |
+| Javier | `tb-p2/tb_perf_stage_counters.sv`, `tb-p2/tb_perf_cache_l2.sv` | Pruebas de los contadores nuevos | D19, D10 | Verificados: 430652 y 32608 comprobaciones, respectivamente |
 | Javier | `examples/bench_secuencial.asm`, `examples/bench_aleatorio.asm`, `examples/bench_stride.asm` | Benchmarks de acceso a memoria con su `.expected.json` (#29) | Comparaciones | Hecho (el archivo ya está en el repositorio) |
 | Javier | `examples/archivos/archivo18k.bin` | Archivo de 18 KB para `make archivo`: cabe en la jerarquía con exclusiva (20 KB) y no con NINE (16 KB) | D3 | Hecho (el archivo ya está en el repositorio) |
-| Javier | `tools/comparar_configuraciones.py` | Corre los benchmarks con cada configuración de la sección 5 de las decisiones y genera la tabla de resultados (#30, #31) | Comparaciones | Falta |
+| Javier | `tools/comparar_configuraciones.py`, `tools/comparar_optimizaciones.py` | Compara configuraciones reales (#30) y variantes productivas de CE1108 (#31) | Comparaciones | #30 verificado; #31 PARCIAL: solo existe un nivel productivo disponible |
+
+
+## 3. Estado del cierre de métricas
+
+La tabla anterior registra asignaciones e hitos del desarrollo. En la rama de
+cierre, perf_cache_l2 y perf_memory están conectados a eventos públicos reales;
+los selectores9–12 funcionan, D18 forma parte de la clasificación y los runners
+verifican la configuración elaborada. Las comparaciones #30 y la referencia
+bloqueante real son reproducibles. #31 valida la variante tradicional y queda
+PARCIAL hasta contar con dos niveles productivos de balc. README/análisis y
+entregables técnicos de Javier se actualizan sin reescribir módulos del equipo.
+Ver [verificación](verificacion-cierre-javier.md) y [guion](guion-defensa-javier.md).

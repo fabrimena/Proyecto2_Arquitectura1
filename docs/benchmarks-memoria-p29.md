@@ -1,5 +1,8 @@
 # Issue #29 — Benchmarks independientes de memoria
 
+El cuerpo original conserva la validación histórica con l2_model. La sección
+«Revalidación con L2 real» al final describe el sistema integrado vigente.
+
 Este documento describe tres programas VLIW y su infraestructura de reproducción.
 Recibe ASM/expectativas versionados y las salidas del runner real; entrega
 oráculos, comparaciones completas, estadísticas y evidencias externas. Depende
@@ -326,3 +329,45 @@ las regresiones anteriores sin cambiar RTL, ISA ni expectativas existentes.
 
 Relacionado con #29. Sin L2 definitiva, comparaciones #30 ni D18-B.
 ```
+
+
+## Revalidación con L2 real (cierre del 16 de noviembre de 2026)
+
+En develop e461b70 la jerarquía predeterminada ya contiene L2 real/EB/MC. Se
+corrigió la discrepancia de herramientas que imprimía MODEL mientras elaboraba
+REAL: run_program ahora transmite parámetros por -P, verifica instancias reales
+y exige ELAB_CONFIG más CACHE_CONFIG concordantes. MODEL requiere petición
+explícita L2_MODEL1 y no publica contabilidad ficticia L2/RAM.
+
+Los mismos tres programas y sus nueve fixtures conservan sus bytes,868 bundles,
+872 avances,32 stores,64 loads y checksum1056. Se verifican todos los GPR y DMEM,
+trazas específicas y persistencia. Los resultados anteriores con MODEL no se
+reemplazan: la L2 real registra E=872/2606/10260, S=0/1734/9388 y F=653/1936/732
+para secuencial/aleatorio/stride. Dos rondas repiten estados y medidas.
+
+execution.json conserva su esquema base1 y añade observation_schema2, parámetros,
+procedencia y vectores de métricas. Los formatos de GPR/DMEM/traza no cambian.
+La API anterior conserva el orden de sus argumentos; los nuevos se agregan al
+final. --config permite usar tanto REAL como MODEL de manera acreditada.
+La captura cierra métricas antes de flush: las cifras de mantenimiento no se
+suman al servicio de demandas ni al IPC del programa.
+
+El archivo18k conserva exactamente su hash y18432 bytes. En la jerarquía real,
+make archivo recupera el original,83018 ciclos por cifrado/descifrado y32264
+flancos de espera de vaciado por fase. Se agrega un estudio de capacidad con
+dos pasadas por576 líneas, checksum independiente y DMEM completa, midiendo
+solo el intervalo D18 de la segunda pasada. Hay evidencia de hits/misses y
+lecturas RAM; el éxito criptográfico no sustituye esa prueba de capacidad.
+
+Reproducir en copia externa:
+
+```bash
+python3 tools/run_memory_benchmarks.py --output /tmp/p29-real-nuevo --repeat 2
+python3 tools/comparar_configuraciones.py --capacity --output /tmp/capacidad18k-nueva
+make archivo ARCHIVO=examples/archivos/archivo18k.bin ARCHIVO_MEM_MODE=2
+```
+
+La suite conserva sus35 métodos y controles; solo cambia la expectativa de
+etiqueta predeterminada a REAL. La matriz #30 y las cifras detalladas están en
+[performance-analysis.md](performance-analysis.md) y
+[verificacion-cierre-javier.md](verificacion-cierre-javier.md).
