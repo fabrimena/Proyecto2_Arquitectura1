@@ -205,11 +205,6 @@ bench-memory: check-tools
 # ------------------------------------------------------------------------------
 
 ARCHIVO     ?= examples/archivos/mensaje.txt
-# Selección por elaboración; evita modificar fuentes para probar la L2 real.
-ARCHIVO_MEM_MODE ?= 0
-ARCHIVO_L2_MODEL ?= 0
-ARCHIVO_MEM_DIV ?= 4
-ARCHIVO_PARAMS = -Ptb_archivo.MEM_MODE=$(ARCHIVO_MEM_MODE) -Ptb_archivo.L2_MODEL=$(ARCHIVO_L2_MODEL) -Ptb_archivo.MEM_DIV=$(ARCHIVO_MEM_DIV)
 ARCHIVO_DIR := $(BUILD_DIR)/archivo
 
 .PHONY: archivo
@@ -219,7 +214,7 @@ archivo: check-tools
 	python3 tools/assembler.py --input examples/cifrar_archivo.asm --output $(ARCHIVO_DIR)/cifrar.mem
 	python3 tools/assembler.py --input examples/descifrar_archivo.asm --output $(ARCHIVO_DIR)/descifrar.mem
 	python3 tools/load_file.py --input "$(ARCHIVO)" --address 0x200 --output $(ARCHIVO_DIR)/datos.mem
-	$(IVERILOG) $(IVFLAGS) -s tb_archivo $(ARCHIVO_PARAMS) -o $(ARCHIVO_DIR)/sim.vvp $(RTL_SRCS) tests/rtl/tb_archivo.sv
+	$(IVERILOG) $(IVFLAGS) -s tb_archivo -o $(ARCHIVO_DIR)/sim.vvp $(RTL_SRCS) tests/rtl/tb_archivo.sv
 	@set -o pipefail; n=$$(wc -c < "$(ARCHIVO)"); \
 	( cd $(ARCHIVO_DIR) && $(VVP) $(VVPFLAGS) sim.vvp +CIFRAR=cifrar.mem +DESCIFRAR=descifrar.mem \
 	    +DATOS=datos.mem +BYTES=$$n $(PLUSARGS) 2>&1 | tee sim.log ) && \
@@ -254,7 +249,7 @@ descifrar: check-tools
 	@mkdir -p $(DESCIFRAR_DIR)
 	python3 tools/assembler.py --input examples/descifrar_archivo.asm --output $(DESCIFRAR_DIR)/descifrar.mem
 	python3 tools/load_file.py --input "$(ARCHIVO)" --address 0x200 --output $(DESCIFRAR_DIR)/datos.mem
-	$(IVERILOG) $(IVFLAGS) -s tb_archivo $(ARCHIVO_PARAMS) -o $(DESCIFRAR_DIR)/sim.vvp $(RTL_SRCS) tests/rtl/tb_archivo.sv
+	$(IVERILOG) $(IVFLAGS) -s tb_archivo -o $(DESCIFRAR_DIR)/sim.vvp $(RTL_SRCS) tests/rtl/tb_archivo.sv
 	@set -o pipefail; n=$$(wc -c < "$(ARCHIVO)"); \
 	( cd $(DESCIFRAR_DIR) && $(VVP) $(VVPFLAGS) sim.vvp +SOLO_DESCIFRAR +DESCIFRAR=descifrar.mem \
 	    +DATOS=datos.mem +BYTES=$$n +K0=$(word 1,$(LLAVE_PALABRAS)) +K1=$(word 2,$(LLAVE_PALABRAS)) \

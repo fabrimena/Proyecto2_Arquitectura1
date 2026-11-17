@@ -1,12 +1,5 @@
 # Integración transversal de métricas VLIW, etapas y L1-D
 
-**Evidencia histórica:** este documento conserva el ensayo inicial con modelo.
-El sistema vigente ya integra L2 real y D18; el cierre de métricas y las
-regresiones actuales se detallan en [performance-analysis.md](performance-analysis.md).
-El mismo banco sobre e461b70 y el cierre obtiene60 capturas/8029914 comprobaciones.
-Las limitaciones y rutas antiguas indicadas en las secciones originales no deben
-interpretarse como el estado actual; la mutación WB equivalente sí conserva su límite.
-
 Este documento técnico explica las conexiones de los observadores existentes
 #7, #8 y #26 al procesador real. Sus entradas son programas ISA, eventos públicos
 PRE y ventanas síncronas; sus salidas son acumulados observables, pruebas,

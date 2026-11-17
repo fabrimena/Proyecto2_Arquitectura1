@@ -1,9 +1,7 @@
 /*
- * Clasificador combinacional de las 34 operaciones originales y las tres D18 de la ISA del VLIW.
+ * Clasificador combinacional de las 34 operaciones de la ISA del VLIW.
  * Recibe un bundle y activa un bit por cada operación reconocida en su slot.
- * Valida campos D18 mediante su decoder; no valida permisos cripto ni validez
- * del bundle. Para las 34 operaciones originales conserva el contrato previo;
- * reconocer una
+ * No valida operandos, permisos cripto ni validez del bundle; reconocer una
  * operación no significa que haya sido ejecutada o completada.
  */
 `include "isa_defs.sv"
@@ -13,15 +11,9 @@ module perf_slot_mask (
     output logic [NUM_SLOTS-1:0] non_nop_mask // Bits 0..3: ALU, LSU, BRU y CRIPTO.
 );
 
-// D18 requiere validar también RSV y operandos conocidos. Se reutiliza el
-// decoder público; esta copia de observación no controla emisión ni retiro.
-wire cache_valid;
-decoder_cache_isa CACHE_CLASSIFIER (.instruction(bundle_in[63:32]),
-    .valid(cache_valid), .operation(), .rd(), .selector(), .measure_imm());
-
 // Cada prefijo reúne tipo [31:25] e ID [24:21] de la instrucción de su slot.
 // Se comparan ambos campos completos; una palabra no cero también puede ser NOP
-// o pertenecer a una unidad distinta. D18 además exige RSV y operandos conocidos.
+// o pertenecer a una unidad distinta. Los operandos no intervienen en la máscara.
 always @(*) begin
     // Toda salida tiene valor por defecto: no queda retenida la máscara anterior.
     non_nop_mask = 4'b0000;
@@ -47,10 +39,7 @@ always @(*) begin
     case (bundle_in[63:53]) // Slot 1: cuatro operaciones LSU.
         {TYPE_LSU, OP_GUARDAP}, {TYPE_LSU, OP_GUARDAB},
         {TYPE_LSU, OP_CARGAI},  {TYPE_LSU, OP_CARGABAI}: non_nop_mask[1] = 1'b1;
-        // Un decoder todavía sin evaluar no constituye una operación válida.
-        // La comparación exacta evita propagar X al reset de monitores abstractos
-        // con LSU constante cero, antes del primer evento de ese puerto.
-        default: non_nop_mask[1] = (cache_valid === 1'b1);
+        default: non_nop_mask[1] = 1'b0;
     endcase
 
     // Un salto condicional cuenta por su operación, independientemente de que

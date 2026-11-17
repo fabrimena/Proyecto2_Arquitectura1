@@ -366,7 +366,7 @@ class RealBenchmarksTests(unittest.TestCase):
         with (folder/'summary.csv').open(newline='') as f:rows=list(csv.DictReader(f))
         self.assertEqual(len(rows),12)
         for a,b in zip(rows,report['rows']):self.assertEqual(a,{k:str(v) for k,v in b.items()})
-        self.assertEqual(report['l2'],'REAL')
+        self.assertEqual(report['l2'],'MODEL')
         for row in report['rows']:
             p=self.plans[row['benchmark']]
             state=bench.read_capture(Path(row['directory']),row['mode'],p)
