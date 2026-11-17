@@ -1,9 +1,9 @@
 # Organización interna (microarquitectura)
 
-> Curso: CE4301 – Arquitectura de Computadores I, II Semestre 2026
-> Profesor: Dr.-Ing. Jeferson González Gómez
-> Proyecto Grupal 2: jerarquía de memoria y análisis de rendimiento (entrega: 20 de noviembre de 2026)
-> Base: procesador VLIW del Proyecto Grupal 1 (entrega del 14 de octubre de 2026)
+> Curso: CE4301 – Arquitectura de Computadores I, II Semestre 2026  
+> Profesor: Dr.-Ing. Jeferson González Gómez  
+> Proyecto Grupal 2: jerarquía de memoria y análisis de rendimiento (entrega: 20 de noviembre de 2026)  
+> Base: procesador VLIW del Proyecto Grupal 1 (entrega del 14 de octubre de 2026)  
 > Equipo: Dylan Guerrero González, José García Izaguirre, Javier Hernández Castillo, Alejandro Vásquez Oviedo, Fabricio Mena Mejia
 
 Cómo se implementa en SystemVerilog el procesador VLIW de [`isa.md`](isa.md) y cómo se le conecta la
@@ -318,13 +318,15 @@ salida vuelve al control del núcleo ni de la caché.
 | `perf_stage_counters` | `top` | Por etapa (IF, ID, EX y WB): ciclos ocupados, con burbuja y congelados |
 | `perf_cache_l1d` | `mem_hierarchy` | Eventos de la L1-D: lecturas y escrituras con hit y miss, llenados, víctimas limpias y sucias, MSHR, write buffer y riesgos RAW |
 | `perf_cache_l1d_latency` | `mem_hierarchy` | Ciclos de servicio de cada acceso a la L1-D por tipo (lectura o escritura, hit o miss), para la AMAT |
+| `perf_cache_l2` | `mem_hierarchy` | Los diez eventos `ev_l2_*`: lecturas y escrituras con hit y miss, llenados, desalojos, write-backs del vaciado, invalidaciones de la exclusiva y pedidos al nivel inferior |
+| `perf_cache_l2_latency` | `mem_hierarchy` | Ciclos de cada lectura de la L2, desde su aceptación hasta la respuesta (incluye colas y fallos), para la AMAT |
+| `perf_memory` | `mem_hierarchy` | Lecturas y escrituras aceptadas por el controlador, ciclos de transferencia, timeouts y errores |
+| `perf_memory_latency` | `mem_hierarchy` | Ciclos de cada acceso a la RAM, desde su aceptación hasta el final, con éxito o con error (incluye el cruce de relojes y el reintento) |
 
 La entrada `perf_measure_enable` de `top` y la instrucción `medir` pausan la cuenta sin borrarla (cuentan
 si las dos están en 1), y `PERF_ENABLE = 0` quita los contadores al elaborar. Un programa los lee con
-`lcont` (sección 10). La L2 entrega diez eventos `ev_l2_*` de un ciclo y `rtl-p2/perf_memory.sv` mide la
-memoria principal. En el cierre #26 se conectan perf_cache_l2 y perf_memory a los
-eventos públicos de L2 y MC. lcont9–12 observa sus acumulados; MODEL1 y modos0/1
-conectan cero por ausencia de estos productores.
+`lcont` (sección 10). Los contadores de la L2 y de la RAM (#26) solo existen con la jerarquía real: en los
+modos 0 y 1, y con `L2_MODEL = 1`, sus valores son 0.
 
 ## 10. Instrucciones de caché y medición (D18)
 
@@ -342,8 +344,8 @@ excepción la anulan, igual que al resto del bundle.
 
 Los contadores de `lcont` son: 0 a 4 de `perf_vliw_monitor` (ciclos, bundles, instrucciones, stalls por
 memoria y ciclos perdidos por saltos), 5 a 8 de `perf_cache_l1d` (lecturas y escrituras de la L1-D con hit
-y miss; 0 en los modos 0 y 1) y 9 a 12: hits/misses L2, accesos aceptados RAM
-y busy RAM, conectados por el cierre #26.
+y miss; 0 en los modos 0 y 1) y 9 a 12 de `perf_cache_l2` y `perf_memory` (hits y misses de la L2, accesos
+aceptados por la RAM y sus ciclos de transferencia; 0 sin la jerarquía real).
 
 **`vaciarc` y el bundle siguiente.** Cuando `vaciarc` sale de EX, el bundle siguiente entra a EX y el
 núcleo se congela (`cisa_hold` entra a `cache_stall`). Mientras dura el vaciado, los accesos a memoria de
@@ -401,6 +403,17 @@ Parámetros de `top`:
 | `MEM_DIV` | 4 | Solo con `MEM_MODE = 2`: `clk_mem = clk / MEM_DIV` (2 = 50 MHz, 4 = 25 MHz, 5 = 20 MHz) |
 | `ROM_SYNC` | 1 | 0 = memoria de instrucciones combinacional, como en el proyecto 1 |
 | `PERF_ENABLE` | 1 | 0 = sin contadores |
+| `WRITE_POLICY` | 1 | Escritura de la L1-D (1 = write-back, 0 = write-through) |
+| `ALLOC_POLICY` | igual a `WRITE_POLICY` | Asignación de la L1-D (1 = write-allocate, 0 = no-write-allocate) |
+| `INCL_POLICY` | 2 | Inclusión de la L1-D y la L2 (2 = exclusiva, 1 = NINE); el checker de exclusividad solo se instancia con la exclusiva |
+| `L1_REPL_POLICY` | 0 | Reemplazo de la L1-D (0 = LRU, 1 = FIFO, 2 = Random) |
+| `L2_REPL_POLICY` | 0 | Reemplazo de la L2 (0 = pseudo-LRU, 1 = Random) |
+| `N_MSHR` | 2 | MSHR de la L1-D (1 a 4; 1 = stores bloqueantes) |
+| `WB_DEPTH` | 4 | Entradas del write buffer (2 a 8) |
+| `EB_DEPTH` | 4 | Líneas del eviction buffer (4 a 16) |
+
+Los parámetros de las cachés (de `WRITE_POLICY` a `EB_DEPTH`) solo se usan con `MEM_MODE = 2`, y
+`tools/comparar_configuraciones.py` (#30) los cambia para comparar políticas.
 
 `python3 tools/run_program.py --mem-mode 2` ejecuta un programa con la jerarquía completa, y
 `make test-memory-modes` corre los mismos programas en los modos 0 y 2 y compara los registros y la
@@ -428,6 +441,6 @@ Los parámetros públicos de top y mem_hierarchy propagan políticas de escritur
 asignación, inclusión y reemplazo L1/L2, N_MSHR, WB_DEPTH y EB_DEPTH. Los defaults
 conservan la configuración de esta sección; no cambian algoritmos de caché.
 Instrumentación y habilitación de medición no realimentan arbitraje, clocks,
-solicitudes ni flush. Las pruebas comparan PERF_ENABLE0/1 al mismo tiempo exacto.
+solicitudes ni flush. Las pruebas comparan `PERF_ENABLE` en 0 y en 1, ciclo a ciclo.
 La semántica de ventanas, eventos y sus poblaciones está en
 [performance-analysis.md](performance-analysis.md).
