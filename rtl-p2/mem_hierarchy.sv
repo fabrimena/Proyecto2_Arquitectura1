@@ -110,7 +110,11 @@ module mem_hierarchy #(
     // Acumulados pasivos; cero sin observadores o sin proveedor real.
     // RAM: lecturas, escrituras, ocupado, medido, timeout, error.
     output wire [9:0][63:0] perf_l2_counts,
-    output wire [5:0][63:0] perf_ram_counts
+    output wire [5:0][63:0] perf_ram_counts,
+    // Cohortes temporales adicionales. No añaden selectores lcont ni controles;
+    // los bancos pueden leerlas sin cambiar top ni el protocolo de memoria.
+    output wire [13:0][63:0] perf_l2_latency,
+    output wire [21:0][63:0] perf_ram_latency
 );
 
 
@@ -227,7 +231,7 @@ l1d_cache #(.WRITE_POLICY(WRITE_POLICY), .ALLOC_POLICY(ALLOC_POLICY),
 
 // Fuentes públicas PRE. Nunca se cuentan niveles ram_req como aceptaciones.
 wire [9:0] perf_l2_events;
-wire mc_accept, mc_write, mc_busy, mc_timeout, mc_error;
+wire mc_accept, mc_write, mc_busy, mc_timeout, mc_error, mc_ready;
 generate if (L2_MODEL) begin : g_l2_model
 
     // L2 de prueba: siempre acierta y lee y escribe DMEM con clk
@@ -254,6 +258,7 @@ generate if (L2_MODEL) begin : g_l2_model
 
     assign perf_l2_events = '0;
     assign {mc_accept,mc_write,mc_busy,mc_timeout,mc_error} = '0;
+    assign mc_ready = 1'b0;
     assign m_clk      = clk;
     assign flush_done = l1_flush_done && l2_idle;
 end
@@ -278,6 +283,10 @@ else begin : g_l2_real
     logic              ram_ready;
     logic [LINE_W-1:0] ram_rline;
     logic              ram_error;
+
+    // ram_ready ya es un puerto público de MC. Solo se copia al observador;
+    // el controlador, el buffer y su temporización conservan sus conexiones.
+    assign mc_ready = ram_ready;
 
     // Controlador <-> RAM (una palabra por flanco de clk_mem)
     logic              clk_mem;
@@ -538,6 +547,21 @@ end endgenerate
 // Observadores reales: su única dependencia hacia la jerarquía son entradas.
 // El mismo enable de D18/ventana se aplica a L1, L2 y RAM en clk general.
 generate if (PERF_ENABLE && !L2_MODEL) begin : g_perf_real
+    // Los tiempos asocian aceptación y respuesta, no busy/eventos agregados.
+    // Ambos usan clk general y la misma ventana D18 de los contadores existentes.
+    perf_cache_l2_latency PERF_L2_LATENCY (
+        .clk(clk), .reset(reset), .measure_enable(perf_measure_enable),
+        .l2_req(l2_req), .l2_we(l2_we), .l2_gnt(l2_gnt), .l2_rvalid(l2_rvalid),
+        .ev_rd_hit(perf_l2_events[0]), .ev_rd_miss(perf_l2_events[1]),
+        .ev_wr_hit(perf_l2_events[2]), .ev_wr_miss(perf_l2_events[3]),
+        .counts(perf_l2_latency)
+    );
+    perf_memory_latency PERF_RAM_LATENCY (
+        .clk(clk), .reset(reset), .measure_enable(perf_measure_enable),
+        .req_accept(mc_accept), .req_we_accepted(mc_write), .transfer_busy(mc_busy),
+        .ram_ready(mc_ready), .timeout_event(mc_timeout), .error_event(mc_error),
+        .counts(perf_ram_latency)
+    );
     perf_cache_l2 PERF_L2 (
         .clk(clk), .reset(reset), .measure_enable(perf_measure_enable),
         .ev_l2_rd_hit(perf_l2_events[0]), .ev_l2_rd_miss(perf_l2_events[1]),
@@ -561,6 +585,8 @@ generate if (PERF_ENABLE && !L2_MODEL) begin : g_perf_real
         .timeout_count(perf_ram_counts[4]), .error_count(perf_ram_counts[5])
     );
 end else begin : g_no_perf_real
+    assign perf_l2_latency = '0;
+    assign perf_ram_latency = '0;
     assign perf_l2_counts = '0;
     assign perf_ram_counts = '0;
 end endgenerate
