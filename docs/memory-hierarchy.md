@@ -40,8 +40,8 @@ intermedia y la memoria principal:
 
 | Nivel | Módulo | Capacidad | Organización | Línea | Acierto | Fallo |
 |:---|:---|---:|:---|---:|:---|:---|
-| L1-D | `l1d_cache.sv` | 4 KB | 2 vías, 64 conjuntos | 32 B (8 palabras) | dentro de EX, sin etapa MEM | 8 ciclos si la L2 acierta; 8 + 53 si va a la RAM |
-| L2 | `l2_cache.sv` | 16 KB | 4 vías, 128 conjuntos | 32 B (8 palabras) | 8 ciclos | 8 + Tmem = **61** ciclos con Tmem = 53 |
+| L1-D | `l1d_cache.sv` | 4 KB | 2 vías, 64 conjuntos | 32 B (8 palabras) | dentro de EX, sin etapa MEM | 8 ciclos si la L2 acierta; 8 + 53 = **61** si va a la RAM |
+| L2 | `l2_cache.sv` | 16 KB | 4 vías, 128 conjuntos | 32 B (8 palabras) | 8 ciclos | 8 + Tmem = **61** con Tmem = 53 (presupuesto de la L2; ver la nota de las dos cifras en la sección 7) |
 | Memoria | `mem_controller.sv` | 64 KB | 16 384 palabras de 32 bits | ráfaga de 8 palabras | — | Tmem = 25 + 7 × MEM_DIV = **53** |
 
 Entre la L2 y la memoria está el **eviction buffer**: una FIFO de 4 líneas sucias (4 a 16) que absorbe
@@ -66,7 +66,8 @@ Este documento describe el diseño, que es lo que está implementado y probado. 
 `l1d_port_arbiter` → `l1d_cache` → `l2_cache` → `eviction_buffer` → `mem_controller` → `DMEM`, con la
 RAM en su propio reloj (`clk_mem`, 25 MHz). La L2 de prueba (`l2_model`) queda como opción con
 `L2_MODEL = 1`. Latencias medidas en `tb_mem_hierarchy`: hit en la L1-D 0 ciclos, hit en la L2 8, falla
-en las dos 64 (8 + Tmem = 53 + 3 del eviction buffer y del cruce de relojes).
+en las dos 64 (8 + Tmem = 53 + 3 del eviction buffer y del cruce de relojes). Las dos cifras del fallo,
+61 y 64, se explican en la sección 7.
 
 ---
 
@@ -154,7 +155,7 @@ etiquetas en paralelo; un puerto de escritura escribe una línea completa; y un 
 | **Escritura** | write-back + write-allocate | Es lo que exige la inclusividad exclusiva: si la L1-D tiene la línea y la L2 no, un store que llega a la L2 tiene que poder guardar la línea completa. Con write-through el store iría siempre a la L2, que no la tiene, y el hold del write buffer se quedaría esperando una respuesta que nunca llega. Con write-allocate, un store parcial trae la línea vieja, la mezcla con los bytes nuevos y guarda el resultado sucio |
 | **Inclusión** | `INCL_EXCLUSIVE` por defecto, `INCL_NINE` como parámetro | Exclusiva: L1-D ∩ L2 = ∅, así que la L2 es la caché víctima de la L1-D y no se duplica ninguna línea (notas 6.2.4). El profesor aprobó la exclusiva como crédito extra. NINE queda disponible como parámetro para comparar, y en NINE la copia que guarda la L2 se queda sucia si la línea vino reenviada por el eviction buffer, porque ese buffer solo guarda líneas sucias |
 | **Reemplazo** | PLRU de **árbol** por defecto; Random (LFSR) como segunda política | Un LRU exacto de 4 vías necesita 5 bits por conjunto y lógica de orden. El PLRU de árbol usa 3 bits por conjunto (raíz, nodo izquierdo y nodo derecho) y se acerca al LRU con una actualización simple. **Es una aproximación, no un LRU exacto**, y así se documenta. Random sirve de línea base en las comparaciones. Si hay una vía libre, se usa esa primero |
-| **Latencia** | acierto en 8 ciclos; fallo en 8 + Tmem | El enunciado pide 8 ciclos de acierto. En el fallo, el presupuesto de 8 ciclos de la caché y la latencia del nivel inferior se suman: 8 + 53 = 61 |
+| **Latencia** | acierto en 8 ciclos; fallo en 8 + Tmem | El enunciado pide 8 ciclos de acierto. En el fallo, el presupuesto de 8 ciclos de la caché y la latencia del nivel inferior se suman: 8 + 53 = 61. Ese 61 es el presupuesto de la L2 sola; en la jerarquía completa el mismo fallo se mide en 64 (sección 7) |
 
 El LFU aproximado se descartó: necesita contadores por vía y una política de envejecimiento, y en
 nuestros benchmarks no aporta nada frente al PLRU de árbol.
@@ -336,12 +337,23 @@ Con la configuración por defecto (`MEM_DIV = 4`, `Tmem = 53`):
 |:---|---:|
 | L1-D acierta | dentro de EX, sin penalización extra |
 | L1-D falla y la L2 acierta | 8 |
-| L1-D falla y la L2 falla | 8 + 53 = **61** |
+| L1-D falla y la L2 falla | **61** en la L2, **64** medidos en la jerarquía completa |
 | Vaciado completo (L1-D + L2 + RAM) | el de la cadena de la sección 6 |
 
-En la L2, un fallo dura 8 + Tmem = 61 ciclos: el presupuesto de 8 ciclos de la caché más la latencia
-del nivel inferior. El desalojo de una víctima sucia **no** suma ciclos: se paga con el presupuesto de
-8 del acceso.
+**Las dos cifras del fallo, y por qué no son la misma.** Son dos cuentas distintas y conviene no
+mezclarlas:
+
+- **61** es el presupuesto de la L2: sus 8 ciclos más los 53 del nivel inferior (`Tmem`). Es la cuenta
+  que hace la L2, y la que pide el enunciado.
+- **64** es lo que se mide en la jerarquía completa (`tb_mem_hierarchy`): 8 + 53 + 3. Los 3 ciclos de más
+  son del camino que hace la línea entre la L2 y la RAM: pasa por el eviction buffer y cruza los dos
+  dominios de reloj (`clk_mem`). Eso ocurre por debajo de la L2, así que la L2 no lo cuenta en su
+  presupuesto.
+
+Es decir: 61 es la latencia que la L2 ve y garantiza, y 64 es la que espera el programa de verdad. La
+diferencia son 3 ciclos fijos, que no dependen de la carga ni del conjunto.
+
+El desalojo de una víctima sucia **no** suma ciclos: se paga con el presupuesto de 8 del acceso.
 
 ---
 
@@ -366,8 +378,8 @@ del nivel inferior. El desalojo de una víctima sucia **no** suma ciclos: se pag
 ```
 
 Un fallo de la caché **congela** el núcleo con `cache_stall` hasta que la L1-D tenga la respuesta. Con
-la L2 real conectada, el fallo se resuelve en 8 ciclos (si la L2 acierta) o en 61 (si hay que ir a la
-RAM).
+la L2 real conectada, el fallo se resuelve en 8 ciclos (si la L2 acierta) o en 61 si hay que ir a la RAM
+(64 medidos en la jerarquía completa; ver la sección 7).
 
 ### 8.2 La L2 por dentro
 
@@ -376,7 +388,7 @@ RAM).
                     |
         +-----------v-----------+
         |  l2_cache.sv          |   decide: hit, miss, victimaria, inclusividad
-        |                       |   latencias: hit 8, fallo 8 + Tmem
+        |                       |   latencias: hit 8, fallo 8 + Tmem (la L2 sola)
         |  +------------------+ |
         |  | l2_arrays.sv     | |   128 conjuntos x 4 vias
         |  |  V, D, tag, linea| |   un puerto de lectura multiplexado
