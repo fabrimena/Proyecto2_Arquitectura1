@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Deriva medias observadas de capturas existentes, sin ejecutar ni cambiar RTL.
+"""Deriva AMAT observado L1-D de capturas existentes, sin ejecutar ni cambiar RTL.
 
 Entrada: comparaciones.json con filas que remiten a execution.json y sus logs,
 imágenes y binarios. Requiere Python y las herramientas del proyecto. Salida:
 JSON/CSV en un directorio externo nuevo; nunca reescribe la evidencia original.
 Las cohortes K1-B contienen solo demandas completas dentro de la habilitación.
 La media incluye espera y finalización en el puerto L1, no persistencia RAM.
-La extensión temporal 1 acredita lecturas L2 y transacciones RAM completas.
-Los logs históricos carecen de esos tiempos y conservan None. No se suman
-niveles solapados ni se sustituyen tiempos por constantes nominales.
+L2/RAM y AMAT jerárquico quedan NO_MEDIDOS: sus acumulados no contienen una
+cohorte temporal equivalente. No se sustituyen tiempos por constantes nominales.
 ValueError/SimulationError rechazan datos incompatibles; OSError conserva fallos
 de archivos. El análisis exige una época sin desbordamiento de contadores.
 """
@@ -27,7 +26,7 @@ else:
     import run_program as runner
 
 
-def l1_amat(metrics, wire_layout=False):
+def l1_amat(metrics):
     """Calcula medias de la misma cohorte, sin mezclar los eventos K1-A.
 
     Recibe vectores K1-B (count/service/wait por RH,RM,WH,WM), total de ciclos
@@ -35,9 +34,6 @@ def l1_amat(metrics, wire_layout=False):
     y conjunto. Cada duración incluye su flanco final: un acceso sin espera vale
     un ciclo. Rechaza errores de protocolo, identidades rotas y aritmética que
     requiera wrap; una población vacía produce None. No modifica metrics.
-    wire_layout=True interpreta el puerto real: últimos campos exclusiones,
-    errores y pendiente. False conserva la API histórica de fixtures (no-wait,
-    exclusiones, errores); nunca se aplica ese layout a logs RTL en analyze.
     """
     classes = metrics['classes']
     total = metrics['k1b']
@@ -49,12 +45,11 @@ def l1_amat(metrics, wire_layout=False):
     values = [measured, *total, *(v for c in classes for v in c)]
     if any(type(v) is not int or not 0 <= v < 1 << 64 for v in values):
         raise ValueError('contador K1-B fuera de contrato')
-    if total[4 if wire_layout else 5]:
+    if total[5]:
         raise ValueError('protocolo K1-B con errores')
     if (any(c[1] != c[0] + c[2] or (not c[0] and c[1]) for c in classes) or
             any(sum(c[k] for c in classes) != total[k] for k in range(3)) or
-            total[1] > measured or
-            (total[5] > 1 if wire_layout else total[3] > total[0])):
+            total[1] > measured or total[3] > total[0]):
         raise ValueError('cohorte K1-B incompatible o desbordada')
 
     def population(hit, miss):
@@ -77,8 +72,7 @@ def l1_amat(metrics, wire_layout=False):
     return dict(all=population(hits, misses),
                 reads=population(classes[0], classes[1]),
                 writes=population(classes[2], classes[3]),
-                excluded_completions=total[3 if wire_layout else 4],
-                pending=total[5] if wire_layout else None,
+                excluded_completions=total[4],
                 population='K1-B: demandas completas, íntegramente habilitadas',
                 unit='ciclos clk; espera más flanco de finalización',
                 store_completion='aceptación del puerto L1; no persistencia RAM')
@@ -132,26 +126,17 @@ def analyze(report_path, output):
             raise ValueError('fila duplicada')
         keys.add(key)
         md, digest = read_capture(row['directory'], row)
-        temporal = md['metrics'].get('temporal')
         rows.append(dict(benchmark=key[0], configuration=key[1], repetition=key[2],
-                         l1=l1_amat(md['metrics'], wire_layout=True), directory=row['directory'],
+                         l1=l1_amat(md['metrics']), directory=row['directory'],
                          l1_available=md['effective_mode'] == 2 and bool(md['configuration']['PERF_ENABLE']),
                          execution_sha256=digest, cycles_measured=md['metrics']['vliw'][0],
-                         # Las primeras capturas no registraban el control de
-                         # ventana. Conservar ausencia evita inventar su armado;
-                         # numeradores/denominadores siguen viniendo de su log.
-                         cut=md['cut'], measurement_control=md.get('measurement_control'),
-                         temporal=temporal,
-                         l2_amat_cycles=temporal['l2']['amat_cycles'] if temporal else None,
-                         ram_amat_cycles=temporal['ram']['mean_cycles'] if temporal else None,
+                         cut=md['cut'], measurement_control=md['measurement_control'],
+                         l2_amat_cycles=None, ram_amat_cycles=None,
                          hierarchical_amat_cycles=None))
-    measured = all(r['temporal'] and r['temporal']['available'] for r in rows)
-    result = dict(schema=2, issue26_status='MEDICIÓN OBSERVABLE COMPLETA' if measured else 'PARCIAL',
+    result = dict(schema=1, issue26_status='PARCIAL',
                   source_report=str(report_path),
                   source_sha256=hashlib.sha256(report_path.read_bytes()).hexdigest(),
-                  limitation=('Lecturas L2 y éxitos RAM por cohorte; L2 posted sin respuesta de escritura. '
-                              'RAM no tiene hits/misses. No se suman latencias jerárquicas solapadas. '
-                              'Una captura histórica sin extensión temporal conserva medias L2/RAM null.'),
+                  limitation='L2/RAM sin cohortes temporales por transacción en estas capturas; no se deriva AMAT jerárquico.',
                   rows=rows)
     output.mkdir(parents=True)
     (output / 'amat.json').write_text(json.dumps(result, indent=2, ensure_ascii=False) + '\n')
@@ -164,7 +149,7 @@ def analyze(report_path, output):
             writer.writerow([row['benchmark'], row['configuration'], row['repetition'],
                              row['l1']['all']['accesses'],
                              *(row['l1'][p]['amat_cycles'] for p in ('all', 'reads', 'writes')),
-                             row['l2_amat_cycles'], row['ram_amat_cycles'], None])
+                             None, None, None])
     return result
 
 
@@ -179,7 +164,7 @@ def main(argv=None):
     except (OSError, ValueError, KeyError, TypeError, runner.SimulationError) as exc:
         print('[FAIL] ' + str(exc), file=sys.stderr)
         return 1
-    print(f'[PASS] {len(result["rows"])} cohortes; {result["issue26_status"]}')
+    print(f'[PASS] {len(result["rows"])} cohortes; #26 PARCIAL: AMAT L2 pendiente')
     return 0
 
 

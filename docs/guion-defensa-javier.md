@@ -54,7 +54,7 @@ de salida al repetir y conservar logs en almacenamiento persistente.
    Exclusiva registra0 lecturas RAM frente a256 en NINE. Sus576 misses L2 son
    escrituras de víctimas L1, mientras sus576 lecturas L2 aciertan; sumar ambas
    poblaciones sin explicarlas ocultaría la ventaja observada de reutilización.
-7. Mostrar primero la referencia tradicional, sin inventar niveles:
+7. Mostrar #31 como parcial, sin inventar niveles:
 
    ```bash
    python3 tools/comparar_optimizaciones.py --compiler-root "$CE1108_ROOT" --output /tmp/demo-p31-nueva
@@ -62,8 +62,7 @@ de salida al repetir y conservar logs en almacenamiento persistente.
 
    La variante tradicional de factorial/whale/puntajes se contrasta contra M2
    independiente y RTL0/2, con resultados120/21/37. Las pasadas IR de balc no
-   generan versiones ASM optimizadas. Este informe de una sola variante se
-   mantiene PARCIAL; la comparación productiva IDE-DCE se demuestra abajo.
+   generan todavía versiones ASM optimizadas. El informe lo declara PARCIAL.
 
 ## Preguntas probables
 
@@ -93,9 +92,8 @@ a detener el bundle mientras existan recursos libres.
 También equivale a HR×media hit+MR×media miss de esa cohorte. Un store puede
 terminar al reservar un MSHR; eso no es persistencia. El análisis externo
 `tools/analizar_amat.py` conserva lecturas y stores separados. No hay tiempos
-por transacción L2/RAM en las capturas históricas; sus medias siguen N/D.
-Las capturas nuevas sí tienen cohortes aceptación→respuesta: los observadores
-temporales completan ese pendiente de #26. No se suman ocupaciones solapadas ni se usan las víctimas L2 como si
+por transacción L2/RAM en las capturas guardadas; sus medias quedan N/D y #26
+PARCIAL. No se suman ocupaciones solapadas ni se usan las víctimas L2 como si
 fueran exclusivamente demandas que fallaron en L1.
 
 **¿Qué hace la pausa con una petición pendiente?** Los productores continúan.
@@ -116,62 +114,16 @@ cortes B5 solo acreditan observación local tras un retorno retirado. No hay HAL
 artificial. Otros niveles necesitarán sus propios cortes equivalentes.
 
 **¿Quedó todo lo asignado completo?** La instrumentación de eventos, regresiones,
-benchmarks/configuraciones y documentación están verificados. #26 acredita las
-medias observables L1/L2/RAM; #31 acredita tradicional/IDE-DCE en dos programas,
-sin inventar -O. #38 tiene la preparación técnica lista y espera la publicación/integración
+benchmarks/configuraciones y documentación están verificados. #26 permanece
+PARCIAL por AMAT L2; #31, por la falta de dos niveles productivos distintos de
+balc. #38 tiene la preparación técnica lista y espera la publicación/integración
 autorizada y el SHA final. La evidencia funcional no certifica síntesis/CDC física.
 
 ## Cierre formal después de publicar e integrar
 
 Repositorio de entrega: <https://github.com/fabrimena/Proyecto2_Arquitectura1>.
-SHA del último commit de entrega: **PENDIENTE DE INTEGRACIÓN FINAL**. Se verificará después de la
+SHA del último commit de entrega: **PENDIENTE**. Se verificará después de la
 publicación e integración autorizadas; e461b70 identifica la base auditada y
 no sustituye ese SHA. El archivo para TEC Digital contendrá únicamente el enlace
 y el hash final, según la sección10 del enunciado. El material técnico preparado
 no permite declarar completado ese paso de #38 antes de realizarlo.
-
-## Demostración temporal y comparación productiva actual
-
-Esta sección sustituye el diagnóstico histórico de un único nivel CLI. Javier
-aporta observación/validación; cachés, CDC, buffers y segmentación siguen siendo
-trabajo de sus responsables. Los comandos escriben capturas externas nuevas.
-
-1. Mostrar VLIW/etapas: `make tb_perf_integracion_top` y
-   `make tb_perf_stage_counters`. Los mismos programas con PERF0 conservan PC,
-   GPR, cripto y memoria; no sumar cuatro veces el stall global.
-2. Mostrar L1 y servicio: `make tb_perf_cache_l1d_k1a tb_perf_cache_l1d_k1b`.
-   Distinguir finalización de store en MSHR y persistencia posterior.
-3. Mostrar D18: `make tb_perf_d18_cierre`. `medir` habilita observación en clk,
-   `lcont` conserva selectores0–12/N+3 y `vaciarc` confirma persistencia antes
-   del programa siguiente. Los módulos nuevos no controlan esas instrucciones.
-4. Mostrar L2/RAM: `make tb_perf_cache_l2_latency tb_perf_memory_latency`.
-   Señalar aceptación, clasificación tardía, respuesta, pausa y pendiente.
-   RAM normal40/54 flancos con DIV2/4, distinto de busy39/53; el retry exitoso
-   incluye la espera previa y el fracaso final tiene otra población.
-5. Mostrar pasividad/políticas: `make tb_perf_amat_integracion` reutiliza
-   stores/load, línea sucia, exclusiva/NINE, DIV2/4 y MODEL, compara las16384
-   palabras con gold y el gemelo PERF0. El diario independiente fecha señales,
-   en lugar de comparar solo acumuladores del mismo monitor.
-6. Mostrar los tres benchmarks con dos rondas y comparar con las54 capturas
-   de configuraciones. Secuencial/aleatorio/stride mantienen872/2606/10260
-   ciclos y checksum1056. Mostrar AMAT L1=1/19.0625/98.7916666667,
-   L2 reads=64/64/99.4895833333 y RAM=54 en la referencia. Stride deja una
-   transferencia pendiente:178 completas entre179 aceptadas al corte.
-7. Mostrar `comparar_optimizaciones.py --compiler-root "$CE1108_ROOT" --ide-dce
-   --output /tmp/defensa-dce-nueva`: puntajes801→795 bundles y funciones528→435.
-   Explicar código BAL original/transformado, llamada preservada con copia
-   muerta eliminada, marcos diferentes y valores24/13/37 y16/15. Cada variante
-   coincide completa con M2 y RTL0/2. No denominar las variantes -O0/-O1.
-8. Mostrar capacidad18KiB y comparación de políticas con el runner existente;
-   separar el calentamiento no medido de la segunda pasada y el flush externo.
-   Un hit de L2 puede pertenecer a una línea victimaria exclusiva, no a otra
-   demanda del núcleo de la misma población.
-
-Para defender las medias, indicar SIEMPRE puerto, flancos, cohorte, exclusiones
-al corte y unidad. El servicio de reads L2 puede superar64 por congestión; un
-presupuesto nominal no reemplaza esa evidencia. Las escrituras posted no tienen
-un AMAT de respuesta inventado. RAM no tiene hits/misses de caché.
-#26 y #31 están completos en esos alcances observables/probados; no acreditan
-síntesis física ni equivalencia universal del optimizador. #38 permanece parcial
-hasta presentación, revisión colectiva y entrega real. El archivo formal externo
-contendrá solo la URL y el SHA posterior a la integración autorizada.

@@ -201,41 +201,10 @@ El modo `--compiler-root` prepara factorial, whale y puntajes tradicionales;
 Solo se admiten actualmente BALB sin datos iniciales y entrada0: el resto se
 rechaza explícitamente para no perder inicialización.
 
-El diagnóstico inicial solo consideró la CLI. No hay niveles -O productivos acreditados. Las opciones --dce/--unroll/--reorder
+No hay niveles -O productivos acreditados. Las opciones --dce/--unroll/--reorder
 trabajan sobre IR y no generan ASM optimizado; -h sí muestra ayuda y --help no
-está reconocido. CFLAGS=-O2 no es una optimización VLIW. Ese diagnóstico dejó
-#31 parcial hasta comprobar la vía productiva del IDE, descrita abajo.
+está reconocido. CFLAGS=-O2 no es una optimización VLIW. #31 permanece PARCIAL
+hasta ejecutar dos niveles reales, distintos y funcionalmente comparables.
 Cortes3403/247/2748 proceden del contrato de observación B5, sin certificar main.
 Ver [análisis vigente](performance-analysis.md#cierre-integrado-16-de-noviembre-de-2026-26-2931-36)
 y [verificación](verificacion-cierre-javier.md).
-
-### Contraste productivo tradicional/IDE-DCE
-
-La copia CE1108 auditada, `feat/i1a-integracion-vliw` en08c8701, sí contiene
-`ide_dce_analizar` y `codigo_nuevo`. Los fuentes del DCE del IDE coinciden con
-la referencia local `origin/develop`; el backend concreto de la copia utilizada
-se identifica en la evidencia, sin atribuirle carácter de versión oficial final.
-La API aplica DCE al BAL; el mismo balc compila después ese código a ASM/BALB.
-No se modifica CE1108 ni se implementa una transformación alternativa.
-
-El adaptador `tools/ce1108_aplicar_dce.c` y `tools/ce1108_dce.py` se enlazan fuera
-de ambos repositorios. El IDE crea temporales junto a la ruta recibida: se le
-pasa la salida externa, para evitar escribir junto al fuente original. Solo se
-acreditan programas autónomos y BALB sin datos iniciales, como el contrato previo.
-
-`comparar_optimizaciones.py --compiler-root "$CE1108_ROOT" --ide-dce --output ...`
-prepara dos contrastes con cortes B5 acreditados: puntajes2748/2742 avances y
-funciones6193/2176. En otro commit se requieren B5 nuevo y manifiesto explícito.
-Se guardan hashes de módulos/productor, fuente original/transformada, comandos,
-ASM, imágenes, métricas y los estados completos M2/RTL0/RTL2.
-
-Los observables nombrados admiten dirección distinta por variante mediante
-`semantic_observations` y `observation_addresses`. Puntajes conserva24/13/37;
-funciones conserva el arreglo16/15 con marcos24/20 bytes. No se exige igualdad
-de temporales entre variantes; cada una sí debe coincidir completa con M2.
-La copia muerta vacio de puntajes desaparece sin eliminar su llamada.
-Factorial/whale no cambian con este DCE y no se publican como otra variante.
-Los cortes observan retiro WB y continuación NOP, sin certificar main ni forzar
-HALT. Las variaciones de ciclos no se presentan como speedup semántico universal.
-La comparación de #31 queda acreditada para estos dos programas/variantes;
-unrolling y reorder productivos siguen fuera de lo demostrado.

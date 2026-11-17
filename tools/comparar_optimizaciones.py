@@ -22,12 +22,10 @@ import re
 import struct
 if __package__:
     from . import run_program as r
-    from . import ce1108_dce
     from .assembler import assemble_source
     from .comparar_configuraciones import row
 else:
     import run_program as r
-    import ce1108_dce
     from assembler import assemble_source
     from comparar_configuraciones import row
 
@@ -71,35 +69,20 @@ def run(manifest_path, output):
     if not modules:raise r.SimulationError('módulos M2 no disponibles')
     output.mkdir(parents=True)
     (output/'manifest.json').write_bytes(manifest_path.read_bytes())
-    # El productor opcional pertenece al IDE real: no se modifica balc ni se
-    # interpreta --dce como si emitiera ASM. Su adaptador solo llama la API pública.
-    transformed=any(v.get('transform')=='ide-dce' for p in manifest['programs'] for v in p['variants'])
-    dce_binary=dce_identity=None
-    if transformed:dce_binary,dce_identity=ce1108_dce.build(root,output)
     observer=output/'observar_m2'
     cc=[r.tool('CC','cc'),'-std=c11','-Wall','-Wextra','-Werror','-I',str(root/'include'),
         str(r.ROOT/'tools/ce1108_observar_m2.c'),*[str(p) for p in modules],'-o',str(observer)]
     r.run_logged(cc,output,output/'observer-build.log',60)
     rows=[];details=[];partial=False
     for program in manifest['programs']:
-        name=program['name'];source=Path(program['source']).resolve()
-        observations=program.get('semantic_observations',program.get('observations'))
+        name=program['name'];source=Path(program['source']).resolve();observations=program['observations']
         if not re.fullmatch(r'[a-zA-Z0-9_-]+',name):
             raise r.SimulationError('nombre de programa inválido')
         if not observations:raise r.SimulationError('oráculo semántico vacío')
-        if not isinstance(observations,dict) or any(type(v) is not int or not 0<=v<1<<32 for v in observations.values()):
-            raise r.SimulationError('valores semánticos inválidos')
         variants=[]
         for i,variant in enumerate(program['variants']):
             work=output/f'{name}-{i}';work.mkdir()
-            snapshot=work/'source.bal'
-            transformation=None
-            if variant.get('transform') not in (None,'ide-dce'):
-                raise r.SimulationError('transformación desconocida')
-            if variant.get('transform')=='ide-dce':
-                original=work/'original.bal';original.write_bytes(source.read_bytes())
-                transformation=ce1108_dce.apply(dce_binary,original,snapshot,work)
-            else:snapshot.write_bytes(source.read_bytes())
+            snapshot=work/'source.bal';snapshot.write_bytes(source.read_bytes())
             binary=work/'program.bin';asm=work/'source.asm'
             variables=dict(compiler=str(root/'balc'),source=str(snapshot),binary=str(binary))
             argv=variant['argv']
@@ -136,16 +119,9 @@ def run(manifest_path, output):
             if len(raw)!=65536 or len(gold['registers'])!=32 or gold['traps']:
                 raise r.SimulationError('referencia M2 incompleta o con excepción')
             expected={k:int.from_bytes(raw[k:k+4],'little') for k in range(0,65536,4)}
-            # Los temporales y el marco pueden cambiar entre variantes. Los
-            # observables nombrados conservan significado/valor, pero su dirección
-            # se acredita por variante; cada estado completo se coteja contra M2.
-            for observable,value in observations.items():
-                address=variant.get('observation_addresses',{}).get(observable,observable)
-                if not isinstance(address,str) or not re.fullmatch(r'(?:0x[0-9a-fA-F]+|[0-9]+)',address):
-                    raise r.SimulationError('dirección semántica ausente o inválida: '+observable)
-                numeric=int(address,0)
-                if numeric%4 or not 0<=numeric<=65532 or expected[numeric]!=value:
-                    raise r.SimulationError('oráculo semántico incorrecto: '+observable)
+            for address,value in observations.items():
+                if expected[int(address,0)]!=value:
+                    raise r.SimulationError('oráculo semántico incorrecto: '+address)
             states=[]
             for mode in (0,2):
                 directory=work/f'mode-{mode}'
@@ -153,24 +129,12 @@ def run(manifest_path, output):
                 md=json.loads((directory/'execution.json').read_text());states.append(md)
                 if not md.get('architecture_state') or md['architecture_state']['crypto']!=gold['crypto'] or md['architecture_state']['traps']:
                     raise r.SimulationError('estado criptográfico o excepciones distintos de M2')
-                summary=row(name,1,variant['level']+f'-mode{mode}',md,directory)
-                # Medias de servicio por cohorte, sin reemplazar los accesos de
-                # clasificación/aceptación anteriores. En modo0 quedan N/D.
-                temporal=md['metrics'].get('temporal')
-                summary.update(l2_read_amat_cycles=temporal['l2']['amat_cycles'] if temporal else None,
-                    l2_completed_reads=temporal['l2']['accesses'] if temporal else None,
-                    ram_mean_cycles=temporal['ram']['mean_cycles'] if temporal else None,
-                    ram_completed_transactions=temporal['ram']['accesses'] if temporal else None,
-                    temporal_available=temporal['available'] if temporal else False)
-                rows.append(summary)
+                rows.append(row(name,1,variant['level']+f'-mode{mode}',md,directory))
             record=dict(level=variant['level'],compiler_commit=actual,compiler_sha256=sha(root/'balc'),
                 compiler_command=command,observer_command=cc,
                 compiler_worktree_status=subprocess.check_output(['git','-C',str(root),'status','--porcelain'],text=True),
                 compiler_modules_sha256={str(p.relative_to(root)):sha(p) for p in modules},source_sha256=sha(snapshot),asm_sha256=sha(asm),binary_sha256=sha(binary),
                 image_sha256=sha(image),bundles_static=len(assembled.bundles),
-                original_source_sha256=sha(source),transformation=transformation,
-                transform_producer=dce_identity if transformation else None,
-                observation_addresses=variant.get('observation_addresses'),
                 instructions_static=sum(ins.text.lower()!='nop' for b in assembled.bundles for ins in b.instructions),
                 observations_sha256=hashlib.sha256(json.dumps(observations,sort_keys=True).encode()).hexdigest(),
                 horizon=horizon,cut_contract=variant.get('cut_contract','declarado; no certificado semánticamente'),
@@ -227,16 +191,13 @@ def main(argv=None):
     group=p.add_mutually_exclusive_group(required=True)
     group.add_argument('--manifest',type=Path)
     group.add_argument('--compiler-root',type=Path)
-    p.add_argument('--ide-dce',action='store_true',help='contrastes tradicional/IDE DCE con cortes B5 acreditados')
     p.add_argument('--output',type=Path,required=True);args=p.parse_args(argv)
-    if args.ide_dce and not args.compiler_root:p.error('--ide-dce requiere --compiler-root')
     try:
         if args.manifest:run(args.manifest,args.output)
         else:
             with tempfile.TemporaryDirectory(prefix='ce1108-manifest-') as temporary:
                 path=Path(temporary)/'manifest.json'
-                prepared=ce1108_dce.comparison_manifest(args.compiler_root) if args.ide_dce else baseline_manifest(args.compiler_root)
-                path.write_text(json.dumps(prepared,indent=2)+'\n')
+                path.write_text(json.dumps(baseline_manifest(args.compiler_root),indent=2)+'\n')
                 run(path,args.output)
     except (OSError,ValueError,KeyError,r.SimulationError,subprocess.SubprocessError) as exc:
         print('[FAIL] '+str(exc),file=sys.stderr);return 1
