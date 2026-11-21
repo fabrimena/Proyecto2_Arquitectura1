@@ -2,6 +2,11 @@
 
 ## Alcance que corresponde defender
 
+Estado al 20 de noviembre de 2026: el aporte de Javier está integrado en
+`develop` mediante el [PR #70](https://github.com/fabrimena/Proyecto2_Arquitectura1/pull/70).
+El cierre documental individual sigue su propio PR de revisión. La integración
+definitiva `develop` → `main`, presentación y entrega formal siguen siendo colectivas.
+
 Javier desarrolló los observadores VLIW, etapas y eventos/servicio L1-D, el
 monitor L2 y la integración de métricas RAM existentes, clasificación y unidad
 D18, ensamblado/validación de D18, runners, oráculos, benchmarks y comparadores.
@@ -118,14 +123,16 @@ artificial. Otros niveles necesitarán sus propios cortes equivalentes.
 **¿Quedó todo lo asignado completo?** La instrumentación de eventos, regresiones,
 benchmarks/configuraciones y documentación están verificados. #26 acredita las
 medias observables L1/L2/RAM; #31 acredita tradicional/IDE-DCE en dos programas,
-sin inventar -O. #38 tiene la preparación técnica lista y espera la publicación/integración
-autorizada y el SHA final. La evidencia funcional no certifica síntesis/CDC física.
+sin inventar -O. #38 tiene la preparación técnica lista; faltan la revisión del
+equipo, presentación, integración definitiva `develop` → `main` y entrega en
+TEC Digital con el SHA final. La evidencia funcional no certifica síntesis/CDC física.
 
 ## Cierre formal después de publicar e integrar
 
 Repositorio de entrega: <https://github.com/fabrimena/Proyecto2_Arquitectura1>.
 SHA del último commit de entrega: **PENDIENTE DE INTEGRACIÓN FINAL**. Se verificará después de la
-publicación e integración autorizadas; e461b70 identifica la base auditada y
+integración definitiva y la confirmación del commit realmente entregado;
+e461b70 identifica la base auditada y
 no sustituye ese SHA. El archivo para TEC Digital contendrá únicamente el enlace
 y el hash final, según la sección10 del enunciado. El material técnico preparado
 no permite declarar completado ese paso de #38 antes de realizarlo.

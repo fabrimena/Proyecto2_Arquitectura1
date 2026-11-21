@@ -2,8 +2,14 @@
 
 ## Estado y alcance
 
-Estado vigente: rama `feat/javier-cierre-final-amat-ce1108`, base
-`4a16239ecf3ce36a34be7c53f99ab05e6edfcc76`. Los observadores temporales completan
+Estado actualizado al 20 de noviembre de 2026: los dos commits del aporte de
+Javier están integrados en `develop` mediante el
+[PR #70](https://github.com/fabrimena/Proyecto2_Arquitectura1/pull/70)
+(merge `5e6e45f7baacff4a70ad44ec2e3a2c61c0defe26`). Los PR #68, #71 y #72
+también están integrados. La revisión documental individual se prepara en
+`docs/javier-cierre-final-simulaciones`, desde
+`192050e802cbe45296d8d23cb0f8216f3e6313e2`; este SHA identifica su base y
+**no la entrega final**. Los observadores temporales completan
 #26 para L1, lecturas L2 y RAM; la API productiva DCE acredita dos contrastes
 reales de #31. #38 continúa parcial por revisión/presentación/entrega colectiva.
 Los resultados anteriores se conservan como antecedentes y el cierre temporal
@@ -15,7 +21,8 @@ Rama `feat/javier-cierre-metricas-rendimiento-p2`, base/HEAD conservado
 `e461b70b1195ea402b5352e43ab1f357309a8ffe` de origin/develop. Se creó con árbol e
 índice limpios tras fetch autorizado e inspección de los cinco commits posteriores
 a128ce789: solo cinco filas nuevas de docs/simulation.md. main y develop no se
-modifican. No hay staging, commits, publicación, PR ni integración de historial.
+modificaron directamente. En aquella revisión no hubo staging, commits,
+publicación, PR ni integración de historial; la integración posterior fue por PR #70.
 
 Herramientas verificadas: Icarus/VVP12.0, Python3.12.3, GNU Make4.3 y GCC13.3.0.
 Las ejecuciones se elaboran en copias externas. La primera carpeta /tmp se perdió
@@ -38,11 +45,13 @@ No se atribuye integridad de archivos ignorados a un manifiesto inicial perdido.
 | #31 optimizaciones BAL | COMPLETO en dos contrastes reales | Tradicional/IDE-DCE para puntajes y funciones; cada variante contra M2/RTL0/RTL2; no niveles -O ficticios |
 | #36 análisis | COMPLETO | Capítulo de cierre con poblaciones, resultados, interpretación y límites |
 | #37 README | COMPLETO | Arquitectura P2, comandos, reproducción y mapa documental |
-| #38 aporte/defensa | PARCIAL: preparación técnica lista | Informe/guion/evidencias listos; falta publicación/integración autorizada y registrar el SHA final de entrega |
+| #38 aporte/defensa | PARCIAL: preparación técnica lista | Aporte integrado por PR #70; pendientes revisión colectiva, presentación, integración develop→main, TEC Digital y SHA final |
 
-No se cierran issues de GitHub ni se confunde este estado con una publicación.
-El equipo conserva la responsabilidad sobre cachés, CDC/síntesis y entregables
-colectivos. Falta revisión colectiva del diff antes de integrar a develop.
+La tabla acredita alcance técnico; el estado remoto de los issues se verifica
+por separado durante el cierre autorizado. El equipo conserva la responsabilidad
+sobre cachés, CDC/síntesis y entregables colectivos. La implementación está
+integrada por PR #70; el cierre documental requiere su propio PR hacia `develop`.
+#38 permanece abierto hasta completar la entrega colectiva.
 
 ## Implementación e interfaces
 
@@ -194,7 +203,8 @@ Diagnóstico histórico, anterior a verificar IDE-DCE: CE1108 necesita al menos 
 con ABI/cortes/observables comparables, para cerrar #31. Se conserva compatibilidad
 tradicional sin implementar otro optimizador. CDC para síntesis y restricciones
 físicas requieren trabajo colectivo; las pruebas son simulación funcional.
-Revisión/commit/publicación/PR/merge dependen de la decisión del usuario/equipo.
+Ese diagnóstico precede a la publicación e integración autorizadas por PR #70.
+El nuevo cierre documental y la entrega colectiva conservan su revisión del equipo.
 No hay fallos nuevos conocidos sin resolver en el alcance probado.
 
 Pendiente histórico de #26, resuelto por el cierre temporal posterior: el requisito incluye AMAT de cada nivel, no solo
@@ -210,14 +220,16 @@ impiden sustituir sus poblaciones por las del modelo serial sin acreditarlas.
 El enunciado oficial, sección10 (página19), y el issue #38 exigen el enlace del
 repositorio y el hash del último commit al entregar. Repositorio:
 <https://github.com/fabrimena/Proyecto2_Arquitectura1>.
-El SHA final está **PENDIENTE** hasta publicar e integrar los cambios con las
-autorizaciones correspondientes y verificar el commit efectivamente entregado.
-El HEAD e461b70 de esta auditoría es la base y **no es el SHA final de entrega**.
+El SHA final está **PENDIENTE** hasta confirmar la integración definitiva
+`develop` → `main` y verificar el commit efectivamente entregado. La publicación
+e integración del aporte individual por PR #70 no sustituyen ese paso colectivo.
+Los SHA e461b70, 4a16239 y 192050e identifican bases de trabajo y
+**no son por ese motivo el SHA final de entrega**.
 
 Después de ese paso se prepara el archivo para TEC Digital con únicamente la URL
 y el SHA final verificado. Este informe y el guion no sustituyen ese archivo ni
-acreditan una publicación que todavía no se realizó. No se hace ninguna operación
-remota ni integración para completar este pendiente durante esta revisión.
+acreditan la entrega formal. El cierre individual no autoriza fusionar
+`develop` → `main` ni entregar en TEC Digital en nombre del equipo.
 
 ## Reproducción y evidencias
 
@@ -231,9 +243,31 @@ Para defender contratos y evitar interpretaciones incorrectas, consultar
 [guion-defensa-javier.md](guion-defensa-javier.md). El detalle de eventos/ratios y
 los registros históricos se conservan en [performance-analysis.md](performance-analysis.md).
 
+### Cierre documental del 20 de noviembre de 2026
+
+Se agregan 21 filas a la tabla principal de `simulation.md`: 19 bancos `tb_perf_*`
+y dos unitarios D18, con fuentes/oráculos revisados y sin duplicados. Se conservan
+las filas previas y los comandos L2/RAM. Se actualizan las referencias a PR #68/#70,
+sin reescribir mediciones históricas ni sustituir el SHA final de entrega.
+
+La única corrección de código adelanta las declaraciones de `flush_done` y
+`shadow_flush_done` en `tb_perf_stage_counters.sv`, eliminando dos warnings de
+red implícita. El log y los seis diarios de etapas coinciden byte a byte antes
+y después. Se conserva el aviso de sensibilidad a las 13 palabras de `counters`
+en `cache_isa_unit.sv`; no modifica el resultado ni justifica alterar el mux.
+
+Validación nueva: `make sim` termina 0 con 72 PASS, sin FAIL, NO-COMPILA ni
+SIN-CHEQUEO. Pasan 199 métodos Python: ensamblador, programas, modos, benchmarks,
+flush, configuraciones, AMAT y contratos independientes CE1108. No se repiten las
+12 pruebas de integración productiva CE1108; siguen respaldadas por la campaña
+histórica de 211 métodos y sus hashes verificados. No se atribuyen esas 12
+ejecuciones a este cierre documental ni se regeneran las 54 capturas anteriores.
+
 ## Campaña temporal definitiva sobre 4a16239
 
-Rama `feat/javier-cierre-final-amat-ce1108`, sin staging ni commit nuevo. El
+Registro histórico del 16 de noviembre: rama `feat/javier-cierre-final-amat-ce1108`,
+entonces sin staging ni commit nuevo. Posteriormente se publicó e integró por
+PR #70, como se indica en el estado vigente. El
 cierre anterior está integrado en4a16239; esta campaña no altera esos resultados
 ni el historial. Evidencia externa persistente:
 `/home/javier/Documentos/evidencias-arquitectura-amat-final-4a16239-20261116`.

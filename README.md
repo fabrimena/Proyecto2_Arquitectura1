@@ -255,5 +255,9 @@ Cada salida debe ser nueva. `--ide-dce` usa cortes B5 acreditados en el snapshot
 CE1108 indicado en el informe; otro productor requiere un manifiesto y cortes
 nuevos. Ver las poblaciones, resultados y limitaciones del
 [cierre temporal](docs/performance-analysis.md#cierre-temporal-por-transacción-y-dce-productivo-26-31-y-38).
-La contribución técnica no completa la entrega colectiva #38: revisión,
-presentación, publicación/integración y SHA final siguen pendientes.
+El aporte técnico de Javier ya está integrado en `develop` mediante el
+[PR #70](https://github.com/fabrimena/Proyecto2_Arquitectura1/pull/70).
+El cierre documental individual se revisa en un PR separado. La entrega colectiva
+#38 sigue pendiente de revisión del equipo, presentación, integración definitiva
+`develop` → `main`, entrega en TEC Digital y SHA del último commit realmente
+entregado. Ningún SHA de base sustituye automáticamente ese SHA final.
