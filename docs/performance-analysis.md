@@ -5,6 +5,11 @@ y las medidas de la L2 real se encuentran en «Cierre integrado, 16 de noviembre
 de 2026», al final; las limitaciones de integración de aquellos bloques no son
 una descripción del sistema vigente.
 
+Estado al 20 de noviembre: el aporte individual se integró por
+[PR #70](https://github.com/fabrimena/Proyecto2_Arquitectura1/pull/70).
+Las campañas fechadas se conservan como evidencia histórica; la revisión
+documental actual usa una rama separada y no completa la entrega colectiva #38.
+
 ## Issue #7, bloque A: contador de ciclos
 
 `rtl-p2/perf_counters.sv` es un módulo independiente, todavía sin conexión al
@@ -922,10 +927,15 @@ Guion de defensa: [aporte de Javier](guion-defensa-javier.md).
 
 ## Cierre temporal por transacción y DCE productivo (#26, #31 y #38)
 
-La rama `feat/javier-cierre-final-amat-ce1108` parte de `origin/develop` en
-`4a16239ecf3ce36a34be7c53f99ab05e6edfcc76`. Este SHA identifica la base,
-**no el último commit de entrega**. Los cambios siguen pendientes de revisión,
-commit y publicación autorizados. No se modifican los algoritmos de cachés,
+Registro de la campaña del 16 de noviembre: la rama
+`feat/javier-cierre-final-amat-ce1108` partió de `origin/develop` en
+`4a16239ecf3ce36a34be7c53f99ab05e6edfcc76`. Este SHA identifica aquella base,
+**no el último commit de entrega**. Actualización del 20 de noviembre: los dos
+commits del aporte de Javier ya se integraron en `develop` mediante el
+[PR #70](https://github.com/fabrimena/Proyecto2_Arquitectura1/pull/70).
+El cierre documental individual sigue en revisión; la integración definitiva
+`develop` → `main` y la entrega formal con SHA final corresponden al equipo.
+La campaña no modificó los algoritmos de cachés,
 controlador, buffers, pipeline, ROM, ISA ni el repositorio de CE1108.
 
 ### Definiciones temporales y contrato de observación
@@ -1145,16 +1155,22 @@ python3 tools/analizar_amat.py --report /tmp/p30-temporal-nuevo/comparaciones.js
 `--ide-dce` prepara exclusivamente el snapshot y fuentes con B5 acreditado.
 Otro commit requiere nuevos cortes/evidencia y `--manifest`; no se reutilizan
 los horizontes por suposición. El informe externo conserva los comandos B5,
-los símbolos, las capturas y los hashes. El PR68 sigue abierto; sus archivos
-`memory-hierarchy.md` y `simulation.md` se conservan sin cambios. Sus presupuestos
-nominales61/64 no sustituyen los tiempos por transacción/congestión medidos aquí.
+los símbolos, las capturas y los hashes. El
+[PR #68](https://github.com/fabrimena/Proyecto2_Arquitectura1/pull/68) ya fue
+integrado en `develop`; el PR #72 corrigió después el destino de la línea
+en la fila de `tb_l2_cache`. El cierre actual amplía la cobertura de
+`simulation.md` y conserva `memory-hierarchy.md`. El presupuesto nominal L2 de
+61 ciclos y los 64 observados en el acceso aislado de la jerarquía completa
+describen fronteras distintas; no sustituyen las latencias públicas por
+transacción ni los tiempos mayores bajo congestión medidos aquí. No se suman
+latencias solapadas ni se alteran las métricas históricas.
 
 **#26: completo en las métricas observables definidas** (L1, reads L2, RAM;
 posted sin respuesta y tasas RAM no aplicables se explican, no se inventan).
 **#31: comparación real completa en estos dos contrastes tradicional/IDE-DCE**;
 no constituye una familia general -O ni garantiza equivalencia universal.
 **#38: parcial**, preparación individual lista; faltan revisión colectiva,
-presentación, integración/publicación autorizadas y entrega formal con SHA final.
+presentación, integración definitiva `develop` → `main` y entrega formal con SHA final.
 La URL es https://github.com/fabrimena/Proyecto2_Arquitectura1 y el campo SHA
 queda **PENDIENTE DE INTEGRACIÓN FINAL**, nunca4a16239 como sustituto de entrega.
 
