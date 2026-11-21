@@ -28,13 +28,15 @@ module stage_case_issue8 #(
     parameter integer MODE=0, WAIT=0, SYNC=1, CFG=0
 ) (input logic clk, reset, flush_req, input integer scenario, policy);
 
+// Se declaran antes de conectar las instancias para evitar redes implícitas;
+// cada procesador conserva su propia confirmación de vaciado, de un solo bit.
+wire flush_done, shadow_flush_done;
 top #(.MEM_MODE(MODE), .STALL_CYCLES(WAIT), .ROM_SYNC(SYNC)) CPU (
     .clk(clk), .reset(reset), .flush_req(flush_req), .flush_done(flush_done),
     .debug_result(), .debug_rd(), .debug_write());
 top #(.MEM_MODE(MODE), .STALL_CYCLES(WAIT), .ROM_SYNC(SYNC)) SHADOW (
     .clk(clk), .reset(reset), .flush_req(flush_req), .flush_done(shadow_flush_done),
     .debug_result(), .debug_rd(), .debug_write());
-wire flush_done, shadow_flush_done;
 wire [3:0] id_mask, ex_mask, wb_mask;
 wire meta_ex, meta_wb, complete;
 perf_slot_mask CLASSIFIER (.bundle_in(CPU.id_bundle), .non_nop_mask(id_mask));
