@@ -92,7 +92,11 @@ module eviction_buffer #(
 
     // Resultado de la busqueda de forwarding.
     reg forward_hit;
-    reg [255:0] forward_line;
+    reg [PTR_W-1:0] forward_index;
+    wire [255:0] forward_line;
+
+    // Coincidencia de cada entrada con la direccion leida.
+    wire [EB_DEPTH-1:0] addr_match;
 
     // Señales internas para modificar la FIFO.
     wire push;
@@ -161,13 +165,25 @@ module eviction_buffer #(
         read_pending ||
         (mem_state != MEM_IDLE);
 
+    // Comparar cada entrada con la direccion solicitada.
+    // Cada comparacion es una asignacion continua con indice fijo,
+    // asi el bloque de busqueda no lee los arreglos con un indice
+    // variable dentro de @* (Icarus avisaba por eso).
+    genvar g;
+    generate
+        for (g = 0; g < EB_DEPTH; g = g + 1) begin : g_match
+            assign addr_match[g] =
+                (fifo_addr[g] == {read_addr[31:5], 5'b0});
+        end
+    endgenerate
+
     // Buscar si la direccion solicitada existe en la FIFO.
     // Se recorren las entradas desde la mas antigua.
     // Si hay varias coincidencias, gana la mas reciente.
     // La cabeza sigue disponible durante su escritura a RAM.
     always @* begin
         forward_hit = 1'b0;
-        forward_line = 256'd0;
+        forward_index = {PTR_W{1'b0}};
 
         search_index = 0;
 
@@ -178,15 +194,17 @@ module eviction_buffer #(
                 if (search_index >= EB_DEPTH)
                     search_index = search_index - EB_DEPTH;
 
-                if (fifo_addr[search_index] ==
-                    {read_addr[31:5], 5'b0}) begin
-
+                if (addr_match[search_index]) begin
                     forward_hit = 1'b1;
-                    forward_line = fifo_line[search_index];
+                    forward_index = search_index[PTR_W-1:0];
                 end
             end
         end
     end
+
+    // Linea de la entrada elegida; cero si no hay coincidencia.
+    assign forward_line =
+        forward_hit ? fifo_line[forward_index] : 256'd0;
 
     // Administrar las entradas de la FIFO.
     // Se permite insertar y retirar una linea en el mismo ciclo.
