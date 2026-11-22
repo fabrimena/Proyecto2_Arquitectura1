@@ -1033,8 +1033,8 @@ en este pipeline: no se inventa sensibilidad a una diferencia inexistente.
 El apagado eliminó la primera evidencia temporal; se reconstruyeron base y
 entrega y se repitieron las pruebas en almacenamiento persistente externo.
 
-Reproducción y detalle por issue: [verificación del cierre](verificacion-cierre-javier.md).
-Guion de defensa: [aporte de Javier](guion-defensa-javier.md).
+Reproducción y detalle por issue: [verificación del cierre](verificacion/verificacion-cierre-javier.md).
+Guion de defensa: [aporte de Javier](proceso/guion-defensa-javier.md).
 
 ## Cierre temporal por transacción y DCE productivo (#26, #31 y #38)
 
