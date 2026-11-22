@@ -5,7 +5,7 @@
 > `perf_vliw_monitor` (clasificación, metadatos y contadores) y `perf_stage_counters` están en
 > `top.sv`, y los contadores de la L1-D (K1-A y K1-B), la L2 y la RAM en `mem_hierarchy.sv`, junto con
 > la L2 real, la memoria principal y las instrucciones D18. El estado y los resultados vigentes están
-> en [performance-analysis.md](performance-analysis.md).
+> en [performance-analysis.md](../performance-analysis.md).
 
 Este monitor pasivo observa IF/ID/EX/WB. Recibe validez y avance del productor;
 no controla el procesador, no genera stalls ni deduce finalizaciones. Se desarrolla
