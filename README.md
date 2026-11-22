@@ -72,8 +72,10 @@ tools/      assembler.py y run_program.py: ensamblador y ejecución de programas
             load_file.py y extract_data.py: carga y extracción de archivos en la memoria
             run_ce1108.py, run_ce1108_source.py y adaptadores: integración con CE1108
 examples/   programas .asm, resultados esperados (.json) y archivos de prueba
-docs/       isa.md, microarchitecture.md, simulation.md y compiler-integration.md
-img/        diagrama de bloques
+docs/       documentación de diseño (índice en docs/README.md): jerarquía de memoria,
+            microarquitectura, análisis de rendimiento, ISA, interfaces, componentes,
+            decisiones y pruebas; verificacion/ (evidencia por issue) y proceso/ (plan y guion)
+img/        diagramas de bloques (proyecto 1 y proyecto 2)
 ```
 
 ## Simulación
@@ -175,10 +177,15 @@ pasos, el contrato y los resultados están en
 
 ## Documentación
 
+El índice completo, ordenado por función, está en [docs/README.md](docs/README.md). Los tres documentos
+que pide el enunciado son los tres primeros de esta tabla.
+
 | Documento | Contenido |
 |:---|:---|
-| [docs/isa.md](docs/isa.md) | Especificación del ISA, codificación de cada instrucción y green card |
+| [docs/memory-hierarchy.md](docs/memory-hierarchy.md) | Jerarquía de memoria: políticas de la L1-D y la L2 con su justificación, inclusión exclusiva, write buffer, eviction buffer, latencias y diagramas |
 | [docs/microarchitecture.md](docs/microarchitecture.md) | Diagramas del sistema y del núcleo, pipeline, ROM síncrona, jerarquía de datos, congelamiento, tiempos y módulos SystemVerilog |
+| [docs/performance-analysis.md](docs/performance-analysis.md) | Análisis de rendimiento: metodología, benchmarks, tasas por nivel, AMAT, utilización de la RAM y comparación de configuraciones |
+| [docs/isa.md](docs/isa.md) | Especificación del ISA, codificación de cada instrucción y green card |
 | [docs/simulation.md](docs/simulation.md) | Simulación, modelo de cada componente, memoria, ensamblador y testbenches |
 | [docs/compiler-integration.md](docs/compiler-integration.md) | Contrato con CE1108 y evidencia de la validación conjunta |
 
@@ -231,14 +238,12 @@ Sus cortes son observaciones declaradas, no certificaciones de retorno de main.
 
 | Documentación adicional | Contenido |
 |---|---|
-| [memory-hierarchy.md](docs/memory-hierarchy.md) | Diseño colectivo L1/L2/RAM y políticas |
-| [performance-analysis.md](docs/performance-analysis.md) | Historia y análisis integrado de rendimiento |
-| [benchmarks-memoria-p29.md](docs/benchmarks-memoria-p29.md) | Oráculos y resultados históricos/actuales de #29 |
-| [verificacion-cierre-javier.md](docs/verificacion-cierre-javier.md) | Cobertura por issue, pruebas, medidas y limitaciones |
-| [guion-defensa-javier.md](docs/guion-defensa-javier.md) | Demostración y defensa del aporte de Javier |
+| [benchmarks-memoria-p29.md](docs/verificacion/benchmarks-memoria-p29.md) | Oráculos y resultados históricos/actuales de #29 |
+| [verificacion-cierre-javier.md](docs/verificacion/verificacion-cierre-javier.md) | Cobertura por issue, pruebas, medidas y limitaciones |
+| [guion-defensa-javier.md](docs/proceso/guion-defensa-javier.md) | Demostración y defensa del aporte de Javier |
 
 La instrumentación temporal nueva agrega cohortes completas L2/RAM, respetando
-`medir` y dejando intactos `lcont`0–12 y `vaciarc`. AMAT L2 describe **lecturas**;
+`medir` y dejando intactos `lcont` 0–12 y `vaciarc`. AMAT L2 describe **lecturas**;
 los stores posted no tienen respuesta de escritura. La media RAM separa éxito,
 fallo, retry y operaciones excluidas/pendientes. No se suman niveles solapados.
 Los logs anteriores se siguen leyendo; no se inventan sus tiempos ausentes.
