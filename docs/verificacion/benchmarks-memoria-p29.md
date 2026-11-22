@@ -34,7 +34,7 @@ Nuevos, trece archivos:
 - `examples/archivos/archivo18k.bin`.
 - `tools/run_memory_benchmarks.py`.
 - `tests/test_memory_benchmarks.py`.
-- `docs/benchmarks-memoria-p29.md`.
+- `docs/verificacion/benchmarks-memoria-p29.md`.
 
 Modificado: Makefile, solo para agregar `test-memory-benchmarks` y `bench-memory`.
 No se necesita cambiar `docs/simulation.md`: no se agrega un banco SystemVerilog.
@@ -369,5 +369,5 @@ make archivo ARCHIVO=examples/archivos/archivo18k.bin ARCHIVO_MEM_MODE=2
 
 La suite conserva sus 35 métodos y controles; solo cambia la expectativa de
 etiqueta predeterminada a REAL. La matriz #30 y las cifras detalladas están en
-[performance-analysis.md](performance-analysis.md) y
+[performance-analysis.md](../performance-analysis.md) y
 [verificacion-cierre-javier.md](verificacion-cierre-javier.md).
