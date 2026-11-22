@@ -211,7 +211,7 @@ Pendiente histórico de #26, resuelto por el cierre temporal posterior: el requi
 contadores de tráfico. K1-B permite el AMAT observado L1 de demandas completas;
 las capturas L2 no conservan tiempos de aceptación/respuesta por transacción.
 Se registra por ello PARCIAL. La revisión y las fórmulas están en
-[performance-analysis.md](performance-analysis.md#revisión-histórica-del-requisito-amat-del-issue-26-base-4a16239).
+[performance-analysis.md](../performance-analysis.md#revisión-histórica-del-requisito-amat-del-issue-26-base-4a16239).
 La inclusión exclusiva y los stores non-blocking no impiden medir latencias:
 impiden sustituir sus poblaciones por las del modelo serial sin acreditarlas.
 
@@ -240,8 +240,8 @@ informe y propuestas de commit/PR se entregan fuera del repositorio. La carpeta
 persistente de esta revisión se identifica en el informe final de la sesión.
 
 Para defender contratos y evitar interpretaciones incorrectas, consultar
-[guion-defensa-javier.md](guion-defensa-javier.md). El detalle de eventos/ratios y
-los registros históricos se conservan en [performance-analysis.md](performance-analysis.md).
+[guion-defensa-javier.md](../proceso/guion-defensa-javier.md). El detalle de eventos/ratios y
+los registros históricos se conservan en [performance-analysis.md](../performance-analysis.md).
 
 ### Cierre documental del 20 de noviembre de 2026
 
@@ -300,7 +300,7 @@ La implementación usa dos observadores nuevos y conexiones pasivas en jerarquí
 No se modifica top, MC, caches, buffers, ROM, ISA ni etapas. Reset y `medir`
 comparten la ventana actual; `lcont`0–12 y `vaciarc` conservan su contrato.
 La instrumentación temporal y los mapas/cortes CE1108 se describen en el
-[cierre temporal](performance-analysis.md#cierre-temporal-por-transacción-y-dce-productivo-26-31-y-38).
+[cierre temporal](../performance-analysis.md#cierre-temporal-por-transacción-y-dce-productivo-26-31-y-38).
 
 #26 queda completo para medias observables L1/read-L2/RAM, con stores posted
 sin respuesta y tasas de caché RAM no aplicables explícitos. #31 queda completo
