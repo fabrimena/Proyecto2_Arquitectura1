@@ -1,5 +1,12 @@
 # D4-B1: módulo RTL independiente de métricas VLIW
 
+> **Reporte histórico.** Describe este bloque tal como se entregó en su rama, antes de la integración
+> final; lo que aquí «no se integra» o queda «pendiente» se refiere a ese momento. Hoy
+> `perf_vliw_monitor` (clasificación, metadatos y contadores) y `perf_stage_counters` están en
+> `top.sv`, y los contadores de la L1-D (K1-A y K1-B), la L2 y la RAM en `mem_hierarchy.sv`, junto con
+> la L2 real, la memoria principal y las instrucciones D18. El estado y los resultados vigentes están
+> en [performance-analysis.md](../performance-analysis.md).
+
 ## Objetivo, rama y alcance
 
 `rtl-p2/perf_vliw_monitor.sv` compone los bloques de métricas aprobados y el
@@ -155,7 +162,7 @@ No se afirma cancelación atómica de memoria ni se interviene sobre m_we.
 
 ## Testbench: programa reducido, referencias y pasividad
 
-La prueba usa tres configuraciones reales: modo0, modo1/espera1, modo1/espera4.
+La prueba usa tres configuraciones reales: modo 0, modo 1/espera1, modo 1/espera4.
 Cada una tiene una instancia del wrapper y un top SHADOW de igual configuración,
 programa, reloj, reset y horizonte, sin instrumentación. Se comparan secuencias
 de puertos GPR, ambos puertos DMEM, redirecciones, reloj del núcleo, 32 GPR y
@@ -171,7 +178,7 @@ El programa es más corto que D5-A y tiene expectativas propias:
 
 | Bundles | Escenario |
 |---|---|
-| 0–2 y NOP de destino16 | ALU y NOP válidos. |
+| 0–2 y NOP de destino 16 | ALU y NOP válidos. |
 | 4–8 | Bundle ALU+store+condicional falso, cargas palabra/byte, byte store y consumo N+3. |
 | 9–12 | Tres decrementos; store con BRU hacia atrás, dos tomados y salida no tomada. |
 | 13–21 | Saltos con/sin LSU, jóvenes anulados, NOP destino y enlaces. |
@@ -182,7 +189,7 @@ Hay ocho accesos LSU aceptados; no se incluyen LSU anuladas. Se verifican x2=0,
 x6/x7=77, x8=78, enlace x11=304, x9=9 y x13=13 del WB anterior a excepción.
 DMEM[0]=77, DMEM[4]=0x4D00, último store del bucle en DMEM[8]=0 y sentinelas
 intactos en las posiciones de stores anulados. Trap: PC352, una excepción y x30=99.
-No se impone la tabla72/91/148 de D5-A a este programa diferente.
+No se impone la tabla 72/91/148 de D5-A a este programa diferente.
 
 ## Resultados medidos
 

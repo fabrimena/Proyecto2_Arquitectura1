@@ -1,7 +1,7 @@
 # Guía de desarrollo del proyecto 2
 
 Esta guía dice qué archivo toca cada integrante para seguir la misma línea de diseño. Las decisiones y
-sus justificaciones están en [`decisiones-importantes.md`](decisiones-importantes.md): **D1 a D19** son
+sus justificaciones están en [`decisiones-importantes.md`](../decisiones-importantes.md): **D1 a D19** son
 las filas de su tabla de la sección 2, y las fechas están en su sección 7.
 
 Reglas para todos:
@@ -89,9 +89,9 @@ que crearlo. *Hecho* = implementado y probado. Si depende de otra pieza, se indi
 
 La tabla anterior registra asignaciones e hitos del desarrollo. En la rama de
 cierre, perf_cache_l2 y perf_memory están conectados a eventos públicos reales;
-los selectores9–12 funcionan, D18 forma parte de la clasificación y los runners
+los selectores 9–12 funcionan, D18 forma parte de la clasificación y los runners
 verifican la configuración elaborada. Las comparaciones #30 y la referencia
 bloqueante real son reproducibles. #31 valida la variante tradicional y queda
 PARCIAL hasta contar con dos niveles productivos de balc. README/análisis y
 entregables técnicos de Javier se actualizan sin reescribir módulos del equipo.
-Ver [verificación](verificacion-cierre-javier.md) y [guion](guion-defensa-javier.md).
+Ver [verificación](../verificacion/verificacion-cierre-javier.md) y [guion](guion-defensa-javier.md).

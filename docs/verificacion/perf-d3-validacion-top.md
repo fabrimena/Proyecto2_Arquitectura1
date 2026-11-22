@@ -1,5 +1,12 @@
 # D3: validación externa de métricas contra top
 
+> **Reporte histórico.** Describe este bloque tal como se entregó en su rama, antes de la integración
+> final; lo que aquí «no se integra» o queda «pendiente» se refiere a ese momento. Hoy
+> `perf_vliw_monitor` (clasificación, metadatos y contadores) y `perf_stage_counters` están en
+> `top.sv`, y los contadores de la L1-D (K1-A y K1-B), la L2 y la RAM en `mem_hierarchy.sv`, junto con
+> la L2 real, la memoria principal y las instrucciones D18. El estado y los resultados vigentes están
+> en [performance-analysis.md](../performance-analysis.md).
+
 D3 conecta A–D2 únicamente desde un testbench externo al procesador real.
 No integra contadores dentro de top ni modifica ISA, latencias, decoders,
 memorias, módulos de métricas o lógica de compañeros.
@@ -93,7 +100,7 @@ activo y el reloj bajo; no se escribe ningún GPR o registro de pipeline desde
 el testbench ni se utiliza force.
 
 Oráculos arquitectónicos adicionales: caso 1 x27=31 y x0=0; caso 2 DMEM[4]=333,
-x5=333, x6=1, x7=334; caso 3 x2=0, enlaces 128/224, destino55 y jóvenes sin efecto;
+x5=333, x6=1, x7=334; caso 3 x2=0, enlaces 128/224, destino 55 y jóvenes sin efecto;
 caso 4 AUTH=1/INIT=0, ALU 11 y par Feistel con datos/llave cero; caso 5 x2=77,
 culpable/jóvenes sin efecto, DMEM[4]=0xf00d, trap_count=1 y trap_pc=16.
 No se implementa una función Feistel de referencia adicional en D3.
@@ -102,7 +109,7 @@ Se ejercitan los 20 requisitos adversariales mediante estos escenarios y las
 aserciones por fecha: evento doble/adelantado/tardío/perdido, máscara errónea,
 burbuja/NOP, store/BRU sin GPR, dos salidas cripto, cancelaciones, WB anterior,
 reset, pausas/reanudaciones, flujo consecutivo, bucle, reloj y pasividad.
-No son20 testbenches diferentes ni 20 fallos inyectados: son condiciones que la
+No son 20 testbenches diferentes ni 20 fallos inyectados: son condiciones que la
 referencia detecta si divergen. No se modifican módulos protegidos para fabricar fallos.
 
 ## Resultados de contadores y ventanas
@@ -128,9 +135,9 @@ Se observan 14 finalizaciones con medición deshabilitada entre ambos casos.
 No se vuelven a contar al reanudar. Un reset con medición habilitada borra los
 acumulados y los metadatos de forma prioritaria, sin contar ese flanco.
 
-Cobertura medida: 92 NOP completados,3 stores,10 operaciones BRU completadas,
-un bundle de cuatro slots, dos rondas con par GPR real,6 cancelaciones ID por
-salto y2 por excepción (culpable EX e ID joven),14 completados fuera de ventana.
+Cobertura medida: 92 NOP completados, 3 stores, 10 operaciones BRU completadas,
+un bundle de cuatro slots, dos rondas con par GPR real, 6 cancelaciones ID por
+salto y 2 por excepción (culpable EX e ID joven),14 completados fuera de ventana.
 Las marcas de IF descartado se contrastan aparte; esas cantidades no son ciclos
 perdidos ni un conteo total de operaciones anuladas de toda la jerarquía.
 

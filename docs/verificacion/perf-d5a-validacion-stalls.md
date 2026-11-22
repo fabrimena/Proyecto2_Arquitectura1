@@ -1,5 +1,12 @@
 # D5-A: métricas durante congelamientos del pipeline
 
+> **Reporte histórico.** Describe este bloque tal como se entregó en su rama, antes de la integración
+> final; lo que aquí «no se integra» o queda «pendiente» se refiere a ese momento. Hoy
+> `perf_vliw_monitor` (clasificación, metadatos y contadores) y `perf_stage_counters` están en
+> `top.sv`, y los contadores de la L1-D (K1-A y K1-B), la L2 y la RAM en `mem_hierarchy.sv`, junto con
+> la L2 real, la memoria principal y las instrucciones D18. El estado y los resultados vigentes están
+> en [performance-analysis.md](../performance-analysis.md).
+
 ## Objetivo y base
 
 Validación externa de los contadores, metadatos y recuperación BRU con memoria

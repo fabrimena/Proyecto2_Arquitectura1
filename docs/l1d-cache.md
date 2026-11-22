@@ -313,7 +313,7 @@ propósito en una copia de `l1d_cache.sv`, y cada una hizo fallar las pruebas:
 ## 9. Pendiente de otros bloques
 
 - **Javier:** ya adaptó sus contadores (`perf_cache_l1d.sv`, `tb_perf_cache_l1d_k1a.sv`,
-  [perf-cache-l1d-k1a.md](perf-cache-l1d-k1a.md)) al bus versión 2 y a los eventos de víctimas y MSHR.
+  [perf-cache-l1d-k1a.md](verificacion/perf-cache-l1d-k1a.md)) al bus versión 2 y a los eventos de víctimas y MSHR.
   Falta medir con los benchmarks las comparaciones de `decisiones-importantes.md`, sección 5 (NINE contra
   exclusiva, write-through contra write-back, reemplazo, `N_MSHR` = 1, 2 y 4).
 - **Fabricio:** conectar `l1d_cache` en `top.sv` (`MEM_MODE = 2`) y pasar el puerto B (`vcr`, `camcon`)

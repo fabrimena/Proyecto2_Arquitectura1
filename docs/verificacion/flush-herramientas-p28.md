@@ -42,7 +42,7 @@ registro inicial. K1-B (`b99db7f`, `feat/26b-latencia-amat-l1d`) no se incorpora
 | `tests/rtl/tb_ce1108_program.sv` | Detectar store final, completar avances y vaciar |
 | `tools/run_program.py` | Exigir confirmación y descartar dumps parciales ante fallo |
 | `tests/test_flush_tools.py` | Nuevo: pruebas positivas y adversariales externas |
-| `docs/flush-herramientas-p28.md` | Nuevo: análisis, resultados y límites |
+| `docs/verificacion/flush-herramientas-p28.md` | Nuevo: análisis, resultados y límites |
 
 No se implementan los issues #9/#29, la L2 definitiva ni una interfaz CLI nueva.
 
@@ -358,7 +358,7 @@ Reproducción sin generar artefactos en el repositorio original:
 p28_dir="$(mktemp -d /tmp/p28-repetir.XXXXXX)"
 mkdir "$p28_dir/codigo"
 git archive HEAD | tar -x -C "$p28_dir/codigo"
-for p28_file in tests/rtl/tb_archivo.sv tests/rtl/tb_assembled_program.sv tests/rtl/tb_ce1108_program.sv tools/run_program.py tests/test_flush_tools.py docs/flush-herramientas-p28.md; do
+for p28_file in tests/rtl/tb_archivo.sv tests/rtl/tb_assembled_program.sv tests/rtl/tb_ce1108_program.sv tools/run_program.py tests/test_flush_tools.py docs/verificacion/flush-herramientas-p28.md; do
     cp --parents "$p28_file" "$p28_dir/codigo"
 done
 (

@@ -20,7 +20,7 @@ de actualización, cambio de rama, integración, staging o publicación.
 La arquitectura vigente es IF/ID/EX/WB con N+3, ROM síncrona y DMEM de 65536 bytes.
 MEM_MODE=0 conecta memoria directa. MEM_MODE=2 conecta top → árbitro A/B → L1-D
 → **l2_model** → DMEM. La configuración efectiva que acredita el banco es
-WB, WA, EXCLUSIVA, LRU, cuatro entradas WBUF, dos MSHR y bus versión2.
+WB, WA, EXCLUSIVA, LRU, cuatro entradas WBUF, dos MSHR y bus versión 2.
 Los controladores/CDC/buffers existentes por separado no componen aquí una L2 real.
 D18-A existe de forma independiente, pero sus instrucciones no se usan ni se conectan.
 
@@ -34,7 +34,7 @@ Nuevos, trece archivos:
 - `examples/archivos/archivo18k.bin`.
 - `tools/run_memory_benchmarks.py`.
 - `tests/test_memory_benchmarks.py`.
-- `docs/benchmarks-memoria-p29.md`.
+- `docs/verificacion/benchmarks-memoria-p29.md`.
 
 Modificado: Makefile, solo para agregar `test-memory-benchmarks` y `bench-memory`.
 No se necesita cambiar `docs/simulation.md`: no se agrega un banco SystemVerilog.
@@ -46,8 +46,8 @@ original, testbenches anteriores, ejemplos previos ni archivos CE1108.
 
 Los tres tienen **868 bundles, 872 avances de horizonte, 32 stores y 64 loads**:
 
-1. Escribir valores1..32 en 32 palabras distintas.
-2. Leer las32 palabras en el mismo orden y acumularlas.
+1. Escribir valores 1..32 en 32 palabras distintas.
+2. Leer las 32 palabras en el mismo orden y acumularlas.
 3. Repetir la lectura completa y su acumulación.
 4. Escribir x7=1, dejar separación y permanecer en `sye x0,fin` a sí mismo.
 
@@ -59,14 +59,14 @@ El ensamblador original verifica slots, N+3, RAW/WAW, saltos y capacidad IMEM.
 
 La fase de escritura usa siete bundles por palabra; cada lectura usa diez.
 868 =32×7+64×10+4. El runner reserva cuatro avances adicionales para drenar
-IF/ID/EX/WB. El corte872 se deriva de la longitud; no se amplió buscando PASS.
+IF/ID/EX/WB. El corte 872 se deriva de la longitud; no se amplió buscando PASS.
 El salto final no escribe enlace y proporciona reposo útil ilimitado durante
 mantenimiento, evitando que IMEM envuelva y reanude stores. El pipeline sigue
 **ACTIVO**: no existe HALT ni se certifica retorno semántico de main.
 
 ## Patrones y direcciones
 
-Cada programa realiza384 bytes de accesos lógicos (96×4) sobre 128 bytes útiles
+Cada programa realiza 384 bytes de accesos lógicos (96×4) sobre 128 bytes útiles
 (32 palabras únicas). No son 384 bytes de tráfico físico L1/L2/RAM.
 `span_bytes` es max(dirección)−min(dirección)+4 e incluye huecos, no datos útiles.
 
@@ -87,7 +87,7 @@ del patrón. La ejecución observó cero stalls globales con los stores MSHR vig
 
 Semilla `0x29c0de`. Fisher-Yates recorre i=127..1 en una lista inicial 0..127.
 Antes de cada intercambio actualiza `s=(1664525*s+1013904223) mod 2^32` y usa
-j=s mod(i+1). Se toman las primeras32 líneas y se multiplican por 32. No depende
+j=s mod(i+1). Se toman las primeras 32 líneas y se multiplican por 32. No depende
 de random de Python ni de una semilla implícita. Hay una palabra por línea,
 menor reutilización espacial que secuencial y a lo sumo dos líneas por conjunto.
 
@@ -105,7 +105,7 @@ También quedan en el encabezado ASM, oracle.json y summary.json externos.
 ### Stride y conflictos
 
 Con líneas de 32 B y 64 conjuntos: índice=(dirección>>5)&63.
-2048=32×64, por lo que todas las direcciones 0,2048,…,63488 tienen índice0 y
+2048=32×64, por lo que todas las direcciones 0,2048,…,63488 tienen índice 0 y
 etiquetas 0..31 distintas.32 líneas compiten por dos vías. El experimento observó
 814 stalls globales con esa secuencia; el diseño provoca competencia geométrica,
 pero el reporte no inventa un número de misses sin una interfaz que los exporte.
@@ -113,14 +113,14 @@ Todas las palabras se mantienen dentro de DMEM y alineadas a cuatro bytes.
 
 ## Oráculos independientes
 
-Antes de ejecutar se construyen32 GPR desde reset: x4=32, x5=32,
+Antes de ejecutar se construyen 32 GPR desde reset: x4=32, x5=32,
 x6=2×sum(1..32)=1056, x7=1 y x20=base alineada a 1024 de la última dirección.
-Los otros27 registros, incluido x0, deben seguir cero. x20 vale0/3072/63488
+Los otros 27 registros, incluido x0, deben seguir cero. x20 vale 0/3072/63488
 para secuencial/aleatorio/stride, respectivamente.
 
 DMEM esperada empieza con 16384 palabras cero. En la dirección a[i] se escribe
-i+1; ninguna otra palabra cambia. Las expectativas JSON contienen los32 GPR y
-las32 palabras escritas. El comparador revisa además **todas las16384 palabras**,
+i+1; ninguna otra palabra cambia. Las expectativas JSON contienen los 32 GPR y
+las 32 palabras escritas. El comparador revisa además **todas las 16384 palabras**,
 no solo los campos del JSON ni hashes. Igualdad entre modos nunca reemplaza gold.
 
 prepare_oracle interpreta estáticamente el subconjunto acotado de instrucciones
@@ -128,9 +128,9 @@ para contrastar fuente, direcciones, orden, valores y checksum con esas fórmula
 No simula el pipeline ni lee estados del DUT. Una fuente alterada, aun si ensambla,
 no puede redefinir silenciosamente el patrón o las expectativas de referencia.
 
-La traza cruda acredita el orden PC/dirección/dato/máscara de los32 stores y los
-valores1..32 dos veces en x5, además de observar el salto final. No se usan bytes
-parciales: cada store debe llevar1111. Un control cambia la máscara y debe fallar;
+La traza cruda acredita el orden PC/dirección/dato/máscara de los 32 stores y los
+valores 1..32 dos veces en x5, además de observar el salto final. No se usan bytes
+parciales: cada store debe llevar 1111. Un control cambia la máscara y debe fallar;
 las regresiones anteriores mantienen la cobertura funcional de guardab/cargabai.
 
 **Límite de la traza heredada:** registra niveles durante freeze y wb_pc no es un
@@ -145,7 +145,7 @@ un nivel retenido requieren observación de aceptación, fuera de esta API prote
 ## Runner, frescura y reportes
 
 La herramienta usa la API real run_program con MEM_MODE=0 y 2, trace=True,
-vcd=False y ciclos872. Copia la misma fuente a un destino externo y la congela
+vcd=False y ciclos 872. Copia la misma fuente a un destino externo y la congela
 para ambos modos. Cada programa/modo/ronda tiene directorio nuevo y elaboración
 independiente; no se cachean binarios ni se aceptan destinos previos.
 
@@ -158,12 +158,12 @@ completa y conocida de dumps. Solo después se publica summary.csv/summary.json.
 
 `--repeat 2` crea doce ejecuciones independientes y exige igual estado y medidas
 RTL por programa/modo entre rondas. run_id distingue reportes, sin sustituir la
-reserva exclusiva de directorios. Los errores devuelven código1 y conservan
-salidas parciales para diagnóstico; argparse usa2 para sintaxis inválida.
+reserva exclusiva de directorios. Los errores devuelven código 1 y conservan
+salidas parciales para diagnóstico; argparse usa 2 para sintaxis inválida.
 
 ## Resultados reales con l2_model
 
-Mismo horizonte872 y población96; la segunda ronda repite las medidas.
+Mismo horizonte 872 y población 96; la segunda ronda repite las medidas.
 E son flancos de ejecución, S stalls globales y F mantenimiento, incluyendo
 retorno del handshake. En todas las filas E=A+S. F no se suma a S.
 
@@ -206,14 +206,14 @@ cmp examples/archivos/archivo18k.bin /tmp/archivo18k-repro.bin
 ```
 
 Se ejecutó el flujo existente make archivo en copia externa, sin editar
-`tb_archivo.sv`, aserciones, MAXCICLOS ni presupuestos: código0, siete verificaciones,
+`tb_archivo.sv`, aserciones, MAXCICLOS ni presupuestos: código 0, siete verificaciones,
 cifrado 46089 ciclos, descifrado 46089, recuperación idéntica de 18432 bytes por cmp.
 Ese target usa MEM_MODE=0 por defecto; esta validación prueba archivo/Feistel4,
 **no capacidad combinada L1-D/L2**. La suite #28 conserva sus pruebas pequeñas en 0/1/2.
 
 ## Pruebas y controles negativos
 
-La suite unittest final contiene35 métodos (17 estáticos y 18 con preparación RTL),
+La suite unittest final contiene 35 métodos (17 estáticos y 18 con preparación RTL),
 sin skips. Prepara doce ejecuciones reales para dos rondas y seis adicionales
 por CLI; no son 35 programas distintos. Acredita ensamblado, direcciones, población,
 semilla, geometría, límites, N+3, IMEM, oráculos, ambas configuraciones, orden,
@@ -239,9 +239,9 @@ a la segunda. El detalle de comandos/códigos/tiempos queda en evidencia persist
 | make test-assembler | 58 métodos | 58 métodos | 0/0 |
 | make test-programs | 14 métodos | 14 métodos | 0/0 |
 | make test-memory-modes | 16 métodos | 16 métodos | 0/0 |
-| make archivo | 7 verificaciones;386 bytes idénticos | Igual | 0/0 |
+| make archivo | 7 verificaciones; 386 bytes idénticos | Igual | 0/0 |
 | make tb_mem_hierarchy | 43 verificaciones | Igual | 0/0 |
-| make tb_perf_integracion_top | 3654774 verificaciones;60 capturas | Igual | 0/0 |
+| make tb_perf_integracion_top | 3654774 verificaciones; 60 capturas | Igual | 0/0 |
 | make tb_perf_cache_l1d_k1a | 247770 verificaciones | Igual | 0/0 |
 | make tb_perf_cache_l1d_k1b | 979004 verificaciones | Igual | 0/0 |
 | unittest test_flush_tools.py (#28) | 10 métodos | 10 métodos | 0/0 |
@@ -279,9 +279,9 @@ fronteras, frescura y limitaciones. Cada prueba describe preparación, estímulo
 resultado esperado y defecto detectado; los negativos explican mutación y causa.
 Makefile solo explica targets y destino externo, sin separadores ornamentales.
 
-El manifiesto inicial registra433 archivos de Arquitectura. Solo Makefile cambia;
-los otros432 archivos anteriores se conservan por SHA-256. El manifiesto final incluye también tamaño y permisos.
-Se agregan13 archivos autorizados, sin borrar ninguno. Índice, HEAD y referencias
+El manifiesto inicial registra 433 archivos de Arquitectura. Solo Makefile cambia;
+los otros 432 archivos anteriores se conservan por SHA-256. El manifiesto final incluye también tamaño y permisos.
+Se agregan 13 archivos autorizados, sin borrar ninguno. Índice, HEAD y referencias
 del proyecto se conservan. Se contrasta también Compiladores por hash, sin escribir
 allí ni restaurar posibles cambios de otra sesión.
 
@@ -339,23 +339,23 @@ REAL: run_program ahora transmite parámetros por -P, verifica instancias reales
 y exige ELAB_CONFIG más CACHE_CONFIG concordantes. MODEL requiere petición
 explícita L2_MODEL1 y no publica contabilidad ficticia L2/RAM.
 
-Los mismos tres programas y sus nueve fixtures conservan sus bytes,868 bundles,
-872 avances,32 stores,64 loads y checksum1056. Se verifican todos los GPR y DMEM,
+Los mismos tres programas y sus nueve fixtures conservan sus bytes, 868 bundles,
+872 avances, 32 stores, 64 loads y checksum 1056. Se verifican todos los GPR y DMEM,
 trazas específicas y persistencia. Los resultados anteriores con MODEL no se
 reemplazan: la L2 real registra E=872/2606/10260, S=0/1734/9388 y F=653/1936/732
 para secuencial/aleatorio/stride. Dos rondas repiten estados y medidas.
 
-execution.json conserva su esquema base1 y añade observation_schema2, parámetros,
+execution.json conserva su esquema base 1 y añade observation_schema2, parámetros,
 procedencia y vectores de métricas. Los formatos de GPR/DMEM/traza no cambian.
 La API anterior conserva el orden de sus argumentos; los nuevos se agregan al
 final. --config permite usar tanto REAL como MODEL de manera acreditada.
 La captura cierra métricas antes de flush: las cifras de mantenimiento no se
 suman al servicio de demandas ni al IPC del programa.
 
-El archivo18k conserva exactamente su hash y18432 bytes. En la jerarquía real,
-make archivo recupera el original,83018 ciclos por cifrado/descifrado y32264
+El archivo18k conserva exactamente su hash y 18432 bytes. En la jerarquía real,
+make archivo recupera el original, 83018 ciclos por cifrado/descifrado y 32264
 flancos de espera de vaciado por fase. Se agrega un estudio de capacidad con
-dos pasadas por576 líneas, checksum independiente y DMEM completa, midiendo
+dos pasadas por 576 líneas, checksum independiente y DMEM completa, midiendo
 solo el intervalo D18 de la segunda pasada. Hay evidencia de hits/misses y
 lecturas RAM; el éxito criptográfico no sustituye esa prueba de capacidad.
 
@@ -367,7 +367,7 @@ python3 tools/comparar_configuraciones.py --capacity --output /tmp/capacidad18k-
 make archivo ARCHIVO=examples/archivos/archivo18k.bin ARCHIVO_MEM_MODE=2
 ```
 
-La suite conserva sus35 métodos y controles; solo cambia la expectativa de
+La suite conserva sus 35 métodos y controles; solo cambia la expectativa de
 etiqueta predeterminada a REAL. La matriz #30 y las cifras detalladas están en
-[performance-analysis.md](performance-analysis.md) y
+[performance-analysis.md](../performance-analysis.md) y
 [verificacion-cierre-javier.md](verificacion-cierre-javier.md).

@@ -8,23 +8,25 @@ La regla del proyecto sigue igual: el procesador del proyecto 1 (`rtl/`) no se m
 va en `rtl-p2/` y `tb-p2/`, y con la caché desactivada todas las pruebas del proyecto 1 dan exactamente
 lo mismo. La única extensión del ISA es la que permite el enunciado (sección 4.4).
 
-**Acción inmediata:** la política exclusiva tiene que acordarse con el profesor antes de la iteración 4
-(enunciado 3.2.4 y 7.1.4). El correo sale antes de que empiece la L2 (sección 4.1).
+**Estado al 21 de noviembre de 2026:** todas las decisiones de este documento están aplicadas en
+`develop`. El profesor aprobó la política exclusiva como crédito extra antes de la iteración 4
+(enunciado 3.2.4 y 7.1.4), así que es la política por defecto y NINE queda como parámetro. La sección 1
+resume el estado final; las demás conservan la propuesta original con el estado de cada parte.
 
-## 1. Punto de partida
+## 1. Estado final
 
 | Bloque | Estado en `develop` | Responsable |
 |:---|:---|:---|
 | Congelamiento del núcleo y modelo de stalls | Hecho y probado (`tb_pipeline_stall`) | Fabricio |
-| Contadores de ciclos, bundles, instrucciones, saltos y eventos de la L1-D | Hechos y probados; `perf_vliw_monitor` y `perf_stage_counters` ya están instanciados en `top`. K1-A/K1-B están conectados; este cierre agrega L2 y RAM con sus eventos públicos | Javier |
+| Contadores de ciclos, bundles, instrucciones, saltos, etapas, L1-D, L2 y RAM | Hechos y probados; `perf_vliw_monitor` y `perf_stage_counters` están instanciados en `top`, y los de la L1-D (K1-A/K1-B), la L2 y la RAM en `mem_hierarchy.sv`. `lcont` lee los selectores 0 a 12 | Javier |
 | L1-D y write buffer | Hechos y probados: write-back, write-allocate, LRU, forwarding, 4 entradas, MSHR de stores, bus versión 2 y vaciado. Conectados en `mem_hierarchy.sv` con el arbitro del puerto B | José |
-| Memoria principal y eviction buffer | Hechos y probados: `mem_controller.sv` (25 MHz, `MEM_DIV` = 4, Tmem = 53, timeout de 256 ciclos) y `eviction_buffer.sv` (4 entradas, reenvío de línea sucia). Falta conectarlos en `mem_hierarchy.sv` (#27) | Dylan |
-| L2 | Hecha y probada: bus versión 2, write-back y write-allocate, `INCL_EXCLUSIVE` por defecto y `INCL_NINE` como parámetro, PLRU de árbol y Random, vaciado de líneas sucias y diez eventos `ev_l2_*`. El almacenamiento está en `l2_arrays.sv`. Falta conectarla en `mem_hierarchy.sv` (#27) | Alejandro |
+| Memoria principal y eviction buffer | Hechos y probados: `mem_controller.sv` (25 MHz, `MEM_DIV` = 4, Tmem = 53, timeout de 256 ciclos) y `eviction_buffer.sv` (4 entradas, reenvío de línea sucia). Conectados en `mem_hierarchy.sv` desde el #27 | Dylan |
+| L2 | Hecha y probada: bus versión 2, write-back y write-allocate, `INCL_EXCLUSIVE` por defecto y `INCL_NINE` como parámetro, PLRU de árbol y Random, vaciado de líneas sucias y diez eventos `ev_l2_*`. El almacenamiento está en `l2_arrays.sv`. Conectada en `mem_hierarchy.sv` desde el #27 y segmentada en 4 etapas desde el #64 | Alejandro y Fabricio |
 | ROM de instrucciones, puerto B y conexión de la jerarquía en `top` | Hechos: `rom_sync.sv`, `l1d_port_arbiter.sv` y `mem_hierarchy.sv` instanciados en `top` con `MEM_MODE = 2`, con la jerarquía completa (L2 real, eviction buffer y controlador) desde el #27 | Fabricio |
 
-`make sim`: 63 PASS, 0 FAIL. `make test-programs`: 14 OK. Quedan 2 warnings de Icarus, los dos en
-`rtl-p2/eviction_buffer.sv` (`@*` sensible a todo un arreglo, en los testbenches que instancian el
-buffer); el proyecto 1 terminó con 0 y conviene dejarlo igual (Dylan).
+`make sim`: 72 PASS, 0 FAIL. `make test-programs`: 14 OK. Queda 1 warning de Icarus, en
+`rtl-p2/cache_isa_unit.sv:53` (`@*` sensible a todo un arreglo); no cambia el resultado. Los de
+`rtl-p2/eviction_buffer.sv` se quitaron en el PR #74 y los de `tb_perf_stage_counters.sv` en el #73.
 
 ## 2. Resumen
 
@@ -234,7 +236,7 @@ cada store iría a la L2, que no tiene esa línea porque está en la L1-D: la L2
   L2 a la L1-D y líneas que la L2 manda a la RAM.
 - **Acuerdo con el profesor:** Fabricio manda el correo con esta sección ahora, antes de que Alejandro
   empiece la L2. Si no la aprueba, `INCL_POLICY = INCL_NINE` queda por defecto y la exclusiva se presenta
-  solo como comparación.
+  solo como comparación. **Estado:** el profesor la aprobó, así que la exclusiva quedó por defecto.
 
 ### 4.2 Caché non-blocking (José; contadores: Javier)
 
@@ -444,4 +446,4 @@ No se atribuyen a Javier las cachés, buffers, CDC ni la segmentación de L2.
 
 #31 continúa PARCIAL por falta de dos niveles reales de salida ASM de balc;
 los informes IR no son variantes máquina. El estado por issue y la evidencia
-se mantienen en [verificacion-cierre-javier.md](verificacion-cierre-javier.md).
+se mantienen en [verificacion-cierre-javier.md](verificacion/verificacion-cierre-javier.md).

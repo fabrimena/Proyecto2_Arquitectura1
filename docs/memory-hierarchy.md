@@ -59,7 +59,7 @@ La exclusiva convierte a la L2 en la caché *víctima* de la L1-D: las líneas q
 terminan en la L2, sin duplicarse. Es el motivo de que el archivo de prueba de 18 KB
 (`examples/archivos/archivo18k.bin`) quepa en la configuración exclusiva y no en la de NINE.
 
-### 1.3 Estado de integración (a 15 de noviembre de 2026)
+### 1.3 Estado de integración (a 21 de noviembre de 2026)
 
 Este documento describe el diseño, que es lo que está implementado y probado. Con `MEM_MODE = 2`,
 `mem_hierarchy.sv` instancia la jerarquía completa en el camino del procesador (issue #27):
@@ -423,11 +423,13 @@ la L2 real conectada, el fallo se resuelve en 8 ciclos (si la L2 acierta) o en 6
 
 ---
 
-## 9. Pendientes
+## 9. Trabajo fuera del alcance
 
-| Pendiente | Quién | Referencia |
+La jerarquía está completa y conectada, y sus contadores de la L2 y la RAM están verificados en el
+cierre #26 ([análisis](performance-analysis.md)). Queda fuera del alcance de la simulación:
+
+| Punto | Quién | Referencia |
 |:---|:---|:---|
-| Contadores L2/RAM | Javier | Conectados y verificados en el cierre #26; [análisis](performance-analysis.md) |
 | CDC para síntesis: relojes, sincronizadores y buses multibit | Dylan | `memory-main-eviction-buffer.md`, sección 3 |
 
 Los contratos de señales de cada uno de estos enlaces están en

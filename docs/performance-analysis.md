@@ -5,10 +5,120 @@ y las medidas de la L2 real se encuentran en «Cierre integrado, 16 de noviembre
 de 2026», al final; las limitaciones de integración de aquellos bloques no son
 una descripción del sistema vigente.
 
-Estado al 20 de noviembre: el aporte individual se integró por
-[PR #70](https://github.com/fabrimena/Proyecto2_Arquitectura1/pull/70).
-Las campañas fechadas se conservan como evidencia histórica; la revisión
-documental actual usa una rama separada y no completa la entrega colectiva #38.
+Estado al 21 de noviembre: el aporte de Javier se integró por
+[PR #70](https://github.com/fabrimena/Proyecto2_Arquitectura1/pull/70) y su cierre
+documental por el PR #73. Las campañas fechadas se conservan como evidencia histórica.
+La sección «Resumen de resultados» que sigue reúne las métricas finales de la
+configuración elegida, las tasas por nivel y la comparación de políticas.
+
+## Resumen de resultados (21 de noviembre de 2026)
+
+Datos de `develop` `f8a3641`, obtenidos con `python3 tools/comparar_configuraciones.py`
+(dos rondas con resultados idénticos) y `python3 tools/analizar_amat.py` sobre su reporte.
+
+### Metodología
+
+Los contadores son de hardware: cuentan con `clk`, así que siguen contando mientras el núcleo
+está congelado, y solo observan (no cambian ningún tiempo). Cada nivel tiene los suyos:
+
+| Nivel | Módulos | Qué cuentan |
+|:---|:---|:---|
+| Procesador | `perf_vliw_monitor` y `perf_stage_counters` (en `top`) | Ciclos, bundles, instrucciones no NOP, ciclos de stall por memoria, ciclos perdidos por saltos y ocupación, burbujas y stalls de IF, ID, EX y WB |
+| L1-D | `perf_cache_l1d` y `perf_cache_l1d_latency` (en `mem_hierarchy`) | Lecturas y escrituras con hit o miss, write buffer, RAW, víctimas y MSHR; servicio y espera de cada acceso |
+| L2 | `perf_cache_l2` y `perf_cache_l2_latency` | Lecturas y escrituras que llegan desde la L1-D con hit o miss, llenados, desalojos y latencia de cada transacción |
+| RAM | `perf_memory` y `perf_memory_latency` | Lecturas, escrituras, ciclos ocupados transfiriendo, timeouts y errores |
+
+Un programa puede leerlos con `lcont` (selectores 0 a 12) y abrir o cerrar la ventana de medición
+con `medir`. Las tasas, el IPC, el AMAT y la utilización se calculan en Python a partir de los
+contadores. Cada corrida compara además los 32 registros y las 16384 palabras de la memoria contra
+un modelo de referencia, así que un resultado rápido pero incorrecto no pasa.
+
+Benchmarks (`examples/bench_*.asm`): 868 bundles, 386 instrucciones no NOP y 96 accesos a memoria
+(64 cargas y 32 stores) cada uno. **Secuencial** recorre 4 líneas seguidas; **aleatorio** toca 32
+líneas en orden pseudoaleatorio; **stride** toca 32 líneas separadas 2048 bytes, que caen todas en el
+mismo conjunto de la L1-D (2 vías) y en 2 conjuntos de la L2 (8 vías en total).
+
+### Configuración elegida
+
+Exclusiva, L1-D write-back + write-allocate con LRU, 2 MSHR y write buffer de 4, L2 con pseudo-LRU,
+eviction buffer de 4 y RAM a 25 MHz (`MEM_DIV` = 4, Tmem = 53).
+
+| Métrica | Secuencial | Aleatorio | Stride |
+|:---|---:|---:|---:|
+| Ciclos | 872 | 2606 | 10260 |
+| IPC (386 instrucciones / ciclos) | 0.443 | 0.148 | 0.038 |
+| Ciclos de stall por memoria | 0 | 1734 | 9388 |
+| Ciclos perdidos por saltos | 2 | 2 | 2 |
+| L1-D, lecturas: hit / miss | 64 / 0 | 64 / 0 | 0 / 64 |
+| L1-D, escrituras: hit / miss | 0 / 32 | 0 / 32 | 0 / 32 |
+| L1-D, hit rate / miss rate | 66.7 % / 33.3 % | 66.7 % / 33.3 % | 0 % / 100 % |
+| L1-D, AMAT (ciclos; lecturas / escrituras) | 1.0 (1.0 / 1.0) | 19.1 (1.0 / 55.2) | 98.8 (107.0 / 82.4) |
+| L2, accesos desde la L1-D (lecturas / escrituras) | 4 / 0 | 32 / 0 | 96 / 94 |
+| L2, hit rate / miss rate | 0 % / 100 % | 0 % / 100 % | 0 % / 100 % |
+| L2, latencia media de una lectura que falla (ciclos) | 64 | 64 | 99.5 |
+| RAM, lecturas / escrituras | 4 / 0 | 32 / 0 | 96 / 83 |
+| RAM, ciclos de transferencia | 212 | 1696 | 9443 |
+| RAM, utilización del ancho de banda | 24.3 % | 65.1 % | 92.0 % |
+
+La utilización es ciclos de transferencia / ciclos medidos. Como el controlador atiende una línea a
+la vez y cada línea ocupa Tmem = 53 ciclos, es la misma fracción que los bytes transferidos sobre el
+máximo teórico de 32 bytes cada 53 ciclos (secuencial: 4 × 53 = 212 de 872). En stride la RAM
+aceptó 83 escrituras y una sigue en curso al cerrar la medición (82 completas).
+
+Lectura de la tabla:
+
+- **Secuencial:** los 32 stores fallan porque la línea todavía no está, pero los MSHR los juntan en 4
+  lecturas a la L2 sin detener el núcleo (0 ciclos de stall). Después las 64 cargas aciertan. El IPC
+  de 0.443 lo limita el programa (los NOP de la calendarización), no la memoria.
+- **Aleatorio:** 32 líneas distintas son 32 idas a la RAM. Los stores que fallan llenan los 2 MSHR y el
+  núcleo espera (AMAT de escrituras de 55 ciclos); las cargas aciertan porque los datos caben en la L1-D.
+- **Stride:** todos los accesos fallan en los dos niveles por conflicto. Con la exclusiva cada víctima
+  de la L1-D baja a la L2 (94 escrituras) y las sucias siguen a la RAM, que queda ocupada el 92 % del
+  tiempo. Es el peor caso: 11.8 veces los ciclos del secuencial.
+- **L2 sin aciertos:** en estos tres programas cada línea se usa por primera vez o el conflicto la saca
+  antes de volver a usarla. La L2 acierta cuando los datos no caben en la L1-D pero sí en la L2: en la
+  prueba de capacidad (sección «18 KiB: corrección y capacidad») las 576 lecturas de la segunda pasada
+  aciertan en la L2 con la exclusiva.
+
+### Comparación de políticas
+
+Cada fila cambia una sola cosa respecto de la configuración elegida (ciclos):
+
+| Configuración | Secuencial | Aleatorio | Stride | Qué muestra |
+|:---|---:|---:|---:|:---|
+| Elegida (exclusiva) | 872 | 2606 | 10260 | Referencia |
+| NINE | 872 | 2606 | 8452 | En stride la L2 conserva su copia y no recibe cada víctima: 32 escrituras a la L2 en vez de 94 y 32 a la RAM en vez de 83 (18 % menos ciclos) |
+| Write-through + no-write-allocate (con NINE) | 971 | 2778 | 8240 | Contra NINE con write-back: cada store va a la L2 y cuesta 11 % y 7 % más en secuencial y aleatorio; en stride ahorra 2.5 % porque no trae la línea en un store que falla |
+| FIFO en la L1-D | 872 | 2606 | 10260 | Igual: en secuencial y aleatorio los datos caben en la L1-D y en stride todo falla con cualquier política |
+| Random en la L1-D | 872 | 2606 | 10260 | Igual, por la misma razón |
+| Random en la L2 | 872 | 2606 | 9980 | En stride conserva una línea útil (1 hit) y ahorra 4 lecturas a la RAM (2.7 % menos ciclos) |
+| 1 MSHR | 1128 | 2920 | 10907 | Con un solo MSHR la L1-D no usa la ruta non-blocking: cada store que falla detiene el núcleo hasta traer la línea (29 % más en secuencial) |
+| 4 MSHR | 872 | 2476 | 10260 | Más stores en vuelo: 5 % menos en aleatorio, nada en los otros |
+| RAM a 50 MHz (`MEM_DIV` = 2, Tmem = 39) | 872 | 2186 | 7768 | Una RAM más rápida baja 16 % el aleatorio y 24 % el stride |
+
+Prueba de capacidad con 18 KB (576 líneas distintas, dos pasadas): la exclusiva tarda 8639 ciclos y
+sus 576 lecturas aciertan en la L2; NINE tarda 22975 ciclos (2.7 veces más), con 320 aciertos y 256
+idas a la RAM. Con la exclusiva caben 4 + 16 = 20 KB distintos; con NINE, 16 KB.
+
+### Justificación de las decisiones con estos datos
+
+- **Exclusiva:** da 20 KB útiles en vez de 16 KB y es 2.7 veces más rápida cuando los datos no caben
+  en la L1-D pero sí entre los dos niveles. Su costo es más tráfico de la L1-D a la L2 cuando no hay
+  reuso (stride, 21 % más ciclos que NINE). Se eligió porque los programas de cifrado recorren archivos
+  más grandes que la L1-D.
+- **Write-back + write-allocate:** manda menos escrituras a la L2 que write-through, que tarda 11 % más
+  en el secuencial; además la exclusiva necesita write-back (write-through + exclusiva no es válida).
+- **2 MSHR:** con 1 los stores que fallan vuelven a detener el núcleo y el secuencial tarda 29 % más;
+  con 4 solo mejora 5 % el aleatorio. Dos es el punto donde el área extra todavía rinde.
+- **LRU en la L1-D y pseudo-LRU en la L2:** en estos patrones FIFO y Random empatan o ganan poco
+  (Random en la L2, 2.7 % en el caso patológico de stride). LRU con 2 vías cuesta 1 bit por conjunto,
+  igual que FIFO, y el pseudo-LRU de árbol 3 bits por conjunto; los dos son deterministas y aprovechan
+  el reuso cuando lo hay.
+- **RAM a 25 MHz:** es el ejemplo del enunciado (Tmem = 53); la fila de 50 MHz muestra cuánto depende
+  cada patrón de la memoria principal.
+
+Las optimizaciones del compilador de CE1108 se miden en la sección «CE1108: dos variantes
+productivas verificadas» (con DCE, el programa de funciones baja de 6193 a 2176 ciclos).
 
 ## Issue #7, bloque A: contador de ciclos
 
@@ -609,7 +719,7 @@ nuevo. Cada ejecución conserva hashes de todos los RTL elaborados.
 VLIW IF/ID/EX/WB, cuatro slots, ROM síncrona, regla N+3 y Feistel4 se conservan.
 Modo 0 mantiene DMEM directa; modo 1 añade esperas sintéticas; modo 2 usa L1-D
 4 KiB/2 vías/32 B, WB+WA/LRU, WBUF4/MSHR2, exclusiva, L2 real 16 KiB/4 vías/PLRU
-con cuatro etapas, EB4 y controlador de RAM con MEM_DIV4 (Tmem53). MODEL1
+con cuatro etapas, EB4 y controlador de RAM con MEM_DIV4 (Tmem 53). MODEL1
 reemplaza L2/EB/MC por el proveedor provisional: sus ceros L2/RAM son ausencia
 de instrumentación real, no evidencia de cero tráfico físico.
 
@@ -677,7 +787,7 @@ Lecturas=0+1; escrituras=2+3; hits=0+2; misses=1+3; accesos=0+1+2+3.
 Las decisiones pertenecen a S2, mientras fills/invalidados consumen las etapas
 posteriores. Una ventana que corte peticiones pendientes no garantiza igualdad
 entre aceptaciones y decisiones dentro de ese intervalo. No se interpreta el
-índice9 como escrituras físicas aceptadas, ni se mezcla reemplazo con vaciado.
+índice 9 como escrituras físicas aceptadas, ni se mezcla reemplazo con vaciado.
 
 Se reutiliza `perf_memory` de Dylan sin modificarlo. Recibe directamente
 req_accept, req_we_accepted, transfer_busy, timeout_event y error_event de MC.
@@ -689,24 +799,24 @@ solo sus eventos públicos se contabilizan en clk, sin otro CDC introducido.
 
 ### D18 y ventanas
 
-lcont0–8 conservan sus fuentes; 9=hits L2, 10=misses L2, 11=lecturas+escrituras
+lcont 0–8 conservan sus fuentes; 9=hits L2, 10=misses L2, 11=lecturas+escrituras
 aceptadas RAM, 12=busy RAM. 13–31 retornan cero. sel[5] selecciona la mitad alta;
 se captura PRE en EX, se retiene durante freeze y se escribe por LSU en WB,
-con N+3. Dos lecturas de mitades no son atómicas: medir0 permite obtener una
+con N+3. Dos lecturas de mitades no son atómicas: medir 0 permite obtener una
 instantánea estable. Modos sin jerarquía y MODEL1 no inventan contadores reales.
 
-medir0 incluye su flanco de aceptación EX usando el enable anterior; medir1
+medir 0 incluye su flanco de aceptación EX usando el enable anterior; medir 1
 abre a partir del siguiente flanco. vaciarc espera el vaciado encadenado real,
 retira req/ack y permite continuar. Con medición abierta su espera pertenece
-al stall global; con medir0 no se agrega actividad de mantenimiento.
+al stall global; con medir 0 no se agrega actividad de mantenimiento.
 
 El runner captura GPR y todos los contadores al mismo horizonte efectivo,
 cierra la entrada externa y luego solicita el vaciado antes de volcar DMEM.
 La memoria se acepta solo con flush confirmado, retorno a reposo y ausencia de
 nuevos efectos útiles. El núcleo continúa activo: no hay HALT artificial.
 Para estudios con calentamiento, `defer_measurement=True` excluye el arranque
-hasta observar el primer medir0 y deja luego a D18 gobernar la ventana. Sin
-ese medir0, la ventana permanece vacía; no se frena la ejecución.
+hasta observar el primer medir 0 y deja luego a D18 gobernar la ventana. Sin
+ese medir 0, la ventana permanece vacía; no se frena la ejecución.
 
 ### Métricas calculadas por software
 
@@ -732,9 +842,9 @@ para las capturas nuevas; no modifica ni completa artificialmente las antiguas.
 
 El [issue #26](https://github.com/fabrimena/Proyecto2_Arquitectura1/issues/26)
 requiere accesos, hits, misses, tasas y AMAT de cada nivel. El enunciado oficial,
-sección5.2 (página10), exige contadores que permitan calcularlo; sección7.1.5
-requiere analizarlo con los benchmarks. Las Notas de Clase v0.4, §6.2, página108,
-ecuación6.1 y ejemplo6.2, distinguen dos expresiones:
+sección 5.2 (página 10), exige contadores que permitan calcularlo; sección 7.1.5
+requiere analizarlo con los benchmarks. Las Notas de Clase v0.4, §6.2, página 108,
+ecuación 6.1 y ejemplo 6.2, distinguen dos expresiones:
 
 ```text
 AMAT = HR × T_hit + MR × T_miss
@@ -769,7 +879,7 @@ Se exige una época sin overflow y sin errores de protocolo K1-B.
 verifica log, ventana, imagen/binario y conserva los reportes originales. Su
 suite usa duraciones independientes, stores aceptados sin espera, cohortes
 incompletas, población vacía y corrupciones de procedencia. No cambia el RTL,
-los runners ni la producción de las54 ejecuciones ya verificadas.
+los runners ni la producción de las 54 ejecuciones ya verificadas.
 
 | Referencia exclusiva REAL | Completados K1-B | Servicio | AMAT observado L1 (ciclos) |
 |---|---:|---:|---:|
@@ -811,8 +921,8 @@ python3 -m unittest discover -s tests -p test_analizar_amat.py -v
 
 ### #29 revalidado con L2 real
 
-Mismos ASM y expectativas: 868 bundles estáticos, horizonte872 avances,
-32 stores, 64 loads, checksum1056, 32 GPR y 16384 palabras cotejados con gold.
+Mismos ASM y expectativas: 868 bundles estáticos, horizonte 872 avances,
+32 stores, 64 loads, checksum 1056, 32 GPR y 16384 palabras cotejados con gold.
 Dos rondas independientes repitieron exactamente estados y métricas. La traza
 heredada sigue deduplicando niveles adyacentes solo para estas fuentes: no es
 un contador universal de aceptaciones ni identifica de forma fiable el PC WB
@@ -864,21 +974,21 @@ La L1 mantiene una lectura L2 en vuelo y limita la superposición aprovechable.
 
 ### 18 KiB: corrección y capacidad
 
-El archivo versionado conserva tamaño18432 y SHA256
+El archivo versionado conserva tamaño 18432 y SHA256
 `c98e65ae5a58f7925bdc75bd3325ff60603df3c7113f5852bcccc2784fd920c3`.
 El roundtrip con MEM_MODE2/L2_MODEL0 recupera todos los bytes: cifrar y descifrar
-83018 ciclos cada uno; espera de flush32264 por fase, fuera de esos ciclos.
+83018 ciclos cada uno; espera de flush 32264 por fase, fuera de esos ciclos.
 Ese resultado prueba Feistel4/persistencia, no por sí solo capacidad útil.
 
 El experimento de capacidad usa 576 líneas distintas del archivo precargado
 desde0x200, una palabra por línea. La primera pasada calienta con medición
-cerrada; la segunda se abre con medir1 y se cierra con medir0. Se excluye el
-arranque anterior al primer medir0 mediante armado diferido. No cambia ningún
+cerrada; la segunda se abre con medir 1 y se cierra con medir 0. Se excluye el
+arranque anterior al primer medir 0 mediante armado diferido. No cambia ningún
 byte y se verifica toda DMEM, checksum y todos los GPR; los directorios son
 independientes por ronda/política. Los resultados exactos de esta ventana se
 presentan en el informe de verificación, junto con los vectores originales.
-En ambas políticas la segunda pasada demanda576 lecturas L1. Exclusiva evita
-lecturas RAM en esa pasada y NINE necesita256; no se infiere esta diferencia
+En ambas políticas la segunda pasada demanda 576 lecturas L1. Exclusiva evita
+lecturas RAM en esa pasada y NINE necesita 256; no se infiere esta diferencia
 solo de 20KiB frente a16KiB: hay evidencia de eventos reales y colisiones.
 
 ### #31: resultado parcial histórico (solo CLI tradicional)
@@ -887,7 +997,7 @@ El comparador ejecuta balc real con fuente BAL congelada, registra commit,
 argv, hashes de fuente/ASM/BALB/MEM y módulos M2, verifica las imágenes contra
 el ensamblador y obtiene un estado completo de M2 independiente. RTL0 y RTL2
 se contrastan con los 32 GPR, estado criptográfico público y 65536 bytes M2,
-además de los observables semánticos120/21/37. No modifica Compiladores.
+además de los observables semánticos 120/21/37. No modifica Compiladores.
 Se usan factorial, whale y ejercicio3_puntajes: aritmética, condicionales,
 bucles, llamadas, pila y dependencias N+3. Cortes observados B5:3403/247/2748
 avances; son puntos tras un retorno observado, no certificación de main ni
@@ -900,13 +1010,14 @@ la variante tradicional y publica PARCIAL sin porcentajes de optimización.
 Rechaza imágenes idénticas presentadas como niveles distintos. Para incorporar
 niveles reales se suministra un manifiesto con comandos, cortes justificados
 y los mismos observables semánticos. Por ahora BALB con datos iniciales no
-vacíos o entrada distinta de0 se rechaza explícitamente; no se pierde su DMEM.
+vacíos o entrada distinta de 0 se rechaza explícitamente; no se pierde su DMEM.
 
 ### Verificación, límites y conclusión
 
 La línea base y la entrega ejecutan las dieciocho órdenes obligatorias: todos
-los códigos0. make sim pasa de65 a69 PASS sin FAIL/NO-COMPILA/SIN-CHEQUEO.
-La pasividad real de top conserva60 capturas y8029914 comprobaciones, y el nuevo
+los códigos 0. En esa campaña make sim pasó de 65 a 69 PASS sin FAIL/NO-COMPILA/SIN-CHEQUEO
+(con todo lo integrado después son 72).
+La pasividad real de top conserva 60 capturas y 8029914 comprobaciones, y el nuevo
 banco de jerarquía contrasta activa/inactiva con exclusiva/NINE, MEM_DIV2/4
 y control MODEL. La memoria final siempre se verifica contra gold previo.
 Los tests D18 conservan N+3, anulación, cripto, resultado retenido y persistencia.
@@ -922,8 +1033,8 @@ en este pipeline: no se inventa sensibilidad a una diferencia inexistente.
 El apagado eliminó la primera evidencia temporal; se reconstruyeron base y
 entrega y se repitieron las pruebas en almacenamiento persistente externo.
 
-Reproducción y detalle por issue: [verificación del cierre](verificacion-cierre-javier.md).
-Guion de defensa: [aporte de Javier](guion-defensa-javier.md).
+Reproducción y detalle por issue: [verificación del cierre](verificacion/verificacion-cierre-javier.md).
+Guion de defensa: [aporte de Javier](proceso/guion-defensa-javier.md).
 
 ## Cierre temporal por transacción y DCE productivo (#26, #31 y #38)
 
@@ -933,8 +1044,8 @@ Registro de la campaña del 16 de noviembre: la rama
 **no el último commit de entrega**. Actualización del 20 de noviembre: los dos
 commits del aporte de Javier ya se integraron en `develop` mediante el
 [PR #70](https://github.com/fabrimena/Proyecto2_Arquitectura1/pull/70).
-El cierre documental individual sigue en revisión; la integración definitiva
-`develop` → `main` y la entrega formal con SHA final corresponden al equipo.
+El cierre documental se integró después con el PR #73; la integración
+`develop` → `main` y la entrega con el SHA final las hace el equipo.
 La campaña no modificó los algoritmos de cachés,
 controlador, buffers, pipeline, ROM, ISA ni el repositorio de CE1108.
 
@@ -961,7 +1072,7 @@ No se suman medias L1+L2+RAM: los tiempos pueden solaparse y las solicitudes
 L2 incluyen víctimas de línea completa. El AMAT observado L1 describe servicio
 al puerto arbitrado, no persistencia de stores, espera previa del árbitro,
 throughput, penalización media de CPU ni tiempo total de un programa.
-La fórmula serial anidada del ejemplo6.2 exige otras hipótesis/poblaciones.
+La fórmula serial anidada del ejemplo 6.2 exige otras hipótesis/poblaciones.
 
 ### Observador L2 pasivo
 
@@ -972,7 +1083,7 @@ las lecturas clasificadas hasta su respuesta en orden. Clasificar un store no
 fabrica un `rvalid`. Se procesa clasificación → respuesta → aceptación del flanco,
 impidiendo que una nueva petición justifique una clasificación anterior huérfana.
 
-Los FIFO de16 entradas superan las colas/etapas actualmente vivas del productor.
+Los FIFO de 16 entradas superan las colas/etapas actualmente vivas del productor.
 Un overflow, clasificación múltiple, tipo incorrecto o respuesta huérfana suma
 error e invalida seguimiento hasta reset. No se adivina una asociación posterior.
 Cada `req && gnt` cuenta una operación distinta, aunque los niveles/valores se
@@ -982,7 +1093,7 @@ una permutación que parezca legal no puede identificarse solo con estos puertos
 Las pruebas funcionales L2 verifican por separado datos y orden de respuestas.
 Una L2 futura fuera de orden requeriría IDs y otro contrato de observación.
 
-El vector `[PERF_L2_LATENCY]` tiene14 campos en orden creciente:
+El vector `[PERF_L2_LATENCY]` tiene 14 campos en orden creciente:
 
 | Índice | Contenido |
 |---|---|
@@ -1019,14 +1130,14 @@ Fallos y tiempos fallidos se publican aparte. Una pausa tampoco convierte un
 fracaso en éxito ni en acceso nuevo.
 
 MC publica su respuesta mediante NBA. La distancia entre aceptación PRE y
-**consumo PRE** de esa respuesta es40 con DIV2 y54 con DIV4 en los ensayos
-normales. El contrato nominal `TMEM=25+7×DIV` y busy dan39/53: se refieren a
+**consumo PRE** de esa respuesta es 40 con DIV2 y 54 con DIV4 en los ensayos
+normales. El contrato nominal `TMEM=25+7×DIV` y busy dan 39/53: se refieren a
 otras fronteras. No se resta un ciclo para forzar el valor nominal. El banco
 fecha los dos flancos independientemente, incluye CDC/reintentos reales y
 contrasta un gemelo sin observador ciclo a ciclo. La referencia es siempre
 `clk` general de100MHz, no `core_clk` ni ciclos de `clk_mem`.
 
-El vector `[PERF_RAM_LATENCY]` tiene22 campos:
+El vector `[PERF_RAM_LATENCY]` tiene 22 campos:
 
 | Índice | Contenido |
 |---|---|
@@ -1057,29 +1168,29 @@ apagadas o atraviesan una pausa se siguen hasta su final y quedan excluidas,
 aunque se reanude antes de responder. Un pendiente al corte no integra la media.
 Los contadores primarios de servicio/completados no avanzan en pausa; los
 **diagnósticos de seguimiento** sí. No son lecturas de `lcont` ni controlan al CPU.
-Todos los tiempos y acumulados son64 bits; interpretar medias exige época sin wrap.
+Todos los tiempos y acumulados son 64 bits; interpretar medias exige época sin wrap.
 
-`PERF_ENABLE=0` elimina los observadores. MODEL1 y modos0/1 exportan vectores
+`PERF_ENABLE=0` elimina los observadores. MODEL1 y modos 0/1 exportan vectores
 cero y disponibilidad falsa: eso significa medida inexistente, no latencia cero.
 El banco captura POST antes de cerrar la ventana y hacer el flush externo.
 Las operaciones de mantenimiento posteriores se siguen, pero no se añaden a
 las cohortes de ejecución capturadas.
 
-`execution.json` conserva schema1 y observación2; agrega `temporal_schema=1`
+`execution.json` conserva schema1 y observación 2; agrega `temporal_schema=1`
 solo cuando aparecen ambos marcadores nuevos. Un log histórico sin marcadores
 conserva exactamente su objeto anterior. Un par incompleto/duplicado o un error
 de protocolo se rechaza. El analizador publica schema2 y admite ambos tipos de
 captura; los tiempos ausentes siguen `null`. Se corrigió la interpretación del
 puerto K1-B: últimos campos **exclusiones, errores, pendiente**. La API antigua
 de fixtures `l1_amat(..., wire_layout=False)` se conserva; las capturas reales
-se leen siempre con `wire_layout=True`, comprobado sin cambiar los13 tests previos.
+se leen siempre con `wire_layout=True`, comprobado sin cambiar los 13 tests previos.
 
 ### Resultados nuevos en la referencia REAL exclusiva
 
-Dos rondas nuevas de los tres benchmarks, misma imagen por par0/2, verifican
-los32 registros,16384 palabras,96 operaciones lógicas y checksum1056 después
-del vaciado. La matriz de nueve configuraciones se repite también en54 capturas
-nuevas; las54 históricas se conservan y se releen, sin llamarlas ejecuciones nuevas.
+Dos rondas nuevas de los tres benchmarks, misma imagen por par 0/2, verifican
+los 32 registros, 16384 palabras, 96 operaciones lógicas y checksum 1056 después
+del vaciado. La matriz de nueve configuraciones se repite también en 54 capturas
+nuevas; las 54 históricas se conservan y se releen, sin llamarlas ejecuciones nuevas.
 
 | Programa | Ciclos (sin cambio) | AMAT L1 | Reads L2 completos | Servicio L2 | AMAT lectura L2 | RAM éxitos / aceptados | Servicio RAM exitoso | Media RAM |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -1089,17 +1200,17 @@ nuevas; las54 históricas se conservan y se releen, sin llamarlas ejecuciones nu
 
 Las lecturas de estos tres ensayos son misses L2; media hit N/D. Los hits se
 acreditan además en integración exclusiva/NINE y en la campaña de capacidad.
-Stride registra96 reads y94 escrituras posted clasificadas en L2; sus190 eventos
-no son el denominador de las96 respuestas. RAM tiene96 éxitos read y82 write,
-con una escritura aún pendiente al corte: no se usan179 aceptaciones para la media.
-Su busy histórico9443 incluye9 ciclos de esa pendiente; tampoco es servicio9612.
-La diferencia64/99.49 no es un error del parámetro nominal: el stride incluye
+Stride registra 96 reads y 94 escrituras posted clasificadas en L2; sus 190 eventos
+no son el denominador de las 96 respuestas. RAM tiene 96 éxitos read y 82 write,
+con una escritura aún pendiente al corte: no se usan 179 aceptaciones para la media.
+Su busy histórico 9443 incluye 9 ciclos de esa pendiente; tampoco es servicio 9612.
+La diferencia 64/99.49 no es un error del parámetro nominal: el stride incluye
 colas y tráfico de víctimas/eviction buffer. No se suman latencias superpuestas.
 
 ### CE1108: dos variantes productivas verificadas
 
 La copia local auditada está en `feat/i1a-integracion-vliw`, HEAD
-`08c8701c7bc6e58461f54b69a90a1a6fe85d0145`; `origin/develop` local es7463123.
+`08c8701c7bc6e58461f54b69a90a1a6fe85d0145`; `origin/develop` local es 7463123.
 No se presenta esa rama como una versión oficial diferente ni se cambia a ella
 remotamente. Los fuentes DCE del IDE son idénticos a `origin/develop`; el backend
 utilizado se identifica por SHA/binario y sus módulos en cada captura.
@@ -1117,7 +1228,7 @@ El comparador admite `transform: "ide-dce"`, observables semánticos nombrados y
 mapas de direcciones por variante. Las posiciones se derivan de `balc -m` y el
 marco; cada estado completo se compara con M2 independiente y RTL0/RTL2. Entre
 variantes se exigen los mismos valores semánticos, no igualdad de temporales.
-Puntajes conserva resultado24, combinado13 y total37; la copia muerta de
+Puntajes conserva resultado 24, combinado 13 y total 37; la copia muerta de
 `acumular(0)` desaparece, pero la llamada se mantiene. El ejemplo de funciones
 conserva el arreglo de resultados `[cuadrado(4), suma_hasta(5)] = [16,15]`.
 
@@ -1129,7 +1240,7 @@ conserva el arreglo de resultados `[cuadrado(4), suma_hasta(5)] = [16,15]`.
 | Funciones | IDE-DCE | 435 | 145 | 2176 | 2176 |
 
 Son ocho ejecuciones RTL y cuatro sesiones M2, además de las tres referencias
-tradicionales factorial/whale/puntajes (cortes3403/247/2748). Factorial y whale
+tradicionales factorial/whale/puntajes (cortes 3403/247/2748). Factorial y whale
 no producen cambios con este DCE y se rechazan como supuestos niveles nuevos.
 B5 se vuelve a ejecutar para las imágenes transformadas: retiro WB, corredor
 NOP y ausencia de efectos previos pendientes. El pipeline permanece ACTIVO;
@@ -1169,16 +1280,16 @@ latencias solapadas ni se alteran las métricas históricas.
 posted sin respuesta y tasas RAM no aplicables se explican, no se inventan).
 **#31: comparación real completa en estos dos contrastes tradicional/IDE-DCE**;
 no constituye una familia general -O ni garantiza equivalencia universal.
-**#38: parcial**, preparación individual lista; faltan revisión colectiva,
-presentación, integración definitiva `develop` → `main` y entrega formal con SHA final.
-La URL es https://github.com/fabrimena/Proyecto2_Arquitectura1 y el campo SHA
-queda **PENDIENTE DE INTEGRACIÓN FINAL**, nunca4a16239 como sustituto de entrega.
+**#38:** la preparación técnica está integrada en `develop`. La entrega usa el
+último commit de `main`, que el equipo informa en TEC Digital junto con la URL
+https://github.com/fabrimena/Proyecto2_Arquitectura1; 4a16239 es solo la base de
+esta campaña, no el SHA de entrega.
 
 En capacidad18KiB se verificaron además cuatro capturas nuevas (dos rondas):
-exclusiva tiene576 lecturas L2 hit completas, servicio4608 y media8; NINE tiene
-320 hit/256 miss completos, servicio18944 y media32.8888888889, ponderada como
-`(320×8 + 256×64)/576`. RAM en NINE registra256 éxitos, servicio13824 y media54;
+exclusiva tiene 576 lecturas L2 hit completas, servicio 4608 y media 8; NINE tiene
+320 hit/256 miss completos, servicio 18944 y media 32.8888888889, ponderada como
+`(320×8 + 256×64)/576`. RAM en NINE registra 256 éxitos, servicio 13824 y media 54;
 en exclusiva no hay transacciones RAM elegibles y la media es N/D. En ambos
-hay576 respuestas L2 y576 éxitos RAM excluidos del calentamiento: son diagnóstico
+hay 576 respuestas L2 y 576 éxitos RAM excluidos del calentamiento: son diagnóstico
 desde reset, no operaciones recuperadas al reabrir `medir`. Los ciclos medidos
 8639/22975 y el estado completo coinciden con la campaña histórica.

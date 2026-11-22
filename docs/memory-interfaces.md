@@ -458,7 +458,10 @@ accesos en los dos, se atienden en fases y el núcleo sigue congelado hasta la �
 - `cache_stall` sale del árbitro: depende del acceso, de dos marcas registradas y del stall de la
   L1-D, así que cumple la regla 2.
 
-## 9. Pendientes
+## 9. Estado de los puntos abiertos
+
+Todos los puntos que quedaron abiertos al definir estas interfaces están resueltos; solo queda fuera
+del alcance la revisión CDC para síntesis (punto 4).
 
 1. Políticas de la L1-D: listo (José): write-back, write-allocate y LRU por defecto; write-through, FIFO
    y Random como parámetros.
@@ -475,7 +478,9 @@ accesos en los dos, se atienden en fases y el núcleo sigue congelado hasta la �
 5. Memoria de instrucciones: listo. ROM síncrona leída con el siguiente PC (`rtl-p2/rom_sync.sv`, D1),
    que mantiene los tiempos de IF y no afecta al compilador.
 6. Puerto B a través de la L1-D: listo (sección 8).
-7. Testbenches de las herramientas con el vaciado (#28, Javier).
+7. Testbenches de las herramientas con el vaciado: listo (#28, Javier). Los de `tests/rtl/` (programas,
+   archivos y CE1108) vacían la jerarquía y esperan `flush_done` antes de comparar la memoria;
+   `tests/test_flush_tools.py` los prueba.
 8. Vaciado de la L2: implementado (Alejandro) y encadenado con el de la L1-D en `mem_hierarchy.sv`
    (sección 7).
 9. Eventos de la L2: los diez pulsos `ev_l2_*` de un ciclo están implementados en `rtl-p2/l2_cache.sv`

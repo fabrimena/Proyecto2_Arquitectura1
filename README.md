@@ -19,16 +19,16 @@ Los módulos originales se conservan bajo `rtl/`; `rtl-p2/top.sv` los integra.
 ## Arquitectura del Proyecto II
 
 `MEM_MODE=0` conserva memoria directa; `1` añade esperas sintéticas; `2` selecciona
-la jerarquía completa. En modo2, `L2_MODEL=0` es la **L2 real** y `1` el proveedor
+la jerarquía completa. En modo 2, `L2_MODEL=0` es la **L2 real** y `1` el proveedor
 provisional que siempre acierta: no representan dos implementaciones equivalentes.
 ROM síncrona, IF/ID/EX/WB y N+3 se conservan. El núcleo se congela globalmente,
 pero cachés, controlador y métricas continúan con `clk`.
 
 | Componente | Configuración predeterminada |
 |---|---|
-| L1-D | 4 KiB, 2 vías, línea32 B; WB/WA y LRU |
-| Stores pendientes | 2 MSHR, write buffer4; cargas con miss bloquean |
-| L2 real | 16 KiB, 4 vías, PLRU de árbol, hit8 ciclos, cuatro etapas |
+| L1-D | 4 KiB, 2 vías, línea 32 B; WB/WA y LRU |
+| Stores pendientes | 2 MSHR, write buffer 4; cargas con miss bloquean |
+| L2 real | 16 KiB, 4 vías, PLRU de árbol, hit 8 ciclos, cuatro etapas |
 | Inclusión | Exclusiva; NINE disponible para comparación |
 | Eviction buffer | 4 líneas sucias; forwarding y drenado hacia RAM |
 | RAM | 64 KiB, clk_mem=clk/4; Tmem=25+7×4=53, handshake/CDC y reintento |
@@ -36,7 +36,7 @@ pero cachés, controlador y métricas continúan con `clk`.
 
 D18 opcional en LSU: `medir 0/1` pausa/reanuda sin borrar; `lcont rg,sel` captura
 en EX y escribe en WB con N+3; `vaciarc` espera persistencia hasta RAM. Los
-selectores0–12 incluyen VLIW, L1-D, L2 y RAM; 13–31 leen0. CE1108 no necesita
+selectores 0–12 incluyen VLIW, L1-D, L2 y RAM; 13–31 leen 0. CE1108 no necesita
 generarlos para conservar compatibilidad. Todos los contadores usan clk general;
 IPC, tasas, servicio L1 y utilización RAM se calculan en Python.
 
@@ -72,8 +72,10 @@ tools/      assembler.py y run_program.py: ensamblador y ejecución de programas
             load_file.py y extract_data.py: carga y extracción de archivos en la memoria
             run_ce1108.py, run_ce1108_source.py y adaptadores: integración con CE1108
 examples/   programas .asm, resultados esperados (.json) y archivos de prueba
-docs/       isa.md, microarchitecture.md, simulation.md y compiler-integration.md
-img/        diagrama de bloques
+docs/       documentación de diseño (índice en docs/README.md): jerarquía de memoria,
+            microarquitectura, análisis de rendimiento, ISA, interfaces, componentes,
+            decisiones y pruebas; verificacion/ (evidencia por issue) y proceso/ (plan y guion)
+img/        diagramas de bloques (proyecto 1 y proyecto 2)
 ```
 
 ## Simulación
@@ -175,10 +177,15 @@ pasos, el contrato y los resultados están en
 
 ## Documentación
 
+El índice completo, ordenado por función, está en [docs/README.md](docs/README.md). Los tres documentos
+que pide el enunciado son los tres primeros de esta tabla.
+
 | Documento | Contenido |
 |:---|:---|
-| [docs/isa.md](docs/isa.md) | Especificación del ISA, codificación de cada instrucción y green card |
+| [docs/memory-hierarchy.md](docs/memory-hierarchy.md) | Jerarquía de memoria: políticas de la L1-D y la L2 con su justificación, inclusión exclusiva, write buffer, eviction buffer, latencias y diagramas |
 | [docs/microarchitecture.md](docs/microarchitecture.md) | Diagramas del sistema y del núcleo, pipeline, ROM síncrona, jerarquía de datos, congelamiento, tiempos y módulos SystemVerilog |
+| [docs/performance-analysis.md](docs/performance-analysis.md) | Análisis de rendimiento: metodología, benchmarks, tasas por nivel, AMAT, utilización de la RAM y comparación de configuraciones |
+| [docs/isa.md](docs/isa.md) | Especificación del ISA, codificación de cada instrucción y green card |
 | [docs/simulation.md](docs/simulation.md) | Simulación, modelo de cada componente, memoria, ensamblador y testbenches |
 | [docs/compiler-integration.md](docs/compiler-integration.md) | Contrato con CE1108 y evidencia de la validación conjunta |
 
@@ -205,8 +212,8 @@ python3 tools/comparar_configuraciones.py --capacity --output /tmp/capacidad18k-
 make archivo ARCHIVO=examples/archivos/archivo18k.bin ARCHIVO_MEM_MODE=2
 ```
 
-Los tres benchmarks tienen el mismo horizonte872 avances y96 accesos lógicos.
-Cada captura valida32 GPR/16384 palabras y flush confirmado. `execution.json`
+Los tres benchmarks tienen el mismo horizonte 872 avances y 96 accesos lógicos.
+Cada captura valida 32 GPR/16384 palabras y flush confirmado. `execution.json`
 conserva modo, parámetros elaborados, vectores VLIW/etapas/L1/L2/RAM, hashes,
 comandos, ventana y mantenimiento separado. El comparador emite CSV/JSON/Markdown
 y contrasta una dimensión por par: inclusión, escritura, reemplazo L1/L2, MSHR
@@ -231,14 +238,12 @@ Sus cortes son observaciones declaradas, no certificaciones de retorno de main.
 
 | Documentación adicional | Contenido |
 |---|---|
-| [memory-hierarchy.md](docs/memory-hierarchy.md) | Diseño colectivo L1/L2/RAM y políticas |
-| [performance-analysis.md](docs/performance-analysis.md) | Historia y análisis integrado de rendimiento |
-| [benchmarks-memoria-p29.md](docs/benchmarks-memoria-p29.md) | Oráculos y resultados históricos/actuales de #29 |
-| [verificacion-cierre-javier.md](docs/verificacion-cierre-javier.md) | Cobertura por issue, pruebas, medidas y limitaciones |
-| [guion-defensa-javier.md](docs/guion-defensa-javier.md) | Demostración y defensa del aporte de Javier |
+| [benchmarks-memoria-p29.md](docs/verificacion/benchmarks-memoria-p29.md) | Oráculos y resultados históricos/actuales de #29 |
+| [verificacion-cierre-javier.md](docs/verificacion/verificacion-cierre-javier.md) | Cobertura por issue, pruebas, medidas y limitaciones |
+| [guion-defensa-javier.md](docs/proceso/guion-defensa-javier.md) | Demostración y defensa del aporte de Javier |
 
 La instrumentación temporal nueva agrega cohortes completas L2/RAM, respetando
-`medir` y dejando intactos `lcont`0–12 y `vaciarc`. AMAT L2 describe **lecturas**;
+`medir` y dejando intactos `lcont` 0–12 y `vaciarc`. AMAT L2 describe **lecturas**;
 los stores posted no tienen respuesta de escritura. La media RAM separa éxito,
 fallo, retry y operaciones excluidas/pendientes. No se suman niveles solapados.
 Los logs anteriores se siguen leyendo; no se inventan sus tiempos ausentes.

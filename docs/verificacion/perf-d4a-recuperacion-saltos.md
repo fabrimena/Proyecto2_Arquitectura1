@@ -1,5 +1,12 @@
 # D4-A: recuperación de saltos sobre el procesador real
 
+> **Reporte histórico.** Describe este bloque tal como se entregó en su rama, antes de la integración
+> final; lo que aquí «no se integra» o queda «pendiente» se refiere a ese momento. Hoy
+> `perf_vliw_monitor` (clasificación, metadatos y contadores) y `perf_stage_counters` están en
+> `top.sv`, y los contadores de la L1-D (K1-A y K1-B), la L2 y la RAM en `mem_hierarchy.sv`, junto con
+> la L2 real, la memoria principal y las instrucciones D18. El estado y los resultados vigentes están
+> en [performance-analysis.md](../performance-analysis.md).
+
 ## Objetivo y alcance
 
 Validar una atribución temporal de ciclos perdidos por BRU en `MEM_MODE=0`.
@@ -142,7 +149,7 @@ la posición vaciada pasa a ser una burbuja causal de recuperación; no se cuent
 sus bits cero como criterio. Se preserva esa distinción en el caso 5.
 
 En el caso 6 el bundle culpable está en PC16: ALU, store, jump y FSL sin AUTH.
-En el flanco4 la excepción impone TRAP_VECTOR, anula EX y jóvenes, conserva
+En el flanco 4 la excepción impone TRAP_VECTOR, anula EX y jóvenes, conserva
 x2=77 del WB previo, no escribe el enlace ni el par cripto y mantiene DMEM[4].
 `trap_count=1`, `trap_pc=16`, BRU efectiva inactiva y penalización BRU cero.
 El NOP del vector completa antes del final del horizonte 8. IMEM es circular;
@@ -174,7 +181,7 @@ No se consulta la bóveda privada ni se afirma equivalencia semántica universal
 
 Cobertura normal: 14 escenarios, 15 saltos aceptados, 1 excepción, 27 flancos de
 recuperación observados, 72 NOP completados y 6 flancos de recuperación fuera de
-ventana. No debe aplicarse `15 * 2` al total27: hay un reset en R y un horizonte
+ventana. No debe aplicarse `15 * 2` al total 27: hay un reset en R y un horizonte
 que termina en R+1. Los acumulados se verifican por época y ventana.
 
 ## Adversariales y controles negativos
@@ -182,13 +189,13 @@ que termina en R+1. Los acumulados se verifican por época y ventana.
 | Riesgo | Comprobación que lo detecta |
 |---|---|
 | Penalización adelantada/retrasada/duplicada/omitida | Igualdad de recuperación PRE por fecha y acumulado POST en cada flanco. |
-| No tomado o excepción atribuidos a BRU | Decisión dirigida y fechas sin recuperación; casos2 y 6. |
-| NOP confundido con burbuja | Validez por fecha, máscara cero y NOP completado; casos1,5,13. |
-| Anulado contado o WB antiguo perdido | Evento WB, serie y máscara por fecha; efectos jóvenes anulados en casos1/6. |
-| Reset pendiente o reanudación duplicada | Caso12 y ventanas7–11; acumulados y marcas posteriores. |
-| PC repetido confundido con evento | Visitas y serie dinámica del bucle, caso4. |
+| No tomado o excepción atribuidos a BRU | Decisión dirigida y fechas sin recuperación; casos 2 y 6. |
+| NOP confundido con burbuja | Validez por fecha, máscara cero y NOP completado; casos 1,5,13. |
+| Anulado contado o WB antiguo perdido | Evento WB, serie y máscara por fecha; efectos jóvenes anulados en casos 1/6. |
+| Reset pendiente o reanudación duplicada | Caso 12 y ventanas 7–11; acumulados y marcas posteriores. |
+| PC repetido confundido con evento | Visitas y serie dinámica del bucle, caso 4. |
 | Destino incorrecto | Target dirigido, PC IF predicho y PC posterior a cada flanco. |
-| Recuperación futura fuera del horizonte | Casos12/14, acumulados parciales conocidos. |
+| Recuperación futura fuera del horizonte | Casos 12/14, acumulados parciales conocidos. |
 | Diferencia arquitectónica | Comparaciones PRE/POST y DMEM completa. |
 | Control con EX inválido | BRU/fault contra tabla, validez real y recuperación atribuida. |
 | Penalizaciones mayores que tiempo medido | Comparación de 64 bits y límite branch_cycles<=cycles en todos los flancos. |
@@ -271,5 +278,5 @@ hay avance, finalización única al reanudar y memoria prioritaria frente a BRU.
 Confirmar con Fabricio y responsables de memoria los eventos, buffers pendientes,
 reset con núcleo congelado y ambos puertos. No equiparar ocupación de un buffer
 con stall sin validar el contrato; no asumir MEM_MODE=2 operativo: el top actual
-solo distingue explícitamente modo1 y un else de memoria directa.
+solo distingue explícitamente modo 1 y un else de memoria directa.
 No se implementa ni valida esa lógica aquí.

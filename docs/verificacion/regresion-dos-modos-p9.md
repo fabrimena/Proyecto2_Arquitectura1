@@ -131,8 +131,8 @@ en 10 ns. Los enteros de tipo time se imprimen en ns, no como %t en ps.
 
 ## L. Compatibilidad de API y CLI
 
-Se ejecutaron llamadas de siete argumentos posicionales, default0, explícito0,
-modo1 y CLI modo2. Pasan las suites anteriores del procesador y del #28.
+Se ejecutaron llamadas de siete argumentos posicionales, default 0, explícito 0,
+modo 1 y CLI modo 2. Pasan las suites anteriores del procesador y del #28.
 `read_expected`, `run_logged`, excepciones y los archivos registers/memory/trace
 mantienen su contrato; execution.json es una salida adicional.
 
@@ -226,7 +226,7 @@ mecánicamente su fuente ni se usan retornos ficticios para extraer fixtures.
 Incluye `alu_isa.asm`, `lsu_isa.asm`, `bru_isa.asm`, `subrutina.asm`,
 `dependencias.asm` y `mixto.asm`. Conserva sus JSON cuando existen; dependencias
 usa x4=x5=7 y mixto x10=7,x11=0,x12=1, memoria 0x100=14 y 0x104=42 del caso previo.
-Los otros positivos cubren inmediatos signed, shifts módulo32, última escritura,
+Los otros positivos cubren inmediatos signed, shifts módulo 32, última escritura,
 autoactualización y capacidad máxima IMEM. Las pruebas de parser y expectativas
 siguen en sus suites originales y no se presentan como ejecución RTL en dos modos.
 
@@ -239,8 +239,8 @@ se carga la misma imagen. Los bytes reales de program.mem deben coincidir.
 
 Las expectativas proceden de los JSON originales o de semántica ISA declarada.
 Toda DMEM esperada se construye desde cero más stores conocidos; guardab en
-byte1 produce 0x00007f7f. Las referencias se guardan en oracle.json antes de
-observar el DUT. No se toma modo0 como referencia automáticamente correcta.
+byte 1 produce 0x00007f7f. Las referencias se guardan en oracle.json antes de
+observar el DUT. No se toma modo 0 como referencia automáticamente correcta.
 
 ## T. Comparación de 32 registros
 
@@ -264,8 +264,8 @@ consecutivos y parciales, lecturas, MSHR, víctimas del mismo conjunto, palabra
 inicial/final, bucle finito y puertos LSU/CRIPTO simultáneos. El tercer store a
 0/2048/4096 compite por dos vías; 65532 prueba el borde superior válido.
 
-Para puerto B, se prepara contraseña7/AUTH; load+camcon ve7 antes de rotar a14,
-y store42+camcon conserva14 por prioridad B. Los NOP de separación corresponden
+Para puerto B, se prepara contraseña 7/AUTH; load+camcon ve 7 antes de rotar a 14,
+y store 42+camcon conserva 14 por prioridad B. Los NOP de separación corresponden
 a N+3 explícito. La repetición exige mismo estado y mismas medidas RTL en destinos
 independientes. El límite de IMEM mantiene 1020 bundles y completa la última WB.
 
@@ -292,9 +292,9 @@ Los oráculos nominales y el RTL de producción permanecen sin mutaciones.
 
 ## X. Control de modo incorrecto
 
-El compilador diagnóstico copia el sim.vvp real de modo0 al destino solicitado
-para modo2 y retorna0. La simulación real falla con diagnóstico de petición2,
-banco0 y efectivo0. El binario no desaparece ni contiene sintaxis inválida.
+El compilador diagnóstico copia el sim.vvp real de modo 0 al destino solicitado
+para modo 2 y retorna 0. La simulación real falla con diagnóstico de petición 2,
+banco 0 y efectivo 0. El binario no desaparece ni contiene sintaxis inválida.
 Los programas pueden producir iguales datos en ambos modos, por lo que este
 control requiere verificar configuración además de equivalencia arquitectónica.
 Se guardan script, binario, compile.log y sim.log de ese control externo.
@@ -348,7 +348,7 @@ inicio/total de flancos y nanosegundos por intervalo.
 
 Por ejemplo, LSU utiliza 80 avances en ambos modos, 80/87 flancos de ejecución y
 0/7 stalls; el flush suma 0/131 flancos por separado. La semilla de store MSHR
-consume 8 avances y 8 flancos en ambos; su vaciado necesita 138 en modo2. Esos
+consume 8 avances y 8 flancos en ambos; su vaciado necesita 138 en modo 2. Esos
 casos muestran por qué no se atribuye toda espera a misses bloqueantes ni se
 incluye automáticamente persistencia en tiempo de ejecución. Ningún dato aquí
 certifica una mejora de rendimiento o un AMAT jerárquico definitivo.
@@ -371,7 +371,7 @@ métodos y aserciones se reportan separados y no se suman como una sola poblaci�
 
 ## AC. Regresión posterior
 
-`make test-memory-modes`: 16 métodos, salida0, cero skips, 22.318 s.
+`make test-memory-modes`: 16 métodos, salida 0, cero skips, 22.318 s.
 Las siete órdenes anteriores pasan otra vez. La suite #28 ejecuta diez métodos
 y conserva sus expectativas, incluidos los controles negativos de persistencia.
 No hay fallos nuevos de Arquitectura. La última revisión ajustó solo comentarios
@@ -383,18 +383,18 @@ de supresión. El resumen sim mantiene cero NO-COMPILA y SIN-CHEQUEO. La duraci�
 de pared depende del entorno y no se interpreta como ciclos ni speedup RTL.
 El primer script de edición detectó un punto de sustitución duplicado y se
 corrigió su anclaje antes de editar el runner; no fue una prueba funcional FAIL.
-Las tres ejecuciones de desarrollo de la suite nueva terminaron con código0.
+Las tres ejecuciones de desarrollo de la suite nueva terminaron con código 0.
 
 ## AD. Compatibilidad con CE1108
 
 Se mantienen scripts CE1108 y la API predeterminada/posicional. La suite del #28
-valida directamente su fixture en modos0/1/2. También se ejecutaron ambos flujos
+valida directamente su fixture en modos 0/1/2. También se ejecutaron ambos flujos
 completos sobre una copia externa del HEAD actual de Compiladores
 `08c8701c7bc6e58461f54b69a90a1a6fe85d0145`, con la versión base y la adaptada del runner:
 
-- test-ce1108-source: make retorna2 antes y después; error de preparación,
+- test-ce1108-source: make retorna 2 antes y después; error de preparación,
   cero métodos, rutas antiguas ausentes.
-- test-compiladores-funciones: make retorna2 antes y después; tres métodos,
+- test-compiladores-funciones: make retorna 2 antes y después; tres métodos,
   dos FAIL y cinco errores de subcasos por las mismas rutas.
 
 Los scripts siguen buscando src/generacion_basica.c, Analisis_Sintactico y
@@ -462,7 +462,7 @@ Reproducción en una copia externa, sin editar el original:
 p9_dir="$(mktemp -d /tmp/p9-repetir.XXXXXX)"
 mkdir "$p9_dir/codigo"
 git archive HEAD | tar -x -C "$p9_dir/codigo"
-for p9_file in Makefile tools/run_program.py tests/rtl/tb_assembled_program.sv tests/test_flush_tools.py tests/test_memory_modes.py docs/regresion-dos-modos-p9.md; do
+for p9_file in Makefile tools/run_program.py tests/rtl/tb_assembled_program.sv tests/test_flush_tools.py tests/test_memory_modes.py docs/verificacion/regresion-dos-modos-p9.md; do
     cp --parents "$p9_file" "$p9_dir/codigo"
 done
 (
@@ -533,8 +533,8 @@ Propuesta solamente: sin staging, commit, push, merge, rebase, cherry-pick o PR.
 ## Vigencia tras integrar L2 real
 
 La evidencia anterior describe su commit y proveedor histórico. En e461b70 con
-el cierre de métricas, la suite mantiene16 métodos y pasa sobre la jerarquía
-real. run_program conserva llamadas posicionales y esquema base1 de stats;
+el cierre de métricas, la suite mantiene 16 métodos y pasa sobre la jerarquía
+real. run_program conserva llamadas posicionales y esquema base 1 de stats;
 observation_schema2 agrega parámetros verificados, métricas y procedencia.
-No cambia la comparación de32 GPR/16384 palabras ni el vaciado obligatorio.
+No cambia la comparación de 32 GPR/16384 palabras ni el vaciado obligatorio.
 Ver [verificación actual](verificacion-cierre-javier.md).
