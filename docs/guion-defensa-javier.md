@@ -21,9 +21,9 @@ Make producen build y los comparadores exigen destinos externos nuevos.
 Las mismas órdenes se ejecutaron durante la verificación; elegir otros nombres
 de salida al repetir y conservar logs en almacenamiento persistente.
 
-1. Mostrar `make tb_perf_d18_cierre`: cuatro configuraciones0/1/REAL/MODEL.
-   Explicar medir0, instantánea de lcont9–12, mitad alta, selector reservado,
-   medir1 y vaciarc real. El calendario independiente verifica retiro y descarta
+1. Mostrar `make tb_perf_d18_cierre`: cuatro configuraciones 0/1/REAL/MODEL.
+   Explicar medir 0, instantánea de lcont 9–12, mitad alta, selector reservado,
+   medir 1 y vaciarc real. El calendario independiente verifica retiro y descarta
    un medir situado detrás de un salto tomado. El resultado llega a WB y N+3
    se conserva además en tb_cache_isa; no se mide desde escrituras de registros.
 2. Mostrar `make tb_perf_integracion_hierarquia`: productor idéntico con
@@ -36,7 +36,7 @@ de salida al repetir y conservar logs en almacenamiento persistente.
    ```
 
    Mostrar program.mem, execution.json y summary.json. Confirmar REAL, horizonte
-   872, checksum1056,32 GPR y65536 bytes correctos; separar ejecución y vaciado.
+   872, checksum 1056,32 GPR y 65536 bytes correctos; separar ejecución y vaciado.
 4. Mostrar contadores L1/L2/RAM en execution.json: distinguir demanda arbitrada,
    decisión L2 y aceptación RAM. El campo l2[9] es oferta retenida, no número de
    escrituras físicas; ram[0]+ram[1] sí cuenta aceptaciones de línea.
@@ -56,8 +56,8 @@ de salida al repetir y conservar logs en almacenamiento persistente.
    ```
 
    Misma precarga18KiB,576 líneas, calentamiento no medido y segunda pasada D18.
-   Exclusiva registra0 lecturas RAM frente a256 en NINE. Sus576 misses L2 son
-   escrituras de víctimas L1, mientras sus576 lecturas L2 aciertan; sumar ambas
+   Exclusiva registra 0 lecturas RAM frente a 256 en NINE. Sus 576 misses L2 son
+   escrituras de víctimas L1, mientras sus 576 lecturas L2 aciertan; sumar ambas
    poblaciones sin explicarlas ocultaría la ventaja observada de reutilización.
 7. Mostrar primero la referencia tradicional, sin inventar niveles:
 
@@ -66,7 +66,7 @@ de salida al repetir y conservar logs en almacenamiento persistente.
    ```
 
    La variante tradicional de factorial/whale/puntajes se contrasta contra M2
-   independiente y RTL0/2, con resultados120/21/37. Las pasadas IR de balc no
+   independiente y RTL0/2, con resultados 120/21/37. Las pasadas IR de balc no
    generan versiones ASM optimizadas. Este informe de una sola variante se
    mantiene PARCIAL; la comparación productiva IDE-DCE se demuestra abajo.
 
@@ -77,7 +77,7 @@ precisamente los ciclos de stall que queremos medir. Los eventos MC/L2 ya se
 publican en el dominio CPU; no se incorpora otro cruce asíncrono al monitor.
 
 **¿Qué significa completar un bundle?** WB válido y avance efectivo antes del
-flanco. NOP conserva validez con máscara0; burbuja no. La máscara se transporta
+flanco. NOP conserva validez con máscara 0; burbuja no. La máscara se transporta
 desde ID y se descarta por edad ante redirect. Store y salto cuentan sin GPR.
 
 **¿Se suma dos por salto tomado?** No: se siguen las posiciones descartadas y
@@ -112,7 +112,7 @@ activas/inactivas al mismo tiempo exacto, con PC, orden, datos, GPR, cripto,
 traps, memoria y protocolos; los observadores no retroalimentan control.
 
 **¿Cuatro etapas L2 siempre mejoran los programas?** No. En estos benchmarks la
-referencia bloqueante reproduce872/2606/10236 frente a872/2606/10260 actuales.
+referencia bloqueante reproduce 872/2606/10236 frente a 872/2606/10260 actuales.
 La L1 limita las peticiones simultáneas aprovechables. No se usa el modelo
 siempre-hit como referencia bloqueante ni se promete speedup general.
 
@@ -134,7 +134,7 @@ SHA del último commit de entrega: **PENDIENTE DE INTEGRACIÓN FINAL**. Se verif
 integración definitiva y la confirmación del commit realmente entregado;
 e461b70 identifica la base auditada y
 no sustituye ese SHA. El archivo para TEC Digital contendrá únicamente el enlace
-y el hash final, según la sección10 del enunciado. El material técnico preparado
+y el hash final, según la sección 10 del enunciado. El material técnico preparado
 no permite declarar completado ese paso de #38 antes de realizarlo.
 
 ## Demostración temporal y comparación productiva actual
@@ -149,25 +149,25 @@ trabajo de sus responsables. Los comandos escriben capturas externas nuevas.
 2. Mostrar L1 y servicio: `make tb_perf_cache_l1d_k1a tb_perf_cache_l1d_k1b`.
    Distinguir finalización de store en MSHR y persistencia posterior.
 3. Mostrar D18: `make tb_perf_d18_cierre`. `medir` habilita observación en clk,
-   `lcont` conserva selectores0–12/N+3 y `vaciarc` confirma persistencia antes
+   `lcont` conserva selectores 0–12/N+3 y `vaciarc` confirma persistencia antes
    del programa siguiente. Los módulos nuevos no controlan esas instrucciones.
 4. Mostrar L2/RAM: `make tb_perf_cache_l2_latency tb_perf_memory_latency`.
    Señalar aceptación, clasificación tardía, respuesta, pausa y pendiente.
-   RAM normal40/54 flancos con DIV2/4, distinto de busy39/53; el retry exitoso
+   RAM normal 40/54 flancos con DIV2/4, distinto de busy 39/53; el retry exitoso
    incluye la espera previa y el fracaso final tiene otra población.
 5. Mostrar pasividad/políticas: `make tb_perf_amat_integracion` reutiliza
-   stores/load, línea sucia, exclusiva/NINE, DIV2/4 y MODEL, compara las16384
+   stores/load, línea sucia, exclusiva/NINE, DIV2/4 y MODEL, compara las 16384
    palabras con gold y el gemelo PERF0. El diario independiente fecha señales,
    en lugar de comparar solo acumuladores del mismo monitor.
-6. Mostrar los tres benchmarks con dos rondas y comparar con las54 capturas
-   de configuraciones. Secuencial/aleatorio/stride mantienen872/2606/10260
-   ciclos y checksum1056. Mostrar AMAT L1=1/19.0625/98.7916666667,
+6. Mostrar los tres benchmarks con dos rondas y comparar con las 54 capturas
+   de configuraciones. Secuencial/aleatorio/stride mantienen 872/2606/10260
+   ciclos y checksum 1056. Mostrar AMAT L1=1/19.0625/98.7916666667,
    L2 reads=64/64/99.4895833333 y RAM=54 en la referencia. Stride deja una
-   transferencia pendiente:178 completas entre179 aceptadas al corte.
+   transferencia pendiente:178 completas entre 179 aceptadas al corte.
 7. Mostrar `comparar_optimizaciones.py --compiler-root "$CE1108_ROOT" --ide-dce
-   --output /tmp/defensa-dce-nueva`: puntajes801→795 bundles y funciones528→435.
+   --output /tmp/defensa-dce-nueva`: puntajes 801→795 bundles y funciones 528→435.
    Explicar código BAL original/transformado, llamada preservada con copia
-   muerta eliminada, marcos diferentes y valores24/13/37 y16/15. Cada variante
+   muerta eliminada, marcos diferentes y valores 24/13/37 y 16/15. Cada variante
    coincide completa con M2 y RTL0/2. No denominar las variantes -O0/-O1.
 8. Mostrar capacidad18KiB y comparación de políticas con el runner existente;
    separar el calentamiento no medido de la segunda pasada y el flush externo.
@@ -175,7 +175,7 @@ trabajo de sus responsables. Los comandos escriben capturas externas nuevas.
    demanda del núcleo de la misma población.
 
 Para defender las medias, indicar SIEMPRE puerto, flancos, cohorte, exclusiones
-al corte y unidad. El servicio de reads L2 puede superar64 por congestión; un
+al corte y unidad. El servicio de reads L2 puede superar 64 por congestión; un
 presupuesto nominal no reemplaza esa evidencia. Las escrituras posted no tienen
 un AMAT de respuesta inventado. RAM no tiene hits/misses de caché.
 #26 y #31 están completos en esos alcances observables/probados; no acreditan
