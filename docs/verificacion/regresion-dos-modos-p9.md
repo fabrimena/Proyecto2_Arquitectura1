@@ -462,7 +462,7 @@ Reproducción en una copia externa, sin editar el original:
 p9_dir="$(mktemp -d /tmp/p9-repetir.XXXXXX)"
 mkdir "$p9_dir/codigo"
 git archive HEAD | tar -x -C "$p9_dir/codigo"
-for p9_file in Makefile tools/run_program.py tests/rtl/tb_assembled_program.sv tests/test_flush_tools.py tests/test_memory_modes.py docs/regresion-dos-modos-p9.md; do
+for p9_file in Makefile tools/run_program.py tests/rtl/tb_assembled_program.sv tests/test_flush_tools.py tests/test_memory_modes.py docs/verificacion/regresion-dos-modos-p9.md; do
     cp --parents "$p9_file" "$p9_dir/codigo"
 done
 (
