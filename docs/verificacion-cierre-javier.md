@@ -24,7 +24,7 @@ a128ce789: solo cinco filas nuevas de docs/simulation.md. main y develop no se
 modificaron directamente. En aquella revisión no hubo staging, commits,
 publicación, PR ni integración de historial; la integración posterior fue por PR #70.
 
-Herramientas verificadas: Icarus/VVP12.0, Python3.12.3, GNU Make4.3 y GCC13.3.0.
+Herramientas verificadas: Icarus/VVP12.0, Python 3.12.3, GNU Make 4.3 y GCC13.3.0.
 Las ejecuciones se elaboran en copias externas. La primera carpeta /tmp se perdió
 por apagado; se reconstruyeron la base desde Git y la entrega desde los cambios,
 y se repitieron las pruebas conservando evidencia persistente fuera del proyecto.
@@ -35,12 +35,12 @@ No se atribuye integridad de archivos ignorados a un manifiesto inicial perdido.
 | Trabajo | Estado del alcance de Javier | Evidencia |
 |---|---|---|
 | #7 VLIW | COMPLETO | 292 verificaciones base; transporte, anulación, BRU/stalls y pasividad sobre top |
-| #8 etapas | COMPLETO | Contadores existentes, regresión y60 capturas de top |
-| #9 regresión de modos | COMPLETO | 16 métodos, memoria real, 32 GPR y65536 bytes |
+| #8 etapas | COMPLETO | Contadores existentes, regresión y 60 capturas de top |
+| #9 regresión de modos | COMPLETO | 16 métodos, memoria real, 32 GPR y 65536 bytes |
 | #26 caché/memoria | COMPLETO en métricas observables definidas | AMAT L1, lecturas L2 y media RAM por cohortes; posted sin respuesta y tasas RAM N/A explícitos |
-| D18 | COMPLETO | Clasificación37 operaciones, RSV estrictos, lcont0–12, medir/vaciarc y N+3 |
+| D18 | COMPLETO | Clasificación 37 operaciones, RSV estrictos, lcont 0–12, medir/vaciarc y N+3 |
 | #28 flush | COMPLETO | Diez métodos y persistencia real, sin relajar quiescencia |
-| #29 benchmarks | COMPLETO | Tres fuentes/oráculos intactos,872 avances, L2 real,18KiB y capacidad |
+| #29 benchmarks | COMPLETO | Tres fuentes/oráculos intactos, 872 avances, L2 real, 18KiB y capacidad |
 | #30 configuraciones | COMPLETO en la matriz probada | Nueve configuraciones×tres fuentes×dos rondas; referencia bloqueante real |
 | #31 optimizaciones BAL | COMPLETO en dos contrastes reales | Tradicional/IDE-DCE para puntajes y funciones; cada variante contra M2/RTL0/RTL2; no niveles -O ficticios |
 | #36 análisis | COMPLETO | Capítulo de cierre con poblaciones, resultados, interpretación y límites |
@@ -61,31 +61,31 @@ publicado por mem_hierarchy distingue RH/RM/WH/WM/fill/víctima/flushWB/inval/re
 write_offer. Write_offer mide ciclos de oferta, no escrituras físicas aceptadas.
 Se reutiliza perf_memory sin modificarlo, con cinco señales públicas MC; sus seis
 acumulados exponen lecturas, escrituras, busy, medidos, timeouts y errores.
-PERF_ENABLE0 elimina observadores; MODEL1 o modos0/1 publican cero L2/RAM.
+PERF_ENABLE0 elimina observadores; MODEL1 o modos 0/1 publican cero L2/RAM.
 
-Top solo propaga políticas/parámetros y conecta observaciones. lcont9/10 suma
-clasificaciones L2,11 aceptaciones RAM y12 busy;0–8/reservados/mitades se conservan.
+Top solo propaga políticas/parámetros y conecta observaciones. lcont 9/10 suma
+clasificaciones L2,11 aceptaciones RAM y 12 busy; 0–8/reservados/mitades se conservan.
 El clasificador reutiliza decoder_cache_isa para reconocer D18 con RSV válidos;
 la comparación exacta de validez evita X de un decoder todavía no evaluado.
 No se modifican decoders, ISA original, relojes, pipeline ni algoritmos protegidos.
 
 run_program conserva el orden de sus argumentos anteriores, añade configuración,
 precarga, timeout de pared y armado diferido de medición; acredita parámetros por
--P y su propagación real. execution.json conserva schema1 y añade observación2,
+-P y su propagación real. execution.json conserva schema1 y añade observación 2,
 procedencia y vectores. La ventana se captura antes de flush. El armado diferido
-solo evita medir arranque antes del primer medir0; no cambia avance o datos.
+solo evita medir arranque antes del primer medir 0; no cambia avance o datos.
 
 El comparador #30 valida estado y traza con los oráculos independientes #29,
 repite determinísticamente y verifica una dimensión por par. #31 compila mediante
 balc real y compara cada variante con M2 completo y ambos modos RTL; no adopta el
-modo0 como oráculo automáticamente correcto. BALB con datos iniciales no vacíos
+modo 0 como oráculo automáticamente correcto. BALB con datos iniciales no vacíos
 se rechaza explícitamente hasta ampliar ese contrato de entrada.
 
 ## Resultados comprobados
 
 Configuración de referencia: REAL, ROM síncrona, exclusiva, WB/WA, LRU/PLRU,
-MSHR2, WBUF4, EB4, MEM_DIV4. Cada benchmark tiene868 bundles estáticos,872 avances,
-32 stores/64 loads y checksum1056. Dos rondas conservan todos los GPR/DMEM/traza.
+MSHR2, WBUF4, EB4, MEM_DIV4. Cada benchmark tiene 868 bundles estáticos, 872 avances,
+32 stores/64 loads y checksum 1056. Dos rondas conservan todos los GPR/DMEM/traza.
 
 | Programa | Ciclos | Stall | Instr. completadas | L1 H/M | L2 H/M | RAM R/W | Busy | Flush |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -111,38 +111,38 @@ ciclos busy medidos no tienen por qué igualar Tmem×aceptaciones de la ventana.
 | MSHR4 | 872 | 2476 | 10260 |
 | MEM_DIV2 | 872 | 2186 | 7768 |
 
-La tabla completa contiene54 filas y48 contrastes dirigidos, dos rondas. La
+La tabla completa contiene 54 filas y 48 contrastes dirigidos, dos rondas. La
 referencia bloqueante real proviene de5c6990683204cc2bd6747c47931808f3085ed462;
-solo l2_cache.sv difiere en los hashes RTL. Sus ciclos872/2606/10236 se contrastan
-con872/2606/10260 actuales en seis comparaciones, sin usar MODEL como sustituto.
+solo l2_cache.sv difiere en los hashes RTL. Sus ciclos 872/2606/10236 se contrastan
+con 872/2606/10260 actuales en seis comparaciones, sin usar MODEL como sustituto.
 No hay una ventaja universal: el stride de esta población favorece NINE y el
-pipeline actual cuesta24 ciclos más que la referencia bloqueante en ese caso.
+pipeline actual cuesta 24 ciclos más que la referencia bloqueante en ese caso.
 
 Capacidad18KiB:576 líneas por pasada, primera pasada caliente no medida; ventana
-D18 de la segunda, sin arranque inicial. Horizonte común8085 avances del programa
-completo. Dos rondas: exclusiva8639 ciclos medidos/4608 stalls,576 lecturas L2 con
-hit y576 escrituras L2 con miss,0 lecturas RAM; NINE22975 ciclos/18944 stalls,
-320 hits/256 misses de lectura L2 y256 lecturas RAM (busy13568). Toda DMEM permanece
+D18 de la segunda, sin arranque inicial. Horizonte común 8085 avances del programa
+completo. Dos rondas: exclusiva 8639 ciclos medidos/4608 stalls, 576 lecturas L2 con
+hit y 576 escrituras L2 con miss, 0 lecturas RAM; NINE22975 ciclos/18944 stalls,
+320 hits/256 misses de lectura L2 y 256 lecturas RAM (busy 13568). Toda DMEM permanece
 idéntica a la precarga y se verifica checksum/GPR independientes. Los dos tienen
 576 demandas L1 con miss. El miss L2 de una víctima completa no implica leer RAM.
 
 Archivo18k.bin:18432 bytes, SHA256
 c98e65ae5a58f7925bdc75bd3325ff60603df3c7113f5852bcccc2784fd920c3, intacto.
-Roundtrip real:83018 ciclos cifrar y83018 descifrar, espera de vaciado32264 por
-fase,7 comprobaciones y recuperación byte a byte. Es correctitud/persistencia;
+Roundtrip real:83018 ciclos cifrar y 83018 descifrar, espera de vaciado 32264 por
+fase, 7 comprobaciones y recuperación byte a byte. Es correctitud/persistencia;
 la diferencia de capacidad se demuestra con el experimento separado anterior.
-Además, los2304 bloques cifrados coinciden byte a byte con Feistel4 de software,
+Además, los 2304 bloques cifrados coinciden byte a byte con Feistel4 de software,
 sin usar el descifrado RTL como única referencia del cifrado.
 
-CE1108 tradicional: factorial120 a3403 avances, whale21 a247 y puntajes37 a2748.
-M2/RTL0/RTL2 coinciden en32 GPR, estado público y65536 bytes. En estos casos los
+CE1108 tradicional: factorial 120 a 3403 avances, whale 21 a 247 y puntajes 37 a 2748.
+M2/RTL0/RTL2 coinciden en 32 GPR, estado público y 65536 bytes. En estos casos los
 stores MSHR y las cargas residentes no generan stalls globales. #31 no publica
 speedup entre niveles inexistentes. Los cortes son observaciones B5, no HALT ni
 certificación de identidad semántica del retorno de main.
 
 ## Pruebas y criterios
 
-Dieciocho órdenes antes/después, todas con código0:
+Dieciocho órdenes antes/después, todas con código 0:
 
 | Comando | Base | Entrega |
 |---|---|---|
@@ -167,12 +167,12 @@ Dieciocho órdenes antes/después, todas con código0:
 
 Sin FAIL/NO-COMPILA/SIN-CHEQUEO ni omisiones en las regresiones finales. Las
 cantidades de comprobaciones, bancos, métodos y ejecuciones no son intercambiables.
-Los133 métodos Python de la tabla no se suman a los69 bancos como si fueran casos
+Los 133 métodos Python de la tabla no se suman a los 69 bancos como si fueran casos
 del mismo tipo. Adicionales:20 métodos del comparador #30,12 de #31,8 del adaptador
-fuente y3 de funciones; todos sin skips. Los bancos nuevos incluyen32608 aserciones
+fuente y 3 de funciones; todos sin skips. Los bancos nuevos incluyen 32608 aserciones
 L2, cuatro jerarquías activas/inactivas, cuatro ejecuciones D18 con calendario
-independiente y578 flancos de MC con2 aceptaciones/2 timeouts/1 error.
-El clasificador ampliado pasa6368 verificaciones y conserva las34 operaciones.
+independiente y 578 flancos de MC con 2 aceptaciones/2 timeouts/1 error.
+El clasificador ampliado pasa 6368 verificaciones y conserva las 34 operaciones.
 
 Los controles negativos mutan copias externas: configuración/política/proveedor,
 GPR, DMEM, contadores, ventana, ausencia de flush, binario obsoleto, programa,
@@ -186,7 +186,7 @@ Incidencias propias resueltas: el primer ensayo de clasificación D18 propagó X
 desde un decoder aún no evaluado; la comparación exacta de validez lo corrigió.
 Una ampliación de comentarios colocó un docstring entre @classmethod y su def;
 la primera ejecución final de comparadores terminó con SyntaxError. Se conservó
-ese log, se corrigió la posición y se repitieron los32 métodos: OK, código0.
+ese log, se corrigió la posición y se repitieron los 32 métodos: OK, código 0.
 Los errores de preparación iniciales perdieron sus logs con /tmp; no se cuentan
 como regresiones anteriores ni como controles negativos acreditados.
 
@@ -217,7 +217,7 @@ impiden sustituir sus poblaciones por las del modelo serial sin acreditarlas.
 
 ## Entrega formal pendiente del issue #38
 
-El enunciado oficial, sección10 (página19), y el issue #38 exigen el enlace del
+El enunciado oficial, sección 10 (página 19), y el issue #38 exigen el enlace del
 repositorio y el hash del último commit al entregar. Repositorio:
 <https://github.com/fabrimena/Proyecto2_Arquitectura1>.
 El SHA final está **PENDIENTE** hasta confirmar la integración definitiva
@@ -272,29 +272,29 @@ cierre anterior está integrado en4a16239; esta campaña no altera esos resultad
 ni el historial. Evidencia externa persistente:
 `/home/javier/Documentos/evidencias-arquitectura-amat-final-4a16239-20261116`.
 
-La línea base ejecutó21 comandos, todos con código0:69 testbenches PASS y178
-métodos Python. La validación final efectiva ejecuta26 comandos, todos con
-código0:72 testbenches PASS,0 FAIL,0 NO-COMPILA,0 SIN-CHEQUEO y211 métodos Python,
-sin skips. Se mantienen los13 tests anteriores del analizador y los32 de
-comparadores; se agregan25 métodos temporales y8 del DCE productivo.
-Los tres bancos nuevos comprueban191 casos L2,33 checks RAM dirigidos más los
-controladores reales DIV2/4 y10797 flancos del diario de integración en cuatro
+La línea base ejecutó 21 comandos, todos con código 0:69 testbenches PASS y 178
+métodos Python. La validación final efectiva ejecuta 26 comandos, todos con
+código 0:72 testbenches PASS,0 FAIL,0 NO-COMPILA,0 SIN-CHEQUEO y 211 métodos Python,
+sin skips. Se mantienen los 13 tests anteriores del analizador y los 32 de
+comparadores; se agregan 25 métodos temporales y 8 del DCE productivo.
+Los tres bancos nuevos comprueban 191 casos L2,33 checks RAM dirigidos más los
+controladores reales DIV2/4 y 10797 flancos del diario de integración en cuatro
 configuraciones. Los checks por flanco agrupan varias propiedades; no se suman
 como si cada campo o ejecución repetida fuera otro testbench.
 
-Durante la campaña final se agotó `/home`: seis comandos terminaron120/2 por
+Durante la campaña final se agotó `/home`: seis comandos terminaron 120/2 por
 infraestructura, incluidos fallos al escribir logs con tee. No se contaron
 como controles negativos ni como éxitos funcionales. Tras conservar comprimidos
 los build terminados y verificar sus hashes, se repitieron los seis en destinos
-y binarios nuevos: todos código0. Los resultados originales, recuperaciones y
+y binarios nuevos: todos código 0. Los resultados originales, recuperaciones y
 su correspondencia permanecen en los reportes externos; no se ocultan fallos.
 
 La relectura histórica encontró capturas sin `measurement_control`; el primer
-análisis terminó1. Se admitió explícitamente la ausencia como null, sin inventar
-armado de ventana, y una prueba nueva cubre ese caso. La relectura de las54
-capturas termina0 y conserva sus latencias L2/RAM como null. La campaña actual
-contiene54 capturas nuevas y4 de capacidad; dos rondas adicionales0/2 conservan
-32 GPR,65536 bytes, imagen,96 accesos lógicos y checksum1056.
+análisis terminó 1. Se admitió explícitamente la ausencia como null, sin inventar
+armado de ventana, y una prueba nueva cubre ese caso. La relectura de las 54
+capturas termina 0 y conserva sus latencias L2/RAM como null. La campaña actual
+contiene 54 capturas nuevas y 4 de capacidad; dos rondas adicionales 0/2 conservan
+32 GPR,65536 bytes, imagen, 96 accesos lógicos y checksum 1056.
 
 La implementación usa dos observadores nuevos y conexiones pasivas en jerarquía.
 No se modifica top, MC, caches, buffers, ROM, ISA ni etapas. Reset y `medir`
@@ -314,8 +314,8 @@ La plantilla formal externa conserva **PENDIENTE DE INTEGRACIÓN FINAL**.
 
 El contraste bloqueante también se reelaboró en una copia experimental externa:
 solo `l2_cache.sv` se toma del commit5c699068; los demás RTL y observadores son
-idénticos al snapshot actual. Doce ejecuciones0/2 dan seis contrastes estrictos
+idénticos al snapshot actual. Doce ejecuciones 0/2 dan seis contrastes estrictos
 con `blocking_contrasts`, sin relajar su comprobación de inventario/hashes ni
-modificar el comparador #30. Sus872/2606/10236 ciclos se conservan frente a
+modificar el comparador #30. Sus 872/2606/10236 ciclos se conservan frente a
 872/2606/10260 actuales. La procedencia distingue la copia mixta del árbol puro
 del commit histórico; no se cambia ninguna caché de la rama de trabajo.
