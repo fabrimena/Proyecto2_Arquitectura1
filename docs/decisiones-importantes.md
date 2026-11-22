@@ -446,4 +446,4 @@ No se atribuyen a Javier las cachés, buffers, CDC ni la segmentación de L2.
 
 #31 continúa PARCIAL por falta de dos niveles reales de salida ASM de balc;
 los informes IR no son variantes máquina. El estado por issue y la evidencia
-se mantienen en [verificacion-cierre-javier.md](verificacion-cierre-javier.md).
+se mantienen en [verificacion-cierre-javier.md](verificacion/verificacion-cierre-javier.md).
