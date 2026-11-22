@@ -2,7 +2,8 @@
 
 Contrato de interfaz entre nuestro procesador y el compilador del grupo de Compiladores (CE1108), y
 evidencia de la validación conjunta (sección 6 del enunciado). Nuestro ensamblador funciona sin el
-compilador y cubre el 100 % del ISA.
+compilador y cubre las 34 instrucciones del ISA original. La extensión opcional de caché
+y medición está conectada a `top` (PR #62), incluidos L2/RAM en este cierre.
 
 ## Contrato
 
@@ -131,3 +132,110 @@ Reproducidos el 13 de octubre de 2026 con Icarus Verilog 12.0 y la rama `develop
 | `make compiladores-factorial` y `make test-compiladores-funciones` | PASS y 3 de 3 |
 | `division_residuo_potencia.bal` con `run_ce1108_source.py` | PASS |
 | `tools/run_ce1108.py` | PASS: (8 + 3) − 1 = 10 |
+
+## Extensión opcional de caché y medición: D18-A
+
+El contrato aprobado está en [decisiones-importantes.md, sección 4.4](decisiones-importantes.md#44-instrucciones-de-control-de-caché-y-medición-javier-enganche-en-top-fabricio).
+La codificación y el protocolo completo se describen en
+[isa.md](isa.md#extensión-opcional-de-caché-y-medición--d18-a). No cambia el formato de bundle,
+la ISA original, los alias, las pseudoinstrucciones ni la regla N+3. CE1108 **no necesita generar**
+estas instrucciones para conservar su compatibilidad; no se modificó su repositorio.
+
+| Mnemónico | Slot | Tipo [31:25] / ID [24:21] | Operandos y campos |
+|:---|:---:|:---|:---|
+| `vaciarc` | 1 LSU | `1001101` / `0000` | Sin operandos; [20:0] cero |
+| `medir imm` | 1 LSU | `1001101` / `0001` | imm 0–1 en [0]; [20:1] cero |
+| `lcont rg, sel` | 1 LSU | `1001101` / `0010` | rg x0–x31 en [15:11], sel 0–63 en [5:0]; resto cero |
+
+`sel[5]` elige mitad baja (0) o alta (1); `sel[4:0]` el contador:
+0 ciclos, 1 bundles, 2 instrucciones no NOP, 3 stall de memoria, 4 penalización de saltos,
+5/6 lecturas L1-D hit/miss, 7/8 escrituras L1-D hit/miss, 9/10 hits/misses L2,
+11 accesos RAM y 12 ciclos de transferencia RAM. IDs 13–31 leen cero en ambas mitades.
+No son nuevas métricas: L2/RAM deben suministrarse cuando existan; fuentes no disponibles
+deberán conectarse a cero y declararse no disponibles, sin interpretar ese cero como ausencia de tráfico.
+
+El ensamblador valida aridad, registros, inmediatos, slot, RAW/WAW y N+3. `lcont` es productor
+del registro aunque lea un selector reservado. Captura en EX y conserva resultado/destino
+para WB; el consumidor debe ir a partir de N+3. x0 descarta la escritura. No lee registros fuente.
+Los controles `medir`/`vaciarc` no escriben registros. No se reescriben programas ni se insertan
+bundles para acomodar los riesgos. Las palabras exactas y los errores se prueban por separado
+de los casos originales, que conservan sus expectativas.
+
+`medir 0` pausa sin borrar y `medir 1` reanuda; reset habilita medición. El nuevo enable rige
+después del flanco de aceptación en EX. Dos lecturas alta/baja no son atómicas; pausar permitirá
+leer el acumulado estable una vez integrada la habilitación. IPC = instrucciones/ciclos se calcula
+externamente; para cero ciclos se informa N/D.
+
+La unidad usa reloj general. Una emisión requiere validez, permiso explícito `ex_advance`
+y `issue_ready`; una respuesta registrada se consume con `complete_valid`/`complete_ready`.
+Durante freeze se retienen resultado/destino y no se repite la escritura. Tras emitir, el
+adaptador debe avanzar EX o retirar la validez para evitar volver a emitir el mismo bundle.
+Estos son puertos del componente independiente y requieren coordinarse con Fabricio.
+
+`vaciarc` acepta con ack bajo, retiene `flush_req` hasta `flush_done=1`, retira req y espera
+que done vuelva a cero antes de responder. X/Z no confirma. Un proveedor inmediato puede
+confirmar el primer ciclo activo de req; uno retardado mantiene la espera. El adaptador debe
+detener el avance del procesador sin detener el reloj de la unidad. Reset cancela la operación,
+por lo que exige reinicio coordinado; no acredita persistencia. No hay HALT ni timeout implícito.
+
+**D18-A: conectadas en `top` (PR #62).** `balc` no tiene que generarlas: el procesador las
+ejecuta si aparecen en el slot 1 y ningún programa anterior cambia. `medir` pausa los contadores,
+`lcont` escribe su registro como una carga (regla N+3) y `vaciarc` vacía la jerarquía completa hasta
+la RAM antes de que el bundle siguiente acceda a memoria. `tb_cache_isa` las prueba sobre el
+procesador completo. Los contadores 9 a 12 están conectados a la L2 real y a aceptaciones/ocupación RAM;
+en modos sin jerarquía o con MODEL1 permanecen en cero por ausencia de esas fuentes.
+
+
+## Estado de cierre del Proyecto II (16 de noviembre de 2026)
+
+Las secciones de resultados de octubre son evidencia histórica. El adaptador
+resuelve ahora el layout original y las carpetas reorganizadas de CE1108
+(`src/Analisis_Lexico`, `src/Analisis_Sintactico`, `src/Analisis_Semantico`,
+`src/Generacion_Codigo`), sin modificar módulos ni ABI de aquel repositorio.
+Los ocho tests del modo fuente y los tres de funciones vuelven a pasar.
+
+`tools/comparar_optimizaciones.py` valida fuentes congeladas generadas por balc,
+ASM/MEM/BALB coherentes, semántica esperada y estados completos M2/RTL0/RTL2.
+El modo `--compiler-root` prepara factorial, whale y puntajes tradicionales;
+`--manifest` permite registrar variantes reales con argv/nivel/corte/observables.
+Solo se admiten actualmente BALB sin datos iniciales y entrada 0: el resto se
+rechaza explícitamente para no perder inicialización.
+
+El diagnóstico inicial solo consideró la CLI. No hay niveles -O productivos acreditados. Las opciones --dce/--unroll/--reorder
+trabajan sobre IR y no generan ASM optimizado; -h sí muestra ayuda y --help no
+está reconocido. CFLAGS=-O2 no es una optimización VLIW. Ese diagnóstico dejó
+#31 parcial hasta comprobar la vía productiva del IDE, descrita abajo.
+Cortes 3403/247/2748 proceden del contrato de observación B5, sin certificar main.
+Ver [análisis vigente](performance-analysis.md#cierre-integrado-16-de-noviembre-de-2026-26-2931-36)
+y [verificación](verificacion/verificacion-cierre-javier.md).
+
+### Contraste productivo tradicional/IDE-DCE
+
+La copia CE1108 auditada, `feat/i1a-integracion-vliw` en08c8701, sí contiene
+`ide_dce_analizar` y `codigo_nuevo`. Los fuentes del DCE del IDE coinciden con
+la referencia local `origin/develop`; el backend concreto de la copia utilizada
+se identifica en la evidencia, sin atribuirle carácter de versión oficial final.
+La API aplica DCE al BAL; el mismo balc compila después ese código a ASM/BALB.
+No se modifica CE1108 ni se implementa una transformación alternativa.
+
+El adaptador `tools/ce1108_aplicar_dce.c` y `tools/ce1108_dce.py` se enlazan fuera
+de ambos repositorios. El IDE crea temporales junto a la ruta recibida: se le
+pasa la salida externa, para evitar escribir junto al fuente original. Solo se
+acreditan programas autónomos y BALB sin datos iniciales, como el contrato previo.
+
+`comparar_optimizaciones.py --compiler-root "$CE1108_ROOT" --ide-dce --output ...`
+prepara dos contrastes con cortes B5 acreditados: puntajes 2748/2742 avances y
+funciones 6193/2176. En otro commit se requieren B5 nuevo y manifiesto explícito.
+Se guardan hashes de módulos/productor, fuente original/transformada, comandos,
+ASM, imágenes, métricas y los estados completos M2/RTL0/RTL2.
+
+Los observables nombrados admiten dirección distinta por variante mediante
+`semantic_observations` y `observation_addresses`. Puntajes conserva 24/13/37;
+funciones conserva el arreglo 16/15 con marcos 24/20 bytes. No se exige igualdad
+de temporales entre variantes; cada una sí debe coincidir completa con M2.
+La copia muerta vacio de puntajes desaparece sin eliminar su llamada.
+Factorial/whale no cambian con este DCE y no se publican como otra variante.
+Los cortes observan retiro WB y continuación NOP, sin certificar main ni forzar
+HALT. Las variaciones de ciclos no se presentan como speedup semántico universal.
+La comparación de #31 queda acreditada para estos dos programas/variantes;
+unrolling y reorder productivos siguen fuera de lo demostrado.

@@ -37,7 +37,7 @@ sudo apt install iverilog gtkwave make python3
 
 | Comando | Qué hace |
 |:---|:---|
-| `make sim` | Compila y ejecuta todos los `tb/tb_*.sv` y muestra un resumen |
+| `make sim` | Compila y ejecuta todos los `tb/tb_*.sv` y `tb-p2/tb_*.sv` y muestra un resumen |
 | `make tb_alu` | Ejecuta un solo testbench (recompila solo si cambió algo) |
 | `make waves TB=tb_alu` | Abre su `.vcd` en GTKWave |
 | `make archivo [ARCHIVO=ruta]` | Cifra y descifra un archivo en el procesador (sección 3) |
@@ -48,11 +48,16 @@ sudo apt install iverilog gtkwave make python3
 `make sim` clasifica cada testbench como `PASS` (imprimió `[PASS]` y terminó con código 0), `FAIL`
 (imprimió `[FAIL]` o terminó con error), `SIN-CHEQUEO` (corrió pero no se autoverifica) o `NO-COMPILA`
 (detalle en `build/<tb>/compile.log`), y termina con error si hay algún `FAIL` o `NO-COMPILA`.
-Resultado actual:
+Resultado histórico del primer cierre con L2 real (línea base: 65 PASS):
 
 ```
-Resumen: 21 PASS, 0 FAIL, 0 NO-COMPILA, 0 SIN-CHEQUEO
+Resumen: 69 PASS, 0 FAIL, 0 NO-COMPILA, 0 SIN-CHEQUEO
 ```
+
+Validación del cierre documental del 20 de noviembre de 2026, con los bancos
+temporales incorporados mediante PR #70: **72 PASS, 0 FAIL, 0 NO-COMPILA,
+0 SIN-CHEQUEO**, código de salida 0. Se ejecutó `make sim` con
+`BUILD_DIR=/tmp/cierre-javier-20261120/build-despues`.
 
 Cada testbench deja en `build/<tb>/` el ejecutable (`sim.vvp`), `compile.log`, `sim.log` y su `.vcd`.
 
@@ -61,7 +66,9 @@ Cada testbench deja en `build/<tb>/` el ejecutable (`sim.vvp`), `compile.log`, `
 **Memoria de instrucciones.** Tiene `IMEM_BUNDLES` = 1024 bundles (16 KB) y arranca llena de NOP.
 Con `+IMEM=<archivo.mem>` carga un programa con `$readmemh`: una línea por bundle, 32 dígitos
 hexadecimales, con el slot CRIPTO en los bits altos (el formato del ensamblador). Los testbenches
-también pueden escribir `DUT.IMEM.memory[]` directamente. Para correr un programa propio se usa
+también pueden escribir `DUT.IMEM.memory[]` directamente. En el proyecto 2 es una ROM síncrona
+(`rtl-p2/rom_sync.sv`, `ROM_SYNC = 1` en `top`): el programa tiene que estar escrito antes de un flanco
+con `reset` en 1, porque en ese flanco la ROM lee el bundle 0. Para correr un programa propio se usa
 `tools/run_program.py` (sección 12).
 
 **Cifrado de un archivo** (`make archivo`):
@@ -93,25 +100,28 @@ bytes con L y R en *little-endian*, como el código de referencia del enunciado.
 ## 4. Flujo de compilación
 
 ```bash
-iverilog -g2012 -Wall -Wno-timescale -I rtl -I tb -s tb_x -o build/tb_x/sim.vvp rtl/*.sv tb/tb_x.sv
+iverilog -g2012 -Wall -Wno-timescale -I rtl -I rtl-p2 -I tb -I tb-p2 -s tb_x -o build/tb_x/sim.vvp \
+    rtl/*.sv rtl-p2/*.sv tb/tb_x.sv
 cd build/tb_x && vvp -n sim.vvp
 ```
 
-- Todo `rtl/` se compila con cada testbench, así que un módulo o un testbench nuevo no requiere tocar
-  el Makefile. `-s tb_x` fija el módulo superior.
-- `-I rtl -I tb` resuelve los `` `include `` de `isa_defs.sv` y `tb_utils.svh`, que tienen guardas
-  `` `ifndef ``.
+- `rtl/` (procesador del proyecto 1) y `rtl-p2/` (módulos del proyecto 2 y `top.sv`) se compilan
+  completos con cada testbench, así que un módulo o un testbench nuevo no requiere tocar el
+  Makefile. `-s tb_x` fija el módulo superior. Un testbench de `tb-p2/` se compila igual, con
+  `tb-p2/tb_x.sv` al final.
+- `-I rtl -I rtl-p2 -I tb -I tb-p2` resuelve los `` `include `` de `isa_defs.sv`, `cache_defs.sv` y
+  `tb_utils.svh`, que tienen guardas `` `ifndef ``.
 - `-Wno-timescale`: el RTL no usa retardos; solo los testbenches declaran `` `timescale 1ns/1ps ``.
 - `vvp` corre dentro de `build/tb_x/`, donde queda el `.vcd`; `-n` hace que `$stop` termine la
   simulación.
 
 ## 5. Formato estándar de testbench
 
-Cada `tb/tb_<modulo>.sv` tiene `` `timescale 1ns/1ps ``, un encabezado con los casos que cubre,
-`` `include "tb_utils.svh" `` y `$dumpfile`/`$dumpvars`. El estímulo cambia en el flanco de bajada y
-el diseño captura en el de subida, para evitar carreras. Cada resultado se verifica con `check` o
-`check_true`, los vectores aleatorios usan `$random(seed)` (`+seed=N`) y el testbench termina con
-`tb_finish`.
+Cada `tb/tb_<modulo>.sv` y `tb-p2/tb_<modulo>.sv` tiene `` `timescale 1ns/1ps ``, un encabezado con
+los casos que cubre, `` `include "tb_utils.svh" `` y `$dumpfile`/`$dumpvars`. El estímulo cambia en
+el flanco de bajada y el diseño captura en el de subida, para evitar carreras. Cada resultado se
+verifica con `check` o `check_true`, los vectores aleatorios usan `$random(seed)` (`+seed=N`) y el
+testbench termina con `tb_finish`.
 
 | Utilidad de `tb/tb_utils.svh` | Qué hace |
 |:---|:---|
@@ -407,8 +417,88 @@ Todos son autoverificables:
 | `tb_crypto_unit` | Excepciones sin efectos, `vcr` correcta e incorrecta, el vector conocido HOLA2026 → `03D44466 D685AFAF` ronda por ronda, 500 rondas aleatorias contra la referencia, `camcon` y ESTADO escrito en WB |
 | `tb_pipeline_cripto` | Cifrado y descifrado de 4 bloques contra la referencia, las 4 unidades en el mismo bundle, excepciones (bundle y 2 siguientes anulados, salto a `TRAP_VECTOR`) y que ningún registro ni palabra de memoria contenga la llave |
 | `tb_top` | Programa cargado desde un `.mem` y 4 bundles distintos en IF, ID, EX y WB en el mismo ciclo |
+| `tb_pipeline_stall` | Proyecto 2: el mismo programa en `top` sin stalls y con 1 y 4 ciclos de stall por acceso (`MEM_MODE = 1`). Mismo estado final (registros, memoria, bóveda y ESTADO), las mismas escrituras en el mismo orden (`camcon` rota una sola vez), N ciclos más por acceso y el PC y los registros de segmentación quietos en cada stall. Interfaces en [`memory-interfaces.md`](memory-interfaces.md) |
+| `tb_rom_sync` | Proyecto 2: la ROM síncrona contra la memoria combinacional del proyecto 1 (`ROM_SYNC` 1 y 0), sin stalls y con 4 ciclos de stall por acceso. En cada ciclo el mismo PC, el mismo bundle en IF (que es `memory[pc]`), los mismos registros de segmentación y las mismas escrituras en WB, con un bucle, `sye`, `syer` y una excepción; el mismo estado final y los mismos ciclos; y un cambio en `memory` solo se ve en el flanco siguiente |
+| `tb_l1d_replacement` | Proyecto 2: reemplazo de la L1-D con LRU, FIFO y RANDOM a la vez. Con LRU un hit convierte a la otra vía en la víctima y con FIFO los hits no la cambian, conjuntos independientes, la secuencia A, B, A, C (LRU saca a B y FIFO a A) y el LFSR de RANDOM, que solo avanza en los llenados y genera las dos vías (17 verificaciones) |
+| `tb_l1d_write_buffer` | Proyecto 2: write buffer L1-D → L2 con profundidades 2, 3, 4 y 8. Orden FIFO, lleno y vacío, vuelta circular, push y pop en el mismo ciclo, forwarding por bytes (gana la entrada más nueva), víctimas con bit sucio y búsqueda por línea; mezcla aleatoria de stores y víctimas contra un modelo (15 613 verificaciones) |
+| `tb_l1d_cache` | Proyecto 2: L1-D con write-through + NINE, la configuración de comparación (la final, write-back + exclusiva, la prueban `tb_l1d_writeback` y `tb_l1d_mshr`; write-through + exclusiva no es válida), con una L2 de prueba con el bus versión 2. Latencias (hit 0 ciclos, miss 8), `guardap` y `guardab` que aciertan, cada store llega a la L2, store que falla sin traer la línea, forwarding RAW, desalojo sin escrituras, espera con el write buffer lleno y vaciado; 6 configuraciones aleatorias (asignación, reemplazo, RAW, tamaño del buffer y latencia de la L2) contra una memoria de referencia (81 verificaciones). Detalle en [`l1d-cache.md`](l1d-cache.md) |
+| `tb_l1d_writeback` | Proyecto 2: L1-D con write-back y la política exclusiva (`N_MSHR = 1`). Miss de 8 ciclos aunque la víctima esté sucia, víctimas sucias y limpias con `l2_wdirty`, la línea vuelve sucia con `l2_rdirty`, espera de una línea que está en el write buffer y vaciado que mueve las líneas sucias a la L2; 8 configuraciones aleatorias (write-back y write-through, NINE y exclusiva) con revisión de la exclusividad, de las víctimas limpias contra la RAM y de la memoria después de cada vaciado (68 verificaciones) |
+| `tb_l1d_mshr` | Proyecto 2: MSHR non-blocking de la L1-D. Store que falla sin stall, mezcla en un MSHR, load desde un MSHR o esperando su línea, hit durante un miss, MSHR llenos, load que falla con un MSHR ocupado, dos MSHR del mismo conjunto y vaciado con un MSHR ocupado, con los ciclos exactos; ráfagas y aleatorias con `N_MSHR` = 1, 2, 3 y 4, y la misma secuencia con 1, 2 y 4 MSHR para comparar ciclos (109 verificaciones) |
+| `tb_mem_hierarchy` | Proyecto 2: la jerarquía completa del modo 2 (árbitro, L1-D, L2, eviction buffer, controlador y la RAM con `clk_mem`) contra un modelo de la memoria del proyecto 1. Latencias (hit en la L1-D 0 ciclos, hit en la L2 8, falla en las dos 64 = 8 + 53 + 3; store con MSHR libre 0), `vcr` y `camcon` solos y con la LSU en el mismo bundle (1 y 2 ciclos más), orden de lectura y escritura dentro del bundle, valores que solo están sucios en la L1-D, vaciado, 3000 bundles aleatorios sobre líneas que compiten por los mismos conjuntos y el checker de exclusividad (`excl_checker.sv`) sin violaciones |
+| `tb_port_b` | Proyecto 2: un programa con `setpwd`, `vcr` y `camcon` junto a cargas y stores de la misma palabra, en `top` con `MEM_MODE` 0, 1 y 2 (este con la jerarquía completa). Mismo estado final que el proyecto 1 (con el modo 2, después del vaciado), las mismas escrituras al banco, `camcon` escribe una sola vez, el núcleo queda quieto en cada stall y el checker de exclusividad no encuentra violaciones |
+| `tb_cache_isa` | Proyecto 2: `vaciarc`, `medir` y `lcont` en `top` con `MEM_MODE` 0, 1 y 2. Dos `lcont` seguidos de ciclos o de bundles difieren en 1 y el resultado se ve desde el bundle N+3; con `medir 0` los ciclos no avanzan; `vaciarc` deja la RAM al día (modo 2) o cuesta 2 ciclos (modos 0 y 1), y el store y el `camcon` del bundle siguiente se hacen una sola vez; un salto o una excepción las anulan; los contadores de la L1-D coinciden con `perf_cache_l1d`; los tres modos terminan con el mismo estado |
+| `tb_l2_pipeline` | Proyecto 2: la L2 en 4 etapas, en exclusiva y en NINE, con un nivel inferior de prueba (latencia al azar y eviction buffer que a veces no acepta). 24 escrituras seguidas se aceptan una por ciclo; una lectura del mismo conjunto se acepta en el ciclo siguiente a una escritura y devuelve el dato nuevo; 3000 peticiones al azar mandadas apenas hay permiso se comparan contra un modelo de la memoria (datos, orden de las respuestas y bit sucio de la exclusiva); después del vaciado la RAM coincide con el modelo |
+| `tb_l2_cache` | Proyecto 2: la L2 write-back en exclusiva, con un nivel inferior de prueba. Fallo de lectura de 8 + Tmem = 61 ciclos con la línea viniendo del nivel inferior, acierto de 8 ciclos exactos, la línea se mueve a la L1-D (el segundo acceso a la L2 vuelve a fallar), escritura parcial con write-allocate y mezcla de bytes (los no escritos se conservan), conflicto con las 4 vías y desalojo de la víctima del pseudo-LRU que baja sucia, línea reenviada por el eviction buffer con el bit sucio propagado, y los diez eventos `ev_l2_*` cuadran con las peticiones aceptadas por el bus y con los handshakes del nivel inferior (65 verificaciones) |
+| `tb_l2_cache_nine` | Proyecto 2: la misma L2 en NINE, con el mismo banco de pruebas. La L2 conserva la línea (el segundo acceso acierta), la copia que se guarda queda sucia y baja a la memoria cuando se desaloja, no hay invalidación hacia atrás y entra una línea por cada fallo de lectura y de escritura (73 verificaciones) |
+| `tb_l2_cache_integracion` | Proyecto 2: la L2 real con el eviction buffer y el controlador de memoria reales y una RAM de 16384 palabras. Las 4 vías del conjunto 0x10 se llenan con líneas sucias y la quinta desaloja a la vía 0, que el buffer drena a la RAM; con la RAM retenida la línea desalojada queda pendiente y, cuando la L2 la vuelve a pedir, el buffer se la reenvía marcada como sucia (`l2_rdirty`), y al soltar la RAM la línea termina en la memoria (29 verificaciones) |
+| `tb_l2_cache_flush` | Proyecto 2: el vaciado de la L2 (D16) con el eviction buffer y el controlador reales. Las 4 líneas sucias del conjunto 0x10 bajan a la RAM durante el barrido, la L2 deja de aceptar peticiones mientras dura el vaciado, `flush_done` se mantiene en alto mientras `flush_req` siga en alto (como en la L1-D) y los eventos cuentan las 4 líneas sucias que bajaron (72 verificaciones) |
+| `tb_l2_replacement` | Proyecto 2: el reemplazo de la L2 con el pseudo-LRU de árbol de 4 vías y con RANDOM, cada uno contra su propio modelo de referencia. Los valores del árbol calculados a mano (la raíz y los dos nodos), un llenado que reorganiza el árbol igual que un uso, los conjuntos independientes, y RANDOM con el LFSR de 8 bits (semilla `8'hA5`), que solo avanza con los llenados y reparte las cuatro vías de forma reproducible. El pseudo-LRU es una aproximación del LRU, no un LRU exacto (245 verificaciones) |
+| `tb_mem_controller` | Proyecto 2: el controlador de memoria con una RAM de 64 KB y `MEM_DIV` 2, 4 y 5. Lee una línea, escribe otra y la vuelve a leer, cada una en exactamente Tmem ciclos (39, 53 y 60 = 25 + 7 × `MEM_DIV`), y revisa las 8 palabras escritas en la RAM. Con la RAM detenida (`mem_hold`) hay dos timeouts de 256 ciclos y el error final llega a los 512 ciclos, con 4 solicitudes aceptadas, 2 timeouts y 1 error |
+| `tb_mem_controller_verificacion` | Proyecto 2: la entrega que ve la CPU con `MEM_DIV` 2, 4 y 5. La primera palabra llega en el ciclo 25 y las siguientes cada `MEM_DIV` ciclos, con el dato correcto, aunque la RAM se lea antes (precarga). También el timeout con un solo reintento |
+| `tb_mem_controller_entrega_palabras` | Proyecto 2: las 8 palabras de una lectura salen por `ram_word_valid`, `ram_word_index` y `ram_word_data` en los ciclos 25 + i × `MEM_DIV` con el índice y el dato correctos, y la línea completa (`ram_ready`) llega en Tmem, con `MEM_DIV` 2, 4 y 5 |
+| `tb_mem_controller_prefetch_verificacion` | Proyecto 2: la precarga por dentro del controlador con `MEM_DIV` 2, 4 y 5. Cada acceso físico a la RAM termina antes de la fecha en que se entrega su palabra, los accesos siguen el ritmo de `clk_mem` y los datos son correctos; también el timeout con un solo reintento. La fecha exacta de la primera palabra la revisa `tb_mem_controller_verificacion` |
+| `tb_mem_controller_cdc` | Proyecto 2: el cruce de dominios de reloj entre `clk` y `clk_mem` (eventos con toggle y dos registros de sincronización) con `MEM_DIV` 2, 4 y 5: escritura y lectura de líneas completas y timeout con un solo reintento |
+| `tb_mem_controller_cdc_estres` | Proyecto 2: el controlador con `clk_mem` siempre corriendo y solicitudes que llegan en fases distintas del reloj lento, con `MEM_DIV` 2, 4 y 5. 16 transacciones seguidas con los datos correctos, un primer timeout que se recupera con el reintento, un segundo timeout que termina en error definitivo y una operación nueva que funciona después de la cancelación. No exige una latencia exacta, porque la fase de `clk_mem` cambia de una solicitud a otra |
+| `tb_mem_controller_cdc_respuesta_tardia` | Proyecto 2: la RAM se detiene antes de la octava palabra y se suelta después del primer timeout (`MEM_DIV` 4). La confirmación atrasada del primer intento se rechaza (no produce `ram_ready`), el reintento devuelve la línea correcta sin error definitivo y no hay respuestas duplicadas |
+| `tb_mem_controller_reintento_palabras` | Proyecto 2: el primer intento de lectura se corta después de 3 palabras y los datos de la RAM cambian antes del reintento, con `MEM_DIV` 2, 4 y 5. Después del timeout solo salen las 8 palabras nuevas, en orden, cada `MEM_DIV` ciclos y sin duplicados |
+| `tb_eviction_buffer` | Proyecto 2: el eviction buffer con 4 entradas; el testbench hace de controlador de memoria. Se llena con 4 líneas, una lectura de una línea pendiente la recibe completa del buffer (forwarding), las líneas salen en orden FIFO y la primera se drena hacia la RAM |
+| `tb_eviction_buffer_extendido` | Proyecto 2: el eviction buffer con 4, 8 y 16 entradas, los extremos y el medio del rango permitido. En cada tamaño se llena por completo, hace forwarding, se drena entero en orden y los punteros dan la vuelta (uso circular) |
+| `tb_eviction_buffer_prioridad` | Proyecto 2: una lectura pendiente se atiende antes del siguiente drenado sin cortar una escritura ya empezada, y una lectura que falla en la RAM termina con error y no se repite |
+| `tb_eviction_buffer_error_escritura` | Proyecto 2: una escritura que termina con error definitivo (`ram_error`, que el controlador da después de su reintento). El error se informa, la línea sucia se queda en el buffer con su dirección y sus datos, la ocupación no baja y no hay reintentos automáticos sin fin |
+| `tb_eviction_buffer_recuperacion` | Proyecto 2: después de un error de escritura el buffer conserva la línea y deja de drenar (`write_error_blocked`), pero sigue haciendo forwarding; con `clear_write_error` vuelve a escribir y la línea sale solo cuando la RAM confirma con `ram_ready` |
+| `tb_eviction_buffer_integracion` | Proyecto 2: el eviction buffer con el controlador real (`MEM_DIV` 4, timeout de 256 ciclos) y una RAM de 16384 palabras. Escribe una línea de 256 bits, lee otra de la RAM, hace forwarding mientras una escritura espera, drena todo al soltar `mem_hold`, vuelve a leer la línea escrita y comprueba que cada línea hace exactamente 8 escrituras de palabra, sin pérdidas ni duplicados |
+| `tb_perf_counters` | Los cinco acumuladores de 64 bits: ciclos, bundles, instrucciones no NOP, stalls de memoria y recuperación BRU. Reset síncrono prioritario, pausa/reanudación, eventos entre flancos, máscaras de cero a cuatro operaciones, acarreo y wrap64; IPC externo con valores conocidos y N/D para cero ciclos. Memoria impide duplicar retiros durante freeze y gana la atribución ante causas coincidentes; conserva las comprobaciones A–C |
+| `tb_perf_slot_mask` | Clasificación combinacional de las 34 instrucciones originales y las tres D18 en sus slots. Palabras fijas y bitmaps numéricos independientes, barrido de tipos/IDs, las 16 máscaras, NOP, destino ALU x0, slots incorrectos, RSV de D18 y prefijos X/Z. Expone el fallback ADD del decoder ALU para IDs reservados, pero los excluye de las métricas según la ISA |
+| `tb_perf_pipeline_monitor` | Clasificador, transporte ID→EX→WB y contadores contra un calendario independiente de fechas de retiro. NOP válido frente a burbuja, máscaras de uno a cuatro slots, freeze y reanudación sin duplicados, salto que descarta dos jóvenes y excepción que anula además al culpable, conservando el WB anterior. Prioridad de excepción, reset sin avance, pausa sin detener metadatos y secuencia pseudoaleatoria; no mide la duración real de recuperación BRU |
+| `tb_perf_top_d3` | Metadatos y retiros sobre `top` en modo 0 contra identidades/fechas declaradas por programa. ALU x0 y N+3, loads/stores de palabra/byte, saltos y enlaces, cuatro slots, cripto con dos escrituras por una instrucción, NOP, ventanas y excepción con anulación del culpable/jóvenes. Contrasta los puertos de efectos, los 32 GPR, estado público y toda DMEM con otro procesador sin el monitor externo; fija las penalizaciones en cero |
+| `tb_perf_branch_d4a` | Recuperación BRU sobre `top` en modo 0: contrasta cada flanco con un calendario causal, separando aceptación del salto y dos huecos posteriores. Saltos adelante, atrás, encadenados y no tomados, NOP, WB que completa durante recuperación, excepción que suprime la BRU, ventanas que cortan uno o ambos huecos y reset pendiente. Compara efectos/GPR/DMEM con referencia y ofrece mutaciones diagnósticas opcionales |
+| `tb_perf_stall_d5a` | Programa con Feistel4, LSU y BRU en modos 0 y 1 con una/cuatro esperas por acceso. Predice avances y retiros por fecha, verifica pipeline/metadatos/GPR quietos durante freeze, ciclos de memoria y recuperación sin doble atribución, BRU retenida y efectos únicos de stores/camcon. Compara secuencia de efectos y estado completo a igual progreso bajo siete ventanas; reset con load/store o recuperación pendiente, incluyendo el store que el contrato previo permite publicar al liberar reset |
+| `tb_perf_vliw_monitor_d4b1` | Monitor VLIW compuesto sobre `top` en modo 0 y modo 1 con una/cuatro esperas, calendario propio y procesadores sombra. Verifica cinco acumulados, máscaras, NOP, LSU, saltos, excepción, cuatro ventanas y reset, comparando efectos y toda DMEM a igual progreso. Una instancia abstracta adicional conserva las marcas BRU durante congelamientos, separa excepción/salto y prueba cuatro slots; incluye mutaciones diagnósticas opcionales |
+| `tb_perf_stage_counters` | Ocupación, burbujas, stalls y posiciones válidas congeladas de IF/ID/EX/WB, contra identidades y sumas externas. Seis parejas CPU/sombra: modos 0, 1 con una/cuatro esperas y 2 con L2 real, ROM síncrona/combinacional en 0 y 2. Llenado NOP, programa mixto, flush/excepción, ventanas y reset; particiones/acotaciones, efectos pasivos, snapshots al mismo avance y 65536 bytes tras vaciado. Unidad aislada con las 16 validades y mutaciones diagnósticas opcionales |
+| `tb_perf_cache_l1d_k1a` | Los 19 eventos L1-D y sus totales contra guiones PRE y referencias de memoria independientes: reset, pausas, tasas con N/D y acarreo/wrap64. L1-D real WT/NINE/NWA con RAW forwarding/stall y WB/exclusiva/WA con MSHR 1/2/4; hits/misses, WBUF lleno, víctimas limpias/sucias, dirty recibido, reservas/merge/load MSHR, hit bajo miss y falta de capacidad. Compara caché/sombra, protocolo retenido y memoria completa tras flush; mutaciones opcionales |
+| `tb_perf_cache_l1d_k1b` | Servicio/espera por clases RH/RM/WH/WM contra fechas y guiones, con identidad servicio = accesos + espera, medias externas y N/D. Excluye accesos que cruzan pausas/reset, mantiene pendientes, detecta protocolos inválidos y prueba acarreo/wrap y espera larga. L1-D WB/exclusiva con MSHR 1/2/4 y pareja con `l2_model`: stores posted, merge, RAW, buffers llenos, respuesta tardía, fill simultáneo e inactividad. Comprueba pasividad y 65536 bytes tras flush; el modelo no acredita AMAT de la L2 real |
+| `tb_perf_cache_l2` | Los diez eventos públicos L2 y totales derivados contra estímulos dirigidos y LCG32 independiente. Reset prioritario aun pausado, eventos consecutivos/coincidentes, pausa/reanudación, oferta de escritura retenida contada como ciclos (sin inventar aceptaciones), acarreo y wrap64 de cada acumulador |
+| `tb_perf_cache_l2_latency` | Asociación de aceptaciones, clasificación tardía y respuestas de lectura L2 con calendario explícito: hit de ocho flancos, miss congestionado, escritura posted sin respuesta ficticia, oferta sin grant, pausa/exclusión, corte incompleto y circulación de FIFO con respuestas consecutivas. Reset y seis familias negativas: respuesta/clasificación huérfanas, tipo incorrecto, doble clasificación y desborde de cada cola; el error impide reasociar hasta reset |
+| `tb_perf_memory` | Contadores RAM aislados con estímulos explícitos: una lectura y 53 ciclos busy, una escritura, timeout, pausa que conserva acumulados, reanudación con error y clear prioritario. Distingue aceptación única de ocupación sostenida; no calcula latencia real de una transacción ni persistencia del store |
+| `tb_perf_memory_latency` | Cohortes temporales RAM frente al MC real y un gemelo sin observador en DIV2/4. Fechas PRE independientes verifican servicio público, lecturas/escrituras, reintento exitoso, dos timeouts con fallo definitivo separado de éxitos y exclusión por pausa. Compara señales/datos de ambos MC por flanco; unidad dirigida comprueba reset, pendiente al corte y errores por final huérfano, doble aceptación, tipo sin aceptación y éxito/error simultáneos |
+| `tb_perf_ram_faults` | `perf_memory` con MC real y `mem_hold`: escritura normal y lectura sin respuesta que termina tras reintento, con dos aceptaciones, dos timeouts y un error. Un scoreboard de los seis acumulados consume señales públicas PRE y compara POST, incluyendo busy durante el reintento y su cota frente a ciclos totales |
+| `tb_perf_integracion_top` | Instrumentación integrada #7/#8/L1-D contra calendarios de programa y fechas de demanda. Cuatro parejas PERF1/PERF0 en modos 0/1/2 y ROM combinacional adicional en 2, cinco programas y tres ventanas: NOP, LSU, MSHR, cripto, BRU y excepción. Comprueba acumulados VLIW/etapas/K1-A/K1-B, pasividad por puertos, GPR/estado a igual avance y toda DMEM frente a gold tras vaciado; mantenimiento no agrega demandas. Usa los parámetros actuales de `top`, con L2 real por defecto; no prueba las instrucciones D18 |
+| `tb_perf_integracion_hierarquia` | Jerarquías PERF1/PERF0 bajo exclusiva, NINE, DIV2 y `l2_model`. Stores por palabra/byte y loads compiten en conjuntos, se interrumpe la medición con demanda pendiente y se vacían líneas sucias. Gold se actualiza con stores CPU y un scoreboard PRE contrasta eventos L2/MC; comprueba pasividad de buses/relojes/handshake, contadores desactivados en cero y las 16384 palabras después de cada flush |
+| `tb_perf_amat_integracion` | Reutiliza el driver de jerarquía en exclusiva/NINE, DIV2/4 y modelo con su gemelo PERF0. Un diario lineal externo fecha aceptaciones/clasificaciones/respuestas L2 y aceptaciones/finales RAM; consulta todos los flancos de cada ventana sin reproducir las colas del observador. Contrasta cohortes, servicio, exclusiones y pendientes por flanco, cobertura hit/miss/read/write y observadores en cero con PERF0; conserva las comparaciones de memoria completa del driver |
+| `tb_perf_d18_cierre` | `medir`, `lcont` y `vaciarc` en modos 0, 1, 2 real y 2 modelo. Calendario de retiro y suma PRE de eventos independientes comprueban ciclos/bundles/instrucciones/stalls sin duplicación, y nueve lecturas EX→WB de selectores 9–12, ambas mitades y reservado. Pausa/reanudación, medición anulada por salto, datos GPR conocidos y persistencia de toda DMEM después de ensuciar/vaciar tres líneas |
+| `tb_cache_isa_unit` | Unidad D18 aislada con instantáneas externas de los 13 contadores: selectores/mitades y reservados, x0, X/Z, captura EX retenida en WB y operaciones consecutivas sin duplicación. `medir` conserva/reanuda enable; `vaciarc` usa un proveedor simulado de cuatro fases, ack inmediato/retardado/antiguo y desconocido. Verifica controles ilegales y reset prioritario durante solicitud/respuesta; no acredita persistencia de caché real |
+| `tb_decoder_cache_isa` | Decoder combinacional D18 contra palabras numéricas independientes: tipos e IDs, todos los destinos/mitades/selectores de `lcont`, cada bit RSV relevante y X/Z en cada posición de las tres operaciones. Las palabras inválidas deben dejar todas las salidas normalizadas en cero y no retener la decodificación anterior |
 | `tb_fetch`, `tb_dispatch`, `tb_decoder_alu` | El bundle sin esperar un flanco, la separación de los 4 slots y las 18 instrucciones ALU con sus campos |
 | `tb_pipeline_if_id`, `tb_pipeline_id_ex`, `tb_pipeline_ex_wb` | Captura en el flanco, `flush`, prioridad del reset y 300 ciclos aleatorios |
 
+El cierre documental del 20 de noviembre agrega 21 filas: los 19 archivos
+`tb-p2/tb_perf_*.sv` existentes y los dos bancos unitarios D18. La cifra inicial
+de 16 era incompleta; se usa el inventario real, sin contar como bancos separados
+los módulos auxiliares ni las configuraciones internas. Las mutaciones opcionales
+requieren ejecuciones negativas específicas; el PASS normal no acredita haberlas ejecutado.
+
 Fuera de `make sim`: `make archivo` cifra y descifra un archivo real y `make test-programs` ejecuta los
 programas de `examples/` sobre el RTL.
+
+
+## Pruebas del cierre de métricas L2/RAM
+
+Ejecutar en una copia externa si se necesita conservar el repositorio sin
+artefactos de build. Make descubre automáticamente los bancos nuevos:
+
+| Comando | Propiedad |
+|---|---|
+| `make tb_perf_cache_l2` | Diez eventos, reset, pausa, oferta retenida, acarreo y wrap64 |
+| `make tb_perf_integracion_hierarquia` | Pasividad activa/inactiva, exclusiva/NINE, DIV2/4, modelo y toda DMEM |
+| `make tb_perf_d18_cierre` | Selectores 9–12, mitades, reserva, medir y vaciarc en 0/1/REAL/MODEL |
+| `make tb_perf_ram_faults` | MC real: una aceptación por solicitud, reintento, dos timeout y un error |
+
+`run_program --config archivo.json` transmite parámetros por -P y acredita la
+instancia elaborada con ELAB_CONFIG. execution.json conserva el esquema base 1
+y añade observation_schema2 con VLIW/etapas/L1/L2/RAM, hashes y comandos. El
+snapshot precede al mantenimiento, que conserva handshake y captura persistente.
+`tools/comparar_configuraciones.py` emite CSV/JSON/Markdown; su modo --capacity
+calienta18KiB antes de abrir la ventana. `tools/comparar_optimizaciones.py`
+valida BAL tradicional frente a M2/RTL, sin afirmar niveles -O inexistentes.
+Ver comandos y resultados en [README](../README.md) y
+[verificacion-cierre-javier.md](verificacion/verificacion-cierre-javier.md).

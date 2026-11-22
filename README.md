@@ -1,10 +1,12 @@
-# Proyecto1_Arquitectura1
+# Proyecto2_Arquitectura1
 Arquitectura VLIW Propia para Aplicaciones de Cifrado por Bloques
 
 ## Propósito
 
-Proyecto Grupal I de CE4301 Arquitectura de Computadores I (TEC, II Semestre 2026): un procesador
-VLIW con un ISA propio, descrito en SystemVerilog y simulado con Icarus Verilog.
+Proyecto Grupal II de CE4301 Arquitectura de Computadores I (TEC, II Semestre 2026):
+jerarquía L1-D/L2, memoria principal y análisis de rendimiento sobre el procesador
+VLIW del Proyecto I, descrito en SystemVerilog y simulado con Icarus Verilog.
+Los módulos originales se conservan bajo `rtl/`; `rtl-p2/top.sv` los integra.
 
 - Cada instrucción (bundle) mide 128 bits y lleva 4 operaciones que se ejecutan a la vez: ALU, acceso
   a memoria (LSU), saltos (BRU) y una unidad criptográfica.
@@ -14,15 +16,44 @@ VLIW con un ISA propio, descrito en SystemVerilog y simulado con Icarus Verilog.
 - Incluye un ensamblador propio, herramientas para cargar un archivo en la memoria y extraer el
   resultado, y la integración con el compilador del curso CE1108.
 
+## Arquitectura del Proyecto II
+
+`MEM_MODE=0` conserva memoria directa; `1` añade esperas sintéticas; `2` selecciona
+la jerarquía completa. En modo 2, `L2_MODEL=0` es la **L2 real** y `1` el proveedor
+provisional que siempre acierta: no representan dos implementaciones equivalentes.
+ROM síncrona, IF/ID/EX/WB y N+3 se conservan. El núcleo se congela globalmente,
+pero cachés, controlador y métricas continúan con `clk`.
+
+| Componente | Configuración predeterminada |
+|---|---|
+| L1-D | 4 KiB, 2 vías, línea 32 B; WB/WA y LRU |
+| Stores pendientes | 2 MSHR, write buffer 4; cargas con miss bloquean |
+| L2 real | 16 KiB, 4 vías, PLRU de árbol, hit 8 ciclos, cuatro etapas |
+| Inclusión | Exclusiva; NINE disponible para comparación |
+| Eviction buffer | 4 líneas sucias; forwarding y drenado hacia RAM |
+| RAM | 64 KiB, clk_mem=clk/4; Tmem=25+7×4=53, handshake/CDC y reintento |
+| Vaciado | MSHR→L1→WBUF→L2→EB→RAM; confirmar flush_done antes de leer DMEM |
+
+D18 opcional en LSU: `medir 0/1` pausa/reanuda sin borrar; `lcont rg,sel` captura
+en EX y escribe en WB con N+3; `vaciarc` espera persistencia hasta RAM. Los
+selectores 0–12 incluyen VLIW, L1-D, L2 y RAM; 13–31 leen 0. CE1108 no necesita
+generarlos para conservar compatibilidad. Todos los contadores usan clk general;
+IPC, tasas, servicio L1 y utilización RAM se calculan en Python.
+
+Las políticas se seleccionan mediante parámetros de elaboración. El runner
+acepta `--config archivo.json`; por ejemplo `{"INCL_POLICY":1,"WRITE_POLICY":0}`
+selecciona NINE/WT/NWA. WT+exclusiva es ilegal y se rechaza. No se modifican las
+fuentes de las cachés para realizar experimentos.
+
 ## Requisitos
 
 - [Icarus Verilog](https://steveicarus.github.io/iverilog/) 12 o posterior, GNU make, bash y
   Python 3.10 o posterior. GTKWave es opcional, para ver las ondas.
-- Para compilar el código del grupo de CE1108: `build-essential`, `flex` y `uthash-dev`.
+- Para compilar el código del grupo de CE1108: `build-essential`, `flex`, `bison` y `uthash-dev`.
 
 ```bash
 sudo apt install iverilog gtkwave make python3          # Ubuntu o WSL
-sudo apt install build-essential flex uthash-dev        # solo para la integración con CE1108
+sudo apt install build-essential flex bison uthash-dev        # solo para la integración con CE1108
 ```
 
 En Windows, Icarus Verilog se instala con `winget install Icarus.Verilog`.
@@ -30,22 +61,27 @@ En Windows, Icarus Verilog se instala con `winget install Icarus.Verilog`.
 ## Estructura
 
 ```
-rtl/        procesador en SystemVerilog: top.sv, etapas, unidades, banco de registros, memorias
-            e isa_defs.sv (códigos del ISA y parámetros)
-tb/         testbenches de make sim (uno por módulo más los del procesador completo)
+rtl/        procesador del proyecto 1 en SystemVerilog: etapas, unidades, banco de registros,
+            memorias e isa_defs.sv (códigos del ISA y parámetros)
+rtl-p2/     módulos del proyecto 2 (caché, modelo de stalls, contadores) y top.sv, el único
+            módulo del proyecto 1 que cambió
+tb/         testbenches del proyecto 1 (uno por módulo más los del procesador completo)
+tb-p2/      testbenches del proyecto 2; make sim ejecuta los de tb/ y los de tb-p2/
 tests/      pruebas en Python y los testbenches que usan las herramientas (tests/rtl/)
 tools/      assembler.py y run_program.py: ensamblador y ejecución de programas
             load_file.py y extract_data.py: carga y extracción de archivos en la memoria
             run_ce1108.py, run_ce1108_source.py y adaptadores: integración con CE1108
 examples/   programas .asm, resultados esperados (.json) y archivos de prueba
-docs/       isa.md, microarchitecture.md, simulation.md y compiler-integration.md
-img/        diagrama de bloques
+docs/       documentación de diseño (índice en docs/README.md): jerarquía de memoria,
+            microarquitectura, análisis de rendimiento, ISA, interfaces, componentes,
+            decisiones y pruebas; verificacion/ (evidencia por issue) y proceso/ (plan y guion)
+img/        diagramas de bloques (proyecto 1 y proyecto 2)
 ```
 
 ## Simulación
 
 ```bash
-make sim                  # compila y ejecuta los 21 testbenches y muestra un resumen
+make sim                  # compila y ejecuta los testbenches de tb/ y tb-p2/ y muestra un resumen
 make tb_alu               # un solo testbench
 make waves TB=tb_alu      # abre su .vcd en GTKWave
 make list                 # lista los testbenches
@@ -141,9 +177,92 @@ pasos, el contrato y los resultados están en
 
 ## Documentación
 
+El índice completo, ordenado por función, está en [docs/README.md](docs/README.md). Los tres documentos
+que pide el enunciado son los tres primeros de esta tabla.
+
 | Documento | Contenido |
 |:---|:---|
+| [docs/memory-hierarchy.md](docs/memory-hierarchy.md) | Jerarquía de memoria: políticas de la L1-D y la L2 con su justificación, inclusión exclusiva, write buffer, eviction buffer, latencias y diagramas |
+| [docs/microarchitecture.md](docs/microarchitecture.md) | Diagramas del sistema y del núcleo, pipeline, ROM síncrona, jerarquía de datos, congelamiento, tiempos y módulos SystemVerilog |
+| [docs/performance-analysis.md](docs/performance-analysis.md) | Análisis de rendimiento: metodología, benchmarks, tasas por nivel, AMAT, utilización de la RAM y comparación de configuraciones |
 | [docs/isa.md](docs/isa.md) | Especificación del ISA, codificación de cada instrucción y green card |
-| [docs/microarchitecture.md](docs/microarchitecture.md) | Diagrama de bloques, pipeline y módulos SystemVerilog |
 | [docs/simulation.md](docs/simulation.md) | Simulación, modelo de cada componente, memoria, ensamblador y testbenches |
 | [docs/compiler-integration.md](docs/compiler-integration.md) | Contrato con CE1108 y evidencia de la validación conjunta |
+
+
+## Reproducir métricas y comparaciones
+
+Las órdenes que construyen `build/` se ejecutan en una copia externa del código;
+los comparadores exigen un destino **nuevo y externo** por ejecución. Para repetir,
+cambiar el nombre del destino. Los ejemplos `/tmp` son desechables; para una
+entrega elegir almacenamiento persistente fuera del repositorio.
+
+```bash
+make test-memory-modes
+make test-memory-benchmarks
+make tb_perf_cache_l2
+make tb_perf_integracion_hierarquia
+make tb_perf_d18_cierre
+make tb_perf_ram_faults
+python3 -m unittest discover -s tests -p 'test_comparar_configuraciones.py' -v
+
+python3 tools/run_memory_benchmarks.py --output /tmp/p29-real-nuevo --repeat 2
+python3 tools/comparar_configuraciones.py --output /tmp/p30-nuevo --repeat 2
+python3 tools/comparar_configuraciones.py --capacity --output /tmp/capacidad18k-nueva
+make archivo ARCHIVO=examples/archivos/archivo18k.bin ARCHIVO_MEM_MODE=2
+```
+
+Los tres benchmarks tienen el mismo horizonte 872 avances y 96 accesos lógicos.
+Cada captura valida 32 GPR/16384 palabras y flush confirmado. `execution.json`
+conserva modo, parámetros elaborados, vectores VLIW/etapas/L1/L2/RAM, hashes,
+comandos, ventana y mantenimiento separado. El comparador emite CSV/JSON/Markdown
+y contrasta una dimensión por par: inclusión, escritura, reemplazo L1/L2, MSHR
+1/2/4 y MEM_DIV2/4. `--blocking-report` incorpora evidencia histórica real,
+verificando que solo difiere l2_cache.sv; MODEL no sustituye esa referencia.
+
+CE1108 se consulta sin modificarlo. Preparar su ejecutable previamente con sus
+herramientas. La variante tradicional puede validarse con:
+
+```bash
+export CE1108_ROOT=/ruta/a/Proyecto2_Compiladores
+python3 tools/comparar_optimizaciones.py --compiler-root "$CE1108_ROOT" --output /tmp/p31-nuevo
+CE1108_ROOT="$CE1108_ROOT" python3 -m unittest discover -s tests -p 'test_comparar_optimizaciones.py' -v
+```
+
+Las opciones CLI DCE/unrolling/reorder reportan IR; no existen opciones
+productivas -O0…-O3. El IDE sí aplica DCE al fuente mediante su API pública:
+la comparación tradicional/IDE-DCE está verificada para puntajes y el ejemplo
+de funciones, con marcos y cortes propios por variante. El comparador acepta
+un manifiesto para futuros niveles reales y rechaza copias de la misma imagen.
+Sus cortes son observaciones declaradas, no certificaciones de retorno de main.
+
+| Documentación adicional | Contenido |
+|---|---|
+| [benchmarks-memoria-p29.md](docs/verificacion/benchmarks-memoria-p29.md) | Oráculos y resultados históricos/actuales de #29 |
+| [verificacion-cierre-javier.md](docs/verificacion/verificacion-cierre-javier.md) | Cobertura por issue, pruebas, medidas y limitaciones |
+| [guion-defensa-javier.md](docs/proceso/guion-defensa-javier.md) | Demostración y defensa del aporte de Javier |
+
+La instrumentación temporal nueva agrega cohortes completas L2/RAM, respetando
+`medir` y dejando intactos `lcont` 0–12 y `vaciarc`. AMAT L2 describe **lecturas**;
+los stores posted no tienen respuesta de escritura. La media RAM separa éxito,
+fallo, retry y operaciones excluidas/pendientes. No se suman niveles solapados.
+Los logs anteriores se siguen leyendo; no se inventan sus tiempos ausentes.
+
+```bash
+make tb_perf_cache_l2_latency tb_perf_memory_latency tb_perf_amat_integracion
+python3 -m unittest discover -s tests -p 'test_amat_temporal.py' -v
+python3 tools/analizar_amat.py --report /tmp/p30-nuevo/comparaciones.json --output /tmp/amat-nuevo
+python3 tools/comparar_optimizaciones.py --compiler-root "$CE1108_ROOT" --ide-dce --output /tmp/p31-dce-nuevo
+CE1108_ROOT="$CE1108_ROOT" python3 -m unittest discover -s tests -p 'test_ce1108_dce.py' -v
+```
+
+Cada salida debe ser nueva. `--ide-dce` usa cortes B5 acreditados en el snapshot
+CE1108 indicado en el informe; otro productor requiere un manifiesto y cortes
+nuevos. Ver las poblaciones, resultados y limitaciones del
+[cierre temporal](docs/performance-analysis.md#cierre-temporal-por-transacción-y-dce-productivo-26-31-y-38).
+El aporte técnico de Javier ya está integrado en `develop` mediante el
+[PR #70](https://github.com/fabrimena/Proyecto2_Arquitectura1/pull/70).
+El cierre documental individual se revisa en un PR separado. La entrega colectiva
+#38 sigue pendiente de revisión del equipo, presentación, integración definitiva
+`develop` → `main`, entrega en TEC Digital y SHA del último commit realmente
+entregado. Ningún SHA de base sustituye automáticamente ese SHA final.

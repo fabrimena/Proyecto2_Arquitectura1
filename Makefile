@@ -2,7 +2,7 @@
 #  Makefile de simulación - Procesador VLIW (CE4301, Proyecto Grupal I)
 #
 #  Uso:
-#    make sim              compila y ejecuta todos los testbenches de tb/
+#    make sim              compila y ejecuta todos los testbenches de tb/ y tb-p2/
 #    make tb_alu           compila y ejecuta sólo tb/tb_alu.sv
 #    make waves TB=tb_alu  abre en GTKWave el .vcd de ese testbench
 #    make list             lista los testbenches disponibles
@@ -25,9 +25,9 @@
 #  Variables útiles:
 #    PLUSARGS="+verbose +seed=7"   argumentos para la simulación
 #
-#  Cada testbench se compila con todos los módulos de rtl/ y se ejecuta dentro
-#  de build/<tb>/, donde quedan el ejecutable (sim.vvp), el log (sim.log) y el
-#  archivo de ondas (.vcd). Ver docs/simulation.md.
+#  Cada testbench se compila con todos los módulos de rtl/ y rtl-p2/ y se
+#  ejecuta dentro de build/<tb>/, donde quedan el ejecutable (sim.vvp), el log
+#  (sim.log) y el archivo de ondas (.vcd). Ver docs/simulation.md.
 # ==============================================================================
 
 SHELL := /bin/bash
@@ -36,20 +36,25 @@ IVERILOG ?= iverilog
 VVP      ?= vvp
 GTKWAVE  ?= gtkwave
 
-RTL_DIR   := rtl
-TB_DIR    := tb
-BUILD_DIR := build
+# rtl/: procesador del proyecto 1. rtl-p2/: módulos nuevos del proyecto 2 y los
+# del proyecto 1 que cambiaron para él (top.sv). tb/ y tb-p2/: lo mismo para los
+# testbenches.
+RTL_DIR    := rtl
+RTL_P2_DIR := rtl-p2
+TB_DIR     := tb
+TB_P2_DIR  := tb-p2
+BUILD_DIR  := build
 
-RTL_SRCS := $(sort $(wildcard $(RTL_DIR)/*.sv))
-TB_SRCS  := $(sort $(wildcard $(TB_DIR)/tb_*.sv))
-TB_HDRS  := $(wildcard $(TB_DIR)/*.svh)
-TBS      := $(patsubst $(TB_DIR)/%.sv,%,$(TB_SRCS))
+RTL_SRCS := $(sort $(wildcard $(RTL_DIR)/*.sv)) $(sort $(wildcard $(RTL_P2_DIR)/*.sv))
+TB_SRCS  := $(sort $(wildcard $(TB_DIR)/tb_*.sv)) $(sort $(wildcard $(TB_P2_DIR)/tb_*.sv))
+TB_HDRS  := $(wildcard $(TB_DIR)/*.svh $(TB_P2_DIR)/*.svh)
+TBS      := $(basename $(notdir $(TB_SRCS)))
 
 # -g2012          SystemVerilog
-# -I              rutas para los `include (isa_defs.sv, tb_utils.svh)
+# -I              rutas para los `include (isa_defs.sv, cache_defs.sv, tb_utils.svh)
 # -Wno-timescale  sólo algunos archivos declaran `timescale e Icarus avisaría
 #                 en cada módulo que lo hereda
-IVFLAGS  ?= -g2012 -Wall -Wno-timescale -I $(RTL_DIR) -I $(TB_DIR)
+IVFLAGS  ?= -g2012 -Wall -Wno-timescale -I $(RTL_DIR) -I $(RTL_P2_DIR) -I $(TB_DIR) -I $(TB_P2_DIR)
 
 # -n: $stop se comporta como $finish, la simulación nunca queda esperando
 VVPFLAGS ?= -n
@@ -57,8 +62,8 @@ PLUSARGS ?=
 
 TB ?=
 
-# $(call compile,<testbench>)
-compile = $(IVERILOG) $(IVFLAGS) -s $(1) -o $(BUILD_DIR)/$(1)/sim.vvp $(RTL_SRCS) $(TB_DIR)/$(1).sv
+# $(call compile,<testbench>,<archivo del testbench>)
+compile = $(IVERILOG) $(IVFLAGS) -s $(1) -o $(BUILD_DIR)/$(1)/sim.vvp $(RTL_SRCS) $(2)
 
 
 .PHONY: all sim list clean help waves check-tools $(TBS)
@@ -83,9 +88,12 @@ list:
 #  Un target por testbench: make tb_alu
 # ------------------------------------------------------------------------------
 
-$(BUILD_DIR)/%/sim.vvp: $(TB_DIR)/%.sv $(RTL_SRCS) $(TB_HDRS) | check-tools
+# El archivo del testbench se busca en tb/ y en tb-p2/ ($< es la ruta encontrada).
+vpath tb_%.sv $(TB_DIR) $(TB_P2_DIR)
+
+$(BUILD_DIR)/%/sim.vvp: %.sv $(RTL_SRCS) $(TB_HDRS) | check-tools
 	@mkdir -p $(@D)
-	$(call compile,$*)
+	$(call compile,$*,$<)
 
 $(TBS): %: $(BUILD_DIR)/%/sim.vvp
 	@cd $(BUILD_DIR)/$* && set -o pipefail && $(VVP) $(VVPFLAGS) sim.vvp $(PLUSARGS) 2>&1 | tee sim.log
@@ -107,9 +115,10 @@ $(TBS): %: $(BUILD_DIR)/%/sim.vvp
 sim: check-tools
 	@echo "Simulando $(words $(TBS)) testbenches con $$($(IVERILOG) -V 2>&1 | head -1)"
 	@pass=0; fail=0; nochk=0; bad=0; \
-	for tb in $(TBS); do \
+	for src in $(TB_SRCS); do \
+	    tb=$$(basename $$src .sv); \
 	    mkdir -p $(BUILD_DIR)/$$tb; \
-	    if $(call compile,$$tb) > $(BUILD_DIR)/$$tb/compile.log 2>&1; then \
+	    if $(call compile,$$tb,$$src) > $(BUILD_DIR)/$$tb/compile.log 2>&1; then \
 	        ( cd $(BUILD_DIR)/$$tb && $(VVP) $(VVPFLAGS) sim.vvp $(PLUSARGS) > sim.log 2>&1 ); rc=$$?; \
 	        if [ $$rc -ne 0 ] || grep -q '\[FAIL\]' $(BUILD_DIR)/$$tb/sim.log; then \
 	            st=FAIL; fail=$$((fail+1)); \
@@ -158,6 +167,30 @@ test-programs: check-tools
 	IVERILOG=$(IVERILOG) VVP=$(VVP) python3 -m unittest discover -s tests -p 'test_cpu_program.py' -v
 
 
+# Regresión del issue #9: ambos modos ejecutan el mismo programa y se comparan
+# 32 GPR y toda DMEM después del flush. No se agrega como dependencia de sim.
+.PHONY: test-memory-modes
+test-memory-modes: check-tools
+	@command -v $(VVP) > /dev/null || { echo "No se encontró $(VVP)"; exit 1; }
+	PYTHONDONTWRITEBYTECODE=1 IVERILOG=$(IVERILOG) VVP=$(VVP) python3 -m unittest discover -s tests -p 'test_memory_modes.py' -v
+
+
+# Issue #29: suite independiente; no agrega trabajo a sim ni cambia sus targets.
+# Sin P29_EVIDENCE_DIR usa temporales externos; con ella exige un destino nuevo.
+.PHONY: test-memory-benchmarks bench-memory
+test-memory-benchmarks: check-tools
+	@command -v $(VVP) > /dev/null || { echo "No se encontró $(VVP)"; exit 1; }
+	PYTHONDONTWRITEBYTECODE=1 IVERILOG=$(IVERILOG) VVP=$(VVP) python3 -m unittest discover -s tests -p 'test_memory_benchmarks.py' -v
+
+# El llamador elige un directorio externo NUEVO para conservar CSV, JSON y dumps.
+# El runner rechaza rutas internas, destinos existentes y repeticiones inválidas.
+BENCH_OUTPUT ?=
+BENCH_REPETITIONS ?= 1
+bench-memory: check-tools
+	@test -n "$(BENCH_OUTPUT)" || { echo "Use BENCH_OUTPUT=<directorio externo nuevo>"; exit 1; }
+	PYTHONDONTWRITEBYTECODE=1 IVERILOG=$(IVERILOG) VVP=$(VVP) python3 tools/run_memory_benchmarks.py --output "$(BENCH_OUTPUT)" --repeat "$(BENCH_REPETITIONS)"
+
+
 # ------------------------------------------------------------------------------
 #  make archivo ARCHIVO=<ruta>
 #
@@ -172,6 +205,11 @@ test-programs: check-tools
 # ------------------------------------------------------------------------------
 
 ARCHIVO     ?= examples/archivos/mensaje.txt
+# Selección por elaboración; evita modificar fuentes para probar la L2 real.
+ARCHIVO_MEM_MODE ?= 0
+ARCHIVO_L2_MODEL ?= 0
+ARCHIVO_MEM_DIV ?= 4
+ARCHIVO_PARAMS = -Ptb_archivo.MEM_MODE=$(ARCHIVO_MEM_MODE) -Ptb_archivo.L2_MODEL=$(ARCHIVO_L2_MODEL) -Ptb_archivo.MEM_DIV=$(ARCHIVO_MEM_DIV)
 ARCHIVO_DIR := $(BUILD_DIR)/archivo
 
 .PHONY: archivo
@@ -181,7 +219,7 @@ archivo: check-tools
 	python3 tools/assembler.py --input examples/cifrar_archivo.asm --output $(ARCHIVO_DIR)/cifrar.mem
 	python3 tools/assembler.py --input examples/descifrar_archivo.asm --output $(ARCHIVO_DIR)/descifrar.mem
 	python3 tools/load_file.py --input "$(ARCHIVO)" --address 0x200 --output $(ARCHIVO_DIR)/datos.mem
-	$(IVERILOG) $(IVFLAGS) -s tb_archivo -o $(ARCHIVO_DIR)/sim.vvp $(RTL_SRCS) tests/rtl/tb_archivo.sv
+	$(IVERILOG) $(IVFLAGS) -s tb_archivo $(ARCHIVO_PARAMS) -o $(ARCHIVO_DIR)/sim.vvp $(RTL_SRCS) tests/rtl/tb_archivo.sv
 	@set -o pipefail; n=$$(wc -c < "$(ARCHIVO)"); \
 	( cd $(ARCHIVO_DIR) && $(VVP) $(VVPFLAGS) sim.vvp +CIFRAR=cifrar.mem +DESCIFRAR=descifrar.mem \
 	    +DATOS=datos.mem +BYTES=$$n $(PLUSARGS) 2>&1 | tee sim.log ) && \
@@ -216,7 +254,7 @@ descifrar: check-tools
 	@mkdir -p $(DESCIFRAR_DIR)
 	python3 tools/assembler.py --input examples/descifrar_archivo.asm --output $(DESCIFRAR_DIR)/descifrar.mem
 	python3 tools/load_file.py --input "$(ARCHIVO)" --address 0x200 --output $(DESCIFRAR_DIR)/datos.mem
-	$(IVERILOG) $(IVFLAGS) -s tb_archivo -o $(DESCIFRAR_DIR)/sim.vvp $(RTL_SRCS) tests/rtl/tb_archivo.sv
+	$(IVERILOG) $(IVFLAGS) -s tb_archivo $(ARCHIVO_PARAMS) -o $(DESCIFRAR_DIR)/sim.vvp $(RTL_SRCS) tests/rtl/tb_archivo.sv
 	@set -o pipefail; n=$$(wc -c < "$(ARCHIVO)"); \
 	( cd $(DESCIFRAR_DIR) && $(VVP) $(VVPFLAGS) sim.vvp +SOLO_DESCIFRAR +DESCIFRAR=descifrar.mem \
 	    +DATOS=datos.mem +BYTES=$$n +K0=$(word 1,$(LLAVE_PALABRAS)) +K1=$(word 2,$(LLAVE_PALABRAS)) \

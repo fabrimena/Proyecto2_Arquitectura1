@@ -217,5 +217,78 @@ class ProgramTests(unittest.TestCase):
             self.assertIn("0x00000030", listing.read_text())
 
 
+class CacheEncodingTests(unittest.TestCase):
+    """Extensión opcional: oráculos literales y rechazo estricto sin alterar el ISA anterior."""
+
+    def test_cache_fixed_words(self):
+        # Los literales se obtienen de la tabla de campos, no del encoder.
+        cases = {"vaciarc": 0x9a000000, "medir 0": 0x9a200000,
+                 "medir 1": 0x9a200001, "lcont x5,0": 0x9a402800,
+                 "lcont x31,63": 0x9a40f83f, "lcont x0,32": 0x9a400020}
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                ins = encode_instruction(source)
+                self.assertEqual(ins.word, expected)
+                self.assertEqual(ins.slot, 1)
+                self.assertEqual(ins.reads, ())
+
+    def test_all_counter_selectors_halves_and_destinations(self):
+        # Todo rd y los 64 selectores son legales; 13–31 no son RSV del formato.
+        for rd in range(32):
+            for selector in range(64):
+                with self.subTest(rd=rd, selector=selector):
+                    ins = encode_instruction(f"lcont x{rd},{selector}")
+                    self.assertEqual(ins.word, 0x9a400000 + rd * 2048 + selector)
+                    self.assertEqual(ins.writes, (rd,) if rd else ())
+                    self.assertEqual(ins.word & 0x001f07c0, 0)
+
+    def test_cache_operand_count_and_syntax(self):
+        # No se permite usar operandos adicionales para escribir campos reservados.
+        invalid = ["vaciarc 0", "vaciarc x1", "vaciarc ,", "medir", "medir 0,1",
+                   "medir 1 0", "medir imm=1", "lcont", "lcont x1", "lcont x1,",
+                   "lcont ,1", "lcont x1,1,0", "lcont x1 1", "lcont rd=x1,sel=0"]
+        for source in invalid:
+            with self.subTest(source=source), self.assertRaises(AssemblyError):
+                encode_instruction(source)
+
+    def test_cache_invalid_immediates(self):
+        # medir solo admite un bit; sel es un entero sin signo de seis bits.
+        for source in ("medir -1", "medir 2", "medir 0x100", "medir 1.0", "medir x1",
+                       "lcont x1,-1", "lcont x1,64", "lcont x1,0x100000000",
+                       "lcont x1,1.5", "lcont x1,label", "lcont x1,x2"):
+            with self.subTest(source=source), self.assertRaises(AssemblyError):
+                encode_instruction(source)
+
+    def test_cache_invalid_registers(self):
+        # No se flexibiliza el parser de registros para la nueva instrucción.
+        for register_name in ("x32", "x-1", "x01", "t12", "32", "rd"):
+            with self.subTest(register=register_name), self.assertRaises(AssemblyError):
+                encode_instruction(f"lcont {register_name},0")
+
+    def test_cache_aliases_bases_and_no_hidden_operands(self):
+        # Los alias y bases numéricas usan el mismo contrato que el ISA anterior.
+        self.assertEqual(encode_instruction("LCONT ra,0b100000").word, 0x9a400820)
+        self.assertEqual(encode_instruction("medir 0x1").word, 0x9a200001)
+        for source in ("vaciarc", "medir 0", "medir 1"):
+            ins = encode_instruction(source)
+            self.assertEqual((ins.reads, ins.writes, ins.target, ins.indirect), ((), (), None, False))
+
+    def test_cache_slot_binary_and_cli(self):
+        # Se comprueba tanto el bundle como la salida CLI con un literal de 128 bits.
+        source = "nop | lcont x5,32 | nop | nop\n"
+        expected = "00000000000000009a40282000000000\n"
+        program = assemble_source(source)
+        self.assertEqual(program.memory_text(), expected)
+        self.assertEqual(program.binary(), bytes.fromhex(expected.strip())[::-1])
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            (folder / "cache.asm").write_text(source)
+            result = subprocess.run([sys.executable, str(ROOT / "tools/assembler.py"),
+                                     "--input", str(folder / "cache.asm"),
+                                     "--output", str(folder / "cache.mem")], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((folder / "cache.mem").read_text(), expected)
+
+
 if __name__ == "__main__":
     unittest.main()
