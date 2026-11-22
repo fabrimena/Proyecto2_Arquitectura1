@@ -2,7 +2,7 @@
 
 **Evidencia histórica:** este documento conserva el ensayo inicial con modelo.
 El sistema vigente ya integra L2 real y D18; el cierre de métricas y las
-regresiones actuales se detallan en [performance-analysis.md](performance-analysis.md).
+regresiones actuales se detallan en [performance-analysis.md](../performance-analysis.md).
 El mismo banco sobre e461b70 y el cierre obtiene 60 capturas/8029914 comprobaciones.
 Las limitaciones y rutas antiguas indicadas en las secciones originales no deben
 interpretarse como el estado actual; la mutación WB equivalente sí conserva su límite.
@@ -504,7 +504,7 @@ Reproducción desde el repositorio, sin artefactos en su árbol original:
 perf_dir="$(mktemp -d /tmp/perf-repetir.XXXXXX)"
 mkdir "$perf_dir/codigo"
 git archive HEAD | tar -x -C "$perf_dir/codigo"
-for perf_file in rtl-p2/top.sv rtl-p2/mem_hierarchy.sv rtl-p2/perf_vliw_monitor.sv tb-p2/tb_perf_integracion_top.sv docs/perf-integracion-top.md; do
+for perf_file in rtl-p2/top.sv rtl-p2/mem_hierarchy.sv rtl-p2/perf_vliw_monitor.sv tb-p2/tb_perf_integracion_top.sv docs/verificacion/perf-integracion-top.md; do
     cp --parents "$perf_file" "$perf_dir/codigo"
 done
 (cd "$perf_dir/codigo" && PYTHONDONTWRITEBYTECODE=1 make tb_perf_integracion_top)
