@@ -21,7 +21,7 @@ CPU -> L1-D -> L2 real -> [eviction buffer] -> controlador -> RAM
                                    +--- lecturas -----+
 ```
 
-El eviction buffer recibe las líneas sucias desalojadas de L2, ofrece *forwarding* a lecturas coincidentes y permite que el controlador procese lecturas o drene escrituras hacia RAM. La relación específica entre arbitraje de L2 y sus entradas debe terminarse durante la integración.
+El eviction buffer recibe las líneas sucias desalojadas de L2, ofrece *forwarding* a lecturas coincidentes y permite que el controlador procese lecturas o drene escrituras hacia RAM. En la integración (#27) la L2 usa la interfaz de desalojo (`evict_*`) para sus víctimas sucias y la de lectura (`read_*`) para sus fallos; el buffer decide entre servir la lectura con *forwarding*, mandarla a la RAM o drenar una línea (sección 4).
 
 ### 2. Frecuencia de RAM y latencia
 
@@ -112,15 +112,23 @@ Las siguientes pruebas fueron ejecutadas y reportadas con **PASS** para los esce
 | `tb_mem_controller_entrega_palabras` | Índices, datos y ciclos de entrega |
 | `tb_mem_controller_prefetch_verificacion` | Precarga interna, orden y ritmo físico |
 | `tb_mem_controller_reintento_palabras` | Datos nuevos tras timeout; ocho palabras sin duplicaciones |
-| `tb_eviction_buffer_integracion` | Escritura, lectura, forwarding, drenado e integridad con RAM simulada |
+| `tb_eviction_buffer` | FIFO llena con 4 entradas, forwarding de línea completa, orden FIFO y drenado de la primera entrada |
+| `tb_eviction_buffer_extendido` | Capacidad, forwarding, drenado completo y punteros circulares con 4, 8 y 16 entradas |
+| `tb_eviction_buffer_prioridad` | Lectura antes del siguiente drenado sin cortar una escritura empezada; lectura fallida que no se repite |
+| `tb_eviction_buffer_error_escritura` | Error definitivo de escritura: la línea y su dirección se conservan y no hay reintentos sin fin |
+| `tb_eviction_buffer_recuperacion` | Bloqueo por error, forwarding durante el bloqueo y escritura reanudada con `clear_write_error` |
+| `tb_eviction_buffer_integracion` | Con el controlador real: escritura, lectura, forwarding, drenado e integridad con RAM simulada |
 
-También se verificó de forma independiente `perf_memory.sv` mediante `tb_perf_memory`, y el eviction buffer con pruebas de FIFO, prioridad, error y recuperación. Los PASS respaldan el funcionamiento **en simulación**; no demuestran por sí solos cierre de temporización, inmunidad a metastabilidad ni integración final con la L2 real.
+Los cinco primeros testbenches del eviction buffer hacen ellos mismos de controlador de memoria; el último usa el real. El detalle de cada uno está en [simulation.md](simulation.md), sección 13. También se verificó de forma independiente `perf_memory.sv` mediante `tb_perf_memory`. Los PASS respaldan el funcionamiento **en simulación**; no demuestran por sí solos cierre de temporización ni inmunidad a metastabilidad.
 
-### 7. Pendientes de integración y criterios de cierre
+Con la L2 real, el buffer y el controlador conectados (`MEM_MODE = 2`), la jerarquía completa se prueba en `tb_l2_cache_integracion`, `tb_l2_cache_flush`, `tb_mem_hierarchy` (falla en la L1-D y en la L2: 8 + 53 + 3 = 64 ciclos), `tb_port_b` y `tb_cache_isa`, y con programas completos en `make archivo ARCHIVO_MEM_MODE=2` y en los benchmarks de `tools/run_memory_benchmarks.py`.
+
+### 7. Estado de la integración
 
 - **Integración de la jerarquía:** hecha (#27): `mem_hierarchy.sv` conecta la L2 real con `eviction_buffer` y `mem_controller`.
 - **Vaciado completo:** hecho: `flush_done` sube cuando la L1-D terminó, la L2 terminó y el buffer quedó vacío (`lower_drained = !busy`); los programas de archivo comparan DMEM después del vaciado.
-- **CDC para síntesis:** revisar generación de reloj, restricciones, sincronizadores e integridad de los buses multibit.
-- **Validación de extremo a extremo:** ejecutar programas y pruebas de jerarquía con la L2 real y memoria principal conectadas.
+- **Validación de extremo a extremo:** hecha: los testbenches y programas de la sección 6 corren con la L2 real y la memoria principal conectadas y terminan con la misma memoria que el proyecto 1.
+- **Avisos de Icarus:** la búsqueda de *forwarding* compara cada entrada con una asignación continua, sin leer el arreglo con un índice variable dentro de `@*` (PR #74); el buffer ya no produce avisos de compilación.
+- **CDC para síntesis (fuera del alcance de la simulación):** revisar generación de reloj, restricciones, sincronizadores e integridad de los buses multibit.
 
-**Alcance de esta sección:** documenta el diseño, las interfaces y los resultados de los componentes asignados, sin atribuirles una integración con L2 que todavía no aparece en el RTL revisado.
+**Alcance de esta sección:** documenta el diseño, las interfaces, la integración con la L2 real y los resultados de los componentes asignados.
