@@ -490,11 +490,11 @@ artefactos de build. Make descubre automáticamente los bancos nuevos:
 |---|---|
 | `make tb_perf_cache_l2` | Diez eventos, reset, pausa, oferta retenida, acarreo y wrap64 |
 | `make tb_perf_integracion_hierarquia` | Pasividad activa/inactiva, exclusiva/NINE, DIV2/4, modelo y toda DMEM |
-| `make tb_perf_d18_cierre` | Selectores9–12, mitades, reserva, medir y vaciarc en0/1/REAL/MODEL |
+| `make tb_perf_d18_cierre` | Selectores 9–12, mitades, reserva, medir y vaciarc en 0/1/REAL/MODEL |
 | `make tb_perf_ram_faults` | MC real: una aceptación por solicitud, reintento, dos timeout y un error |
 
 `run_program --config archivo.json` transmite parámetros por -P y acredita la
-instancia elaborada con ELAB_CONFIG. execution.json conserva el esquema base1
+instancia elaborada con ELAB_CONFIG. execution.json conserva el esquema base 1
 y añade observation_schema2 con VLIW/etapas/L1/L2/RAM, hashes y comandos. El
 snapshot precede al mantenimiento, que conserva handshake y captura persistente.
 `tools/comparar_configuraciones.py` emite CSV/JSON/Markdown; su modo --capacity
