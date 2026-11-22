@@ -501,4 +501,4 @@ snapshot precede al mantenimiento, que conserva handshake y captura persistente.
 calienta18KiB antes de abrir la ventana. `tools/comparar_optimizaciones.py`
 valida BAL tradicional frente a M2/RTL, sin afirmar niveles -O inexistentes.
 Ver comandos y resultados en [README](../README.md) y
-[verificacion-cierre-javier.md](verificacion-cierre-javier.md).
+[verificacion-cierre-javier.md](verificacion/verificacion-cierre-javier.md).
