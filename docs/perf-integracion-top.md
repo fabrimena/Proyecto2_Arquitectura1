@@ -3,7 +3,7 @@
 **Evidencia histórica:** este documento conserva el ensayo inicial con modelo.
 El sistema vigente ya integra L2 real y D18; el cierre de métricas y las
 regresiones actuales se detallan en [performance-analysis.md](performance-analysis.md).
-El mismo banco sobre e461b70 y el cierre obtiene60 capturas/8029914 comprobaciones.
+El mismo banco sobre e461b70 y el cierre obtiene 60 capturas/8029914 comprobaciones.
 Las limitaciones y rutas antiguas indicadas en las secciones originales no deben
 interpretarse como el estado actual; la mutación WB equivalente sí conserva su límite.
 
@@ -107,7 +107,7 @@ No se promete compatibilidad posicional para consumidores externos no presentes.
 
 En el RTL vigente EX_WB.valid_in=id_ex_valid&&!crypto_fault y el transporte de
 metadatos sigue el mismo flujo global. Por inducción sobre reset/avance/redirect,
-sus bits de WB coinciden en este contrato coherente. La mutación05 pasó las
+sus bits de WB coinciden en este contrato coherente. La mutación 05 pasó las
 mismas 60 capturas: no demuestra sensibilidad ni justifica adoptar el carril ALU
 como contrato futuro universal. La variante05b limita WB a ALU útil y sí falla.
 
@@ -137,7 +137,7 @@ perf_service_by_class, perf_wait_by_class (0RH/1RM/2WH/3WM), perf_completed_acce
 perf_completed_reads/writes/hits/misses, perf_service_cycles, perf_wait_cycles,
 perf_no_wait_accesses, perf_excluded_accesses, perf_protocol_errors,
 perf_pending, perf_pending_eligible y perf_pending_wait_cycles. Todos los
-acumulados/edades son unsigned64; seguimiento y diagnóstico conservan sus reglas.
+acumulados/edades son unsigned 64; seguimiento y diagnóstico conservan sus reglas.
 Service=wait+completed módulo 2^64, siempre dentro de la misma cohorte.
 
 ## K. Señales y productores
@@ -174,13 +174,13 @@ suman penalización. Una ventana puede cortar uno de los dos huecos de un salto.
 
 ## M. Ventanas de medición
 
-perf_measure_enable es input con default1 en top y mem_hierarchy. Propaga una
+perf_measure_enable es input con default 1 en top y mem_hierarchy. Propaga una
 única ventana a los cuatro grupos. No controla avance, datos, solicitudes, flush
 o relojes. Default mide desde salida de reset. La pausa conserva acumulados;
 metadatos WB/marcas BRU y seguimiento K1-B siguen trabajando.
 
 K1-A cuenta eventos por flanco habilitado. K1-B excluye el acceso que atraviesa
-una pausa y termina habilitado. Ejemplo escenario2, modo 2, política1: K1-A cuenta
+una pausa y termina habilitado. Ejemplo escenario 2, modo 2, política 1: K1-A cuenta
 18 finales (4H/14M), K1-B: 17 completos y un excluido; servicio 123 y espera 106.
 No se divide stall K1-A/global por completos K1-B mezclando cohortes.
 
@@ -194,7 +194,7 @@ anterior permite efectos y aquí solo se conserva su pasividad.
 
 Se prueban ventana completa, inicio tardío en ciclo 5, pausas 7..9 / 16..17,
 reanudación y ventana vacía. La segunda pausa corta deliberadamente el primer
-load frío de escenario2. Se verifican 123 stalls apagados, 36 finales apagados
+load frío de escenario 2. Se verifican 123 stalls apagados, 36 finales apagados
 y un final parcial habilitado en modo 2 a lo largo del banco; no son programas.
 Se aplica reset con pipeline ocupado y con miss pendiente y medición cerrada.
 
@@ -210,13 +210,13 @@ usa N/A para sus métricas, sin publicar hits/misses ficticios.
 
 No se modifican parámetros de L1D: WB, WA, EXCLUSIVA, LRU, WBUF4, MSHR2 y busv2.
 El banco acredita los parámetros públicos reales de CPU; la sombra usa el mismo
-productor. El control20 cambia solo la instancia consumidora en una copia externa
+productor. El control 20 cambia solo la instancia consumidora en una copia externa
 a NINE y falla por configuración, con compilación válida. EXCLUSIVA no acredita
 exclusión global entre dos cachés reales: L2 continúa siendo un modelo sin tags.
 
 ## Q. MSHR y operaciones pendientes
 
-Stores a0 y4 se aceptan como reserva/fusión antes del fill. H=64 residente
+Stores a 0 y 4 se aceptan como reserva/fusión antes del fill. H=64 residente
 permite hit-under-miss; 0/2048/4096 compiten por dos vías y ejercitan espera de
 capacidad, víctimas limpias/sucias y lectura desde MSHR. Los llenados posteriores
 no prolongan el servicio de un store ya aceptado ni incrementan su demanda.
@@ -265,13 +265,13 @@ No son60testbenches distintos. Cada configuración contiene dos CPU reales.
 
 | Programa | Expectativas declaradas antes de observar salidas |
 |---|---|
-| NOP | Seis avances; ocupados6/5/4/3 y burbujas0/1/2/3 en ventana completa. |
-| LSU/BRU | Palabra77+byte1=333, loads333/1, consumidor N+3=334; salto tomado anula jóvenes, condicional falso conserva flujo. |
-| MSHR/víctimas | Stores7/7/7, byte parcial0x707, cargas correctas, líneas de un mismo conjunto y ráfaga de reemplazos. |
-| CRIPTO/A+B | setpwd 7 / VCR 7/llaves 0; FSL produce par 0 y una instrucción; cuatro slots, load+camcon ve7 y store+camcon conserva28 por prioridad B. |
+| NOP | Seis avances; ocupados 6/5/4/3 y burbujas 0/1/2/3 en ventana completa. |
+| LSU/BRU | Palabra 77+byte 1=333, loads 333/1, consumidor N+3=334; salto tomado anula jóvenes, condicional falso conserva flujo. |
+| MSHR/víctimas | Stores 7/7/7, byte parcial0x707, cargas correctas, líneas de un mismo conjunto y ráfaga de reemplazos. |
+| CRIPTO/A+B | setpwd 7 / VCR 7/llaves 0; FSL produce par 0 y una instrucción; cuatro slots, load+camcon ve 7 y store+camcon conserva 28 por prioridad B. |
 | Bucle/excepción | Tres decrementos, dos tomados; FSL no autorizado anula bundle de cuatro slots y jóvenes; centinela intacto, una excepción y manejador x30=99. |
 
-Los programas distintos del NOP se capturan a80 avances, con bucle final activo;
+Los programas distintos del NOP se capturan a 80 avances, con bucle final activo;
 no a iguales ciclos absolutos entre modos. Los snapshots de GPR/PC/estado/traps
 se comparan a ese horizonte; cada pareja activa/inactiva usa además tiempo igual.
 Se verifican reset inicial/durante actividad, burbujas, tiendas sin GPR, par cripto,
@@ -279,42 +279,42 @@ recuperaciones, congelamientos prolongados, consecutivos, puertos B y flush real
 
 ## U. Pruebas negativas
 
-Todas compilan0 sobre copias externas de bancos o consumidores autorizados.
+Todas compilan 0 sobre copias externas de bancos o consumidores autorizados.
 Ninguna cambia cachés de compañeros, oráculos nominales o archivos originales.
-Hay21 variantes: los20 controles pedidos y05b adicional. Diecinueve simulaciones
-fallan con vvp1 en su aserción precisa;16 ejecuta RTL con vvp0 y su validador
-independiente retorna1 por esquema.05 ejecuta con vvp0 y NO acredita detección.
+Hay 21 variantes: los 20 controles pedidos y05b adicional. Diecinueve simulaciones
+fallan con vvp 1 en su aserción precisa; 16 ejecuta RTL con vvp 0 y su validador
+independiente retorna 1 por esquema.05 ejecuta con vvp 0 y NO acredita detección.
 
 | ID | Mutación | Propiedad / defecto evitado | Resultado real |
 |---|---|---|---|
-| 01 | Reloj core_clk en VLIW | Pierde flancos de espera; ciclos deben seguir clk. | compile0, vvp1; vliw_cycles |
-| 02 | Avance constante en transporte | Un WB retenido no puede volver a finalizar durante stall. | compile0, vvp1; retirement_oracle |
-| 03 | WB NOP convertido en burbuja | Presencia no depende de máscara útil. | compile0, vvp1; stage_occupied |
-| 04 | Retiro inferido de wb_we | NOP/store sin GPR siguen completando. | compile0, vvp1; retirement_oracle |
-| 05 | WB tomado de ex_wb_valid | Equivalente en este RTL; no demuestra sensibilidad. | compile0, vvp0; EQUIVALENTE EN RTL ACTUAL; no acredita detección |
-| 05b | WB limitado al carril ALU útil | Adicional: omite NOP y bundles sin ALU. | compile0, vvp1; stage_occupied |
-| 06 | Redirect como BRU y excepción desconectada | Culpable no debe completar ni generar BRU. | compile0, vvp1; validity_oracle |
-| 07 | Par GPR cripto contado como otra instrucción | Dos salidas de FSL siguen siendo una operación. | compile0, vvp1; vliw_instructions |
-| 08 | K1-B observa re/we A+B antes del árbitro | Las fases y el servicio deben corresponder al puerto único. | compile0, vvp1; k1b_classes |
-| 09 | Fill sumado a lecturas K1-A | El mantenimiento no es otra demanda. | compile0, vvp1; k1a_events |
-| 10 | Fill sumado a stores K1-A | Store MSHR ya terminó al aceptarse. | compile0, vvp1; k1a_events |
-| 11 | Mantenimiento añadido a servicio de acceso previo | Servicio cerrado no crece durante flush sin demanda. | compile0, vvp1; k1b_totals |
-| 12 | Ventana VLIW ignorada | Pausa debe conservar acumulados. | compile0, vvp1; vliw_cycles |
-| 13 | Reset de etapas durante pausa | Pausar no borra la época. | compile0, vvp1; stage_cycles |
-| 14 | Eventos K1-A retrasados a otro PRE | No consumir eventos POST como si fueran del flanco anterior. | compile0, vvp1; k1a_events |
-| 15 | Ventana realimenta core_clk | Pasividad exige mismo avance exacto con PERF_ENABLE=0/1. | compile0, vvp1; clock_applied |
-| 16 | Reporte renombra hits L1-D como hits L2 | Rechazo de esquema: solicitudes de línea no acreditan hits L2. | compile0, vvp0, consumidor1; REPORT_SCHEMA_ERROR |
-| 17 | Validez IF omitida | La ocupación debe seguir IF real. | compile0, vvp1; stage_occupied |
-| 18 | Stalls globales sumados por cuatro etapas | Un congelamiento global no se multiplica por cuatro. | compile0, vvp1; vliw_memory |
-| 19 | Hits de lectura/escritura intercambiados | Clase exacta del productor debe llegar al contador correcto. | compile0, vvp1; k1a_events |
-| 20 | Consumidor instancia L1-D con NINE | La configuración acreditada debe seguir EXCLUSIVA. | compile0, vvp1; exclusive_configuration |
+| 01 | Reloj core_clk en VLIW | Pierde flancos de espera; ciclos deben seguir clk. | compile 0, vvp 1; vliw_cycles |
+| 02 | Avance constante en transporte | Un WB retenido no puede volver a finalizar durante stall. | compile 0, vvp 1; retirement_oracle |
+| 03 | WB NOP convertido en burbuja | Presencia no depende de máscara útil. | compile 0, vvp 1; stage_occupied |
+| 04 | Retiro inferido de wb_we | NOP/store sin GPR siguen completando. | compile 0, vvp 1; retirement_oracle |
+| 05 | WB tomado de ex_wb_valid | Equivalente en este RTL; no demuestra sensibilidad. | compile 0, vvp 0; EQUIVALENTE EN RTL ACTUAL; no acredita detección |
+| 05b | WB limitado al carril ALU útil | Adicional: omite NOP y bundles sin ALU. | compile 0, vvp 1; stage_occupied |
+| 06 | Redirect como BRU y excepción desconectada | Culpable no debe completar ni generar BRU. | compile 0, vvp 1; validity_oracle |
+| 07 | Par GPR cripto contado como otra instrucción | Dos salidas de FSL siguen siendo una operación. | compile 0, vvp 1; vliw_instructions |
+| 08 | K1-B observa re/we A+B antes del árbitro | Las fases y el servicio deben corresponder al puerto único. | compile 0, vvp 1; k1b_classes |
+| 09 | Fill sumado a lecturas K1-A | El mantenimiento no es otra demanda. | compile 0, vvp 1; k1a_events |
+| 10 | Fill sumado a stores K1-A | Store MSHR ya terminó al aceptarse. | compile 0, vvp 1; k1a_events |
+| 11 | Mantenimiento añadido a servicio de acceso previo | Servicio cerrado no crece durante flush sin demanda. | compile 0, vvp 1; k1b_totals |
+| 12 | Ventana VLIW ignorada | Pausa debe conservar acumulados. | compile 0, vvp 1; vliw_cycles |
+| 13 | Reset de etapas durante pausa | Pausar no borra la época. | compile 0, vvp 1; stage_cycles |
+| 14 | Eventos K1-A retrasados a otro PRE | No consumir eventos POST como si fueran del flanco anterior. | compile 0, vvp 1; k1a_events |
+| 15 | Ventana realimenta core_clk | Pasividad exige mismo avance exacto con PERF_ENABLE=0/1. | compile 0, vvp 1; clock_applied |
+| 16 | Reporte renombra hits L1-D como hits L2 | Rechazo de esquema: solicitudes de línea no acreditan hits L2. | compile 0, vvp 0, consumidor 1; REPORT_SCHEMA_ERROR |
+| 17 | Validez IF omitida | La ocupación debe seguir IF real. | compile 0, vvp 1; stage_occupied |
+| 18 | Stalls globales sumados por cuatro etapas | Un congelamiento global no se multiplica por cuatro. | compile 0, vvp 1; vliw_memory |
+| 19 | Hits de lectura/escritura intercambiados | Clase exacta del productor debe llegar al contador correcto. | compile 0, vvp 1; k1a_events |
+| 20 | Consumidor instancia L1-D con NINE | La configuración acreditada debe seguir EXCLUSIVA. | compile 0, vvp 1; exclusive_configuration |
 
-Las04/07/11/18 alteran lecturas diagnósticas, no declaran fallos observados del
+Las 04/07/11/18 alteran lecturas diagnósticas, no declaran fallos observados del
 RTL correcto.16 altera el reporte del consumidor y prueba rechazo de una
 atribución inválida, no hits L2 físicos.20 verifica configuración al arrancar:
 no es una divergencia arquitectónica de datos ni un error de compilación.
 El resto modifica conexiones de consumidores en copias externas. El fallo inicial
-del ejecutor08 esperaba k1b_aux; el primer desacuerdo real es k1b_classes, porque
+del ejecutor 08 esperaba k1b_aux; el primer desacuerdo real es k1b_classes, porque
 se corta primero el servicio de la fase B. Se corrigió la expectativa del
 harness, conservando los logs y sin cambiar la mutación o el oráculo nominal.
 
@@ -363,21 +363,21 @@ ciclos. BRU puede quedar impar al capturar en medio de una recuperación.
 
 ## X. Resultados arquitectónicos
 
-En cada una de las60 capturas se verifican los 32 GPR contra gold y contra sombra;
-se contrastan también snapshots entre0/1/2 y las ROM. Cada vaciado recorre todas
-las16384 palabras por pareja frente a sombra y gold. No se usan hashes como
+En cada una de las 60 capturas se verifican los 32 GPR contra gold y contra sombra;
+se contrastan también snapshots entre 0/1/2 y las ROM. Cada vaciado recorre todas
+las 16384 palabras por pareja frente a sombra y gold. No se usan hashes como
 sustituto de los 65536 bytes. No hubo divergencias arquitectónicas nominales.
 N+3, cuatro etapas, penalización de salto, Feistel4, excepción y prioridad B
 conservan su funcionamiento observado; las regresiones mantienen su cobertura.
 
 ## Y. Comparación con instrumentación deshabilitada
 
-PERF_ENABLE es bit de elaboración default1, al final de parámetros top; HIER lo
-hereda en modo 2 y también tiene default1 para bancos anteriores. PERF_ENABLE=0
+PERF_ENABLE es bit de elaboración default 1, al final de parámetros top; HIER lo
+hereda en modo 2 y también tiene default 1 para bancos anteriores. PERF_ENABLE=0
 no genera consumidores ni registros de métricas. Las observaciones explícitas
 son cero y todos los productores son exactamente los mismos. La prueba verifica
 la duración exacta y las secuencias públicas por fase, no únicamente datos finales.
-El control15 introduce realimentación desde la ventana al reloj y falla al
+El control 15 introduce realimentación desde la ventana al reloj y falla al
 primer pulso esperado no aplicado: demuestra sensibilidad a pérdida de pasividad.
 
 ## Z. Regresión inicial
@@ -403,14 +403,14 @@ Se verificó make list real; no se inventaron targets. Tabla antes/después:
 
 ## AA. Regresión posterior
 
-Las trece órdenes pasaron otra vez, código0. El único nuevo PASS de sim es este
-banco. Normal y VCD aislados:3654774 verificaciones/60 capturas, salida0, tiempos
+Las trece órdenes pasaron otra vez, código 0. El único nuevo PASS de sim es este
+banco. Normal y VCD aislados:3654774 verificaciones/60 capturas, salida 0, tiempos
 8.282 s / 8.583 s. Las cantidades son aserciones, métodos y bancos separados; no se
-suman como si fueran programas distintos. Icarus12.0, Python y flags oficiales;
+suman como si fueran programas distintos. Icarus 12.0, Python y flags oficiales;
 no se agregaron supresiones de advertencias. Los logs de compilación se conservan.
 La revisión final de comentarios conserva todos los tokens funcionales probados.
 
-El primer ensayo compiló0 y falló por coverage_windows: la ventana elegida no
+El primer ensayo compiló 0 y falló por coverage_windows: la ventana elegida no
 atravesaba un miss. Se corrigió únicamente el estímulo y se añadió la pausa 16..17.
 El segundo ensayo pasó, pero make se invocó accidentalmente desde el repositorio
 original. Se verificó que sus seis artefactos bajo build/tb_perf_integracion_top
@@ -421,11 +421,11 @@ La incidencia y sus rutas están registradas, sin clean/reset/restore de Git.
 ## AB. Compatibilidad con CE1108
 
 Se conservan ISA/ensamblador y las herramientas #9/#28. La suite #28 verifica su
-fixture directamente en0/1/2. Los dos flujos completos se ejecutaron con ambas
+fixture directamente en 0/1/2. Los dos flujos completos se ejecutaron con ambas
 versiones de Arquitectura y el mismo snapshot externo de Compiladores
-08c8701c7bc6e58461f54b69a90a1a6fe85d0145. Ambos make retornan2 antes y después:
-test-ce1108-source falla al preparar y ejecuta0 métodos; test-compiladores-funciones
-informa3 métodos, 2 fallos y 5 errores de subcasos. Buscan ubicaciones anteriores de
+08c8701c7bc6e58461f54b69a90a1a6fe85d0145. Ambos make retornan 2 antes y después:
+test-ce1108-source falla al preparar y ejecuta 0 métodos; test-compiladores-funciones
+informa 3 métodos, 2 fallos y 5 errores de subcasos. Buscan ubicaciones anteriores de
 src/generacion_basica.c, Analisis_Sintactico y Analisis_Semantico. BLOQUEADO
 preexistente; no se adapta ese repositorio ni se presenta como PASS.
 
@@ -457,7 +457,7 @@ programas con este modelo L2. Ambos están cableados y auditados uno a uno;
 las regresiones K1-A/K1-B conservan sus escenarios independientes de buffer lleno.
 No se inventan eventos para atribuirles cobertura de integración inexistente.
 
-El negativo05 es equivalente y por ello la sensibilidad exigida es PARCIAL.
+El negativo 05 es equivalente y por ello la sensibilidad exigida es PARCIAL.
 No se alteran pipeline/decoders para forzar su fallo. Permanece pendiente que
 Javier/Fabricio acepten esta limitación o definan un contrato futuro distinguible.
 El procesador continúa activo durante flush y tras las capturas; no se certifica
@@ -480,7 +480,7 @@ pertinente; no se sustituye detección con fallos de sintaxis.
 ## AG. Integridad y hashes
 
 Los manifiestos inicial/final prueban el alcance de cinco archivos: tres existentes
-modificados y dos nuevos. Los otros424 archivos iniciales conservan SHA256,
+modificados y dos nuevos. Los otros 424 archivos iniciales conservan SHA256,
 tamaño y permisos. No se modifican Makefile, herramientas, pruebas anteriores o
 cachés de compañeros. No quedan binarios nuevos en el repositorio original.
 Índice, HEAD, ramas y referencias remotas permanecen iguales; las referencias
@@ -493,7 +493,7 @@ se registra sin restaurar ni atribuirlo a esta intervención.
 Workspace temporal: /tmp/perf-integracion-zcf5v5sa.
 Entrega persistente nueva: /home/javier/Documentos/evidencias-arquitectura-integracion-metricas.
 Incluye referencias/manifiestos, diff completo, fuentes exactas, comandos/códigos/
-tiempos, antes/después, nominal/VCD,60 filas de métricas,21 variantes negativas,
+tiempos, antes/después, nominal/VCD,60 filas de métricas, 21 variantes negativas,
 logs de incidencias, auditoría y paquete completo. No sobrescribe entregas previas.
 Los CSV nuevos pertenecen a cada directorio externo; el VCD selecciona métricas
 y control públicos, nunca vuelca toda la bóveda.
@@ -512,15 +512,15 @@ done
 
 Para VCD usar un directorio de ejecución diferente con vvp -n y el binario
 compilado, +VCD. Las regresiones usan los trece comandos de Z. Las mutaciones
-usan el script y parches externos;05 debe pasar por equivalencia,16 debe fallar
+usan el script y parches externos; 05 debe pasar por equivalencia, 16 debe fallar
 en el consumidor de reporte, las otras deben fallar con su tag específico.
 
 ## AI. Coordinación con Fabricio
 
 top/mem_hierarchy requieren su revisión antes de integrar a develop: nombres de
-instancias y señales observables, nueva entrada default1, parámetro default1,
+instancias y señales observables, nueva entrada default 1, parámetro default 1,
 semántica PRE de core_en, reset de stores pendientes, validezWB y flush con
-núcleo activo. Debe revisar también la equivalencia actual del control05 y el
+núcleo activo. Debe revisar también la equivalencia actual del control 05 y el
 contrato de una futura lcont. No se presupone estabilidad de interfaces futuras
 ni se altera su rama. No se enviaron mensajes ni se creó PR o merge.
 
@@ -538,7 +538,7 @@ con WB completo compartido y ventanas compatibles con los módulos existentes.
 Las pruebas nominales/arquitectónicas/regresiones pasan; la pasividad se demuestra
 con instrumentación elaborada y eliminada, al mismo tiempo exacto.
 
-El cierre formal permanece PARCIAL por la mutación equivalente05; CE1108 completo
+El cierre formal permanece PARCIAL por la mutación equivalente 05; CE1108 completo
 sigue BLOQUEADO por rutas anteriores. Estos límites no se ocultan ni se remedian
 cambiando componentes protegidos. Fabricio debe revisar las conexiones antes
 de una integración autorizada; no se declara integrada la L2 ni implementado D18.
