@@ -1270,7 +1270,7 @@ El IPC continúa calculándose fuera del RTL: instrucciones/ciclos; con cero cic
 Esta sección conserva el contrato y las limitaciones del bloque aislado D18-A.
 Las referencias siguientes a una integración futura son históricas: el enganche
 actual, los retiros y la persistencia se verifican en `tb_cache_isa` y
-`tb_perf_d18_cierre`. Ver [verificación del cierre](verificacion-cierre-javier.md).
+`tb_perf_d18_cierre`. Ver [verificación del cierre](verificacion/verificacion-cierre-javier.md).
 
 `cache_isa_unit` usa **clk general**, no `core_clk`. Entradas y controles deben ser estables
 antes del flanco positivo. Reset es síncrono y prioritario: habilita medición, borra respuesta
