@@ -207,7 +207,7 @@ está reconocido. CFLAGS=-O2 no es una optimización VLIW. Ese diagnóstico dej�
 #31 parcial hasta comprobar la vía productiva del IDE, descrita abajo.
 Cortes 3403/247/2748 proceden del contrato de observación B5, sin certificar main.
 Ver [análisis vigente](performance-analysis.md#cierre-integrado-16-de-noviembre-de-2026-26-2931-36)
-y [verificación](verificacion-cierre-javier.md).
+y [verificación](verificacion/verificacion-cierre-javier.md).
 
 ### Contraste productivo tradicional/IDE-DCE
 
