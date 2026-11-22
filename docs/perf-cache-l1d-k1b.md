@@ -1,5 +1,12 @@
 # Issue #26 — K1-B: servicio observado de L1-D
 
+> **Reporte histórico.** Describe este bloque tal como se entregó en su rama, antes de la integración
+> final; lo que aquí «no se integra» o queda «pendiente» se refiere a ese momento. Hoy
+> `perf_vliw_monitor` (clasificación, metadatos y contadores) y `perf_stage_counters` están en
+> `top.sv`, y los contadores de la L1-D (K1-A y K1-B), la L2 y la RAM en `mem_hierarchy.sv`, junto con
+> la L2 real, la memoria principal y las instrucciones D18. El estado y los resultados vigentes están
+> en [performance-analysis.md](performance-analysis.md).
+
 ## A. Estado inicial de Git
 
 Repositorio `Proyecto2_Arquitectura1`, árbol e índice limpios, sin conflictos ni
@@ -408,7 +415,7 @@ escritura aceptada puede seguir llegando a DMEM.
 
 La última cohorte tiene RH/RM/WH/WM = 54/8/75/1 y media
 `202/138 = 1.463768115942` ciclos/acceso. El dataset sintético conocido tiene
-RH1 + WH1 + RM4 + WM1 + RM2, servicio9/5 = 1.8; medias de lecturas y misses
+RH1 + WH1 + RM4 + WM1 + RM2, servicio 9/5 = 1.8; medias de lecturas y misses
 7/3, de stores y hits 1. Esas medias se comprueban antes de escenarios adicionales.
 
 ## AB. Equivalencia con instancia sombra
@@ -431,7 +438,7 @@ del HEAD autorizado. Los diez comandos de Arquitectura terminaron con código 0.
 
 Se ejecutaron también `test-ce1108-source` y `test-compiladores-funciones` con una
 copia externa del HEAD de Compiladores `7683bf80e91fdd66bb573d4334f986b6feebe7b5`,
-sin incorporar sus modificaciones locales. Ambos `make` terminaron con **código2**:
+sin incorporar sus modificaciones locales. Ambos `make` terminaron con **código 2**:
 las herramientas de Arquitectura buscan rutas antiguas `src/` y
 `Analisis_Sintactico/` que ese HEAD ya reorganizó. El primero falla en `setUpClass`
 (0 métodos ejecutados); el segundo informa 3 métodos, 2 fallos y 5 errores,
@@ -454,13 +461,13 @@ sin adaptar fuentes, rutas o herramientas protegidas.
 | `make test-programs` | 0 / 6.182 | 0 / 4.524 | 14 métodos |
 | `make archivo` | 0 / 1.016 | 0 / 0.716 | 7 verificaciones RTL, 386 bytes idénticos; cifrado/descifrado 989 ciclos |
 
-Las dos pruebas CE1108 se repitieron con el mismo snapshot externo: código2 en
+Las dos pruebas CE1108 se repitieron con el mismo snapshot externo: código 2 en
 ambas antes y después, por las mismas rutas antiguas ausentes. No hay fallos nuevos
 observados de Arquitectura. No se presentan esas pruebas CE1108 como PASS.
 
-La ejecución nueva con `PLUSARGS=+VCD` termina con código0, **979004 verificaciones**
-y VCD de **333931 bytes**. Las dieciséis mutaciones compilan con código0 y producen
-código1 por la primera aserción prevista. Los logs de compilación de los bancos
+La ejecución nueva con `PLUSARGS=+VCD` termina con código 0, **979004 verificaciones**
+y VCD de **333931 bytes**. Las dieciséis mutaciones compilan con código 0 y producen
+código 1 por la primera aserción prevista. Los logs de compilación de los bancos
 no contienen warnings ni errores; no se suprimen diagnósticos nuevos.
 
 El número de verificaciones cuenta aserciones por flanco/estado y por palabra
@@ -472,8 +479,8 @@ explícitamente con `make -B`; `make sim` recompila todos sus bancos.
 ## AE. Compatibilidad con Icarus
 
 Se usa `iverilog -g2012` y `vvp -n`, vectores empaquetados y construcciones
-compatibles con Icarus12. Compilación aislada del monitor con `-Wall -tnull`:
-código0, sin diagnósticos. El banco se descubre mediante los comodines del
+compatibles con Icarus 12. Compilación aislada del monitor con `-Wall -tnull`:
+código 0, sin diagnósticos. El banco se descubre mediante los comodines del
 Makefile vigente: no se modifica ese archivo.
 
 No se ejecuta síntesis física ni se promete una frecuencia máxima. La inspección
@@ -538,10 +545,10 @@ make test-programs
 make archivo
 ```
 
-Los controles8/12 se ejecutan desde directorios externos distintos, con
+Los controles 8/12 se ejecutan desde directorios externos distintos, con
 `vvp -n /ruta/externa/build/tb_perf_cache_l1d_k1b/sim.vvp +MUTATION=8` o `12`.
 El resto usa las copias/parches y comandos de compilación del script externo
-`k1b_negativos.py`. Código1 y la aserción prevista acreditan detección; no se
+`k1b_negativos.py`. Código 1 y la aserción prevista acreditan detección; no se
 presentan esas ejecuciones como PASS nominal de `make sim`.
 
 ## AJ. Dependencias de L2 real e issue #30
